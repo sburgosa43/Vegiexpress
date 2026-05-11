@@ -68,7 +68,7 @@ def _init_state():
         "paso":           1,
         "cliente":        None,
         "fecha_entrega":  date.today(),
-        "items":          [],       # lista de dicts por línea de pedido
+        "lineas":          [],       # lista de dicts por línea de pedido
         "guardado_ok":    False,
         "filas_guardadas": 0,
     }
@@ -77,7 +77,7 @@ def _init_state():
             st.session_state[k] = v
 
 def _reset():
-    for k in ["paso", "cliente", "fecha_entrega", "items", "guardado_ok", "filas_guardadas"]:
+    for k in ["paso", "cliente", "fecha_entrega", "lineas", "guardado_ok", "filas_guardadas"]:
         del st.session_state[k]
     _init_state()
 
@@ -223,12 +223,12 @@ def _paso_productos():
                     "parent":          prod["parent"],
                     "unidad_despacho": prod["unidad_despacho"],
                 }
-                st.session_state.items.append(nuevo_item)
+                st.session_state.lineas.append(nuevo_item)
                 st.rerun()
 
     # ── Lista del pedido actual ───────────────────────────────────────────────
     st.divider()
-    items = st.session_state.items
+    items = st.session_state.lineas
 
     if items:
         st.markdown("#### 📋 Pedido actual")
@@ -248,7 +248,7 @@ def _paso_productos():
             c3.write(f"Q{item['precio']:.2f}")
             c4.write(f"**Q{subtotal:,.2f}**")
             if c5.button("🗑", key=f"del_{i}", help="Quitar"):
-                st.session_state.items.pop(i)
+                st.session_state.lineas.pop(i)
                 st.rerun()
 
         # Total
@@ -282,7 +282,7 @@ def _paso_productos():
 def _paso_confirmar():
     cliente = st.session_state.cliente
     fecha   = st.session_state.fecha_entrega
-    items   = st.session_state.items
+    items   = st.session_state.lineas
 
     st.subheader("✅ Confirmar Pedido")
 
@@ -360,7 +360,7 @@ def _paso_confirmar():
 def _paso_exito():
     cliente = st.session_state.cliente
     fecha   = st.session_state.fecha_entrega
-    items   = st.session_state.items
+    items   = st.session_state.lineas
     n       = st.session_state.filas_guardadas
     total   = sum(i["cantidad"] * i["precio"] for i in items)
 
