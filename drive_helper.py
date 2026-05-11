@@ -16,8 +16,37 @@ MIMETYPE_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.she
 
 
 def _get_service():
-    """Crea el cliente de Google Drive usando las credenciales del Service Account."""
-    info = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+    """
+    Crea el cliente de Google Drive.
+    Acepta credenciales en dos formatos en Streamlit Secrets:
+      Formato A: GOOGLE_CREDENTIALS = '''{ ...json completo... }'''
+      Formato B: [gcp_service_account] con campos separados
+    """
+    secrets = st.secrets
+
+    # Formato A: JSON completo como string
+    if "GOOGLE_CREDENTIALS" in secrets:
+        raw = secrets["GOOGLE_CREDENTIALS"]
+        if isinstance(raw, dict):
+            info = dict(raw)
+        else:
+            info = json.loads(str(raw))
+
+    # Formato B: seccion TOML [gcp_service_account]
+    elif "gcp_service_account" in secrets:
+        info = dict(secrets["gcp_service_account"])
+
+    else:
+        raise ValueError(
+            "Credenciales no encontradas.\n"
+            "Revisa los Secrets en Streamlit Cloud:\n"
+            "Necesitas GOOGLE_CREDENTIALS o [gcp_service_account]."
+        )
+
+    # Reparar \\n escapados en private_key (problema frecuente en Streamlit)
+    if "private_key" in info and "\\n" in info["private_key"]:
+        info["private_key"] = info["private_key"].replace("\\n", "\n")
+
     creds = Credentials.from_service_account_info(info, scopes=SCOPES)
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
@@ -36,30 +65,19 @@ def _download_bytes(file_id: str) -> io.BytesIO:
 
 
 def cargar_para_lectura(file_id: str) -> openpyxl.Workbook:
-    """
-    Descarga el Excel y lo abre para LECTURA.
-    Usa data_only=True para obtener valores calculados (no fórmulas).
-    Usa read_only=True para mayor velocidad.
-    """
+    """Descarga el Excel y lo abre para LECTURA (valores, no formulas)."""
     buf = _download_bytes(file_id)
     return openpyxl.load_workbook(buf, data_only=True, read_only=True)
 
 
 def cargar_para_escritura(file_id: str) -> openpyxl.Workbook:
-    """
-    Descarga el Excel y lo abre para ESCRITURA.
-    Preserva fórmulas y estructura del archivo original.
-    Solo se usa justo antes de guardar un pedido.
-    """
+    """Descarga el Excel y lo abre para ESCRITURA (preserva formulas)."""
     buf = _download_bytes(file_id)
     return openpyxl.load_workbook(buf, data_only=False)
 
 
 def guardar_en_drive(wb: openpyxl.Workbook, file_id: str):
-    """
-    Sube el workbook modificado de vuelta a Google Drive,
-    reemplazando el archivo existente (mismo file_id).
-    """
+    """Sube el workbook modificado de vuelta a Google Drive."""
     service = _get_service()
     buffer = io.BytesIO()
     wb.save(buffer)
