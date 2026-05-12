@@ -28,7 +28,19 @@ def _actualizar_tabla(ws, nombre_tabla: str):
 
 @st.cache_data(ttl=120, show_spinner="Cargando pedidos...")
 def leer_pedidos() -> list[dict]:
-    """Lee todos los pedidos con numero de fila para edicion posterior."""
+    """
+    Lee todos los pedidos con numero de fila.
+    El precio se obtiene del catalogo de productos (columna "Precio" manual),
+    no del valor cacheado en la hoja Pedidos (que puede ser Precio Impuestos).
+    """
+    from data_helper import cargar_productos
+    # Construir lookup de precio manual por nombre de producto
+    precios_real: dict = {}
+    for p in cargar_productos(False):          # lista general
+        precios_real[p["nombre"].lower()] = p["precio"]
+    for p in cargar_productos(True):           # lista Antigua (sobrescribe si mismo nombre)
+        precios_real[p["nombre"].lower()] = p["precio"]
+
     wb = cargar_para_lectura(FILE_ID)
     ws = wb["Pedidos"]
     pedidos = []
@@ -38,14 +50,18 @@ def leer_pedidos() -> list[dict]:
         fecha = row[0]
         if hasattr(fecha, "date"):
             fecha = fecha.date()
+        producto = str(row[3] or "")
+        # Precio: usar catalogo (Precio manual). Si no encuentra, cae al valor Excel
+        precio = precios_real.get(producto.lower(), row[4])
+        cantidad = row[2] or 0
         pedidos.append({
             "row_num":   i,
             "fecha":     fecha,
             "cliente":   str(row[1]  or ""),
-            "cantidad":  row[2],
-            "producto":  str(row[3]  or ""),
-            "precio":    row[4],
-            "total":     row[6],
+            "cantidad":  cantidad,
+            "producto":  producto,
+            "precio":    precio,
+            "total":     round((precio or 0) * cantidad, 2),
             "semana":    row[14],
             "año":       row[15],
             "status":    str(row[30] or "Pendiente"),

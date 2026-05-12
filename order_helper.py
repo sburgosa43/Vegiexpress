@@ -13,6 +13,18 @@ import streamlit as st
 from drive_helper import cargar_para_escritura, guardar_en_drive
 
 FILE_ID      = st.secrets["EXCEL_FILE_ID"]
+
+# Formula correcta para columna Precio (col E):
+# VLOOKUP en lista normal usa columna 8 = "Precio" (manual)
+# VLOOKUP en lista Antigua usa columna 7 = "Precio" (esa lista no tiene Precio Impuestos)
+_PRECIO_FORMULA = (
+    '=+IF(OR(Tabla3[[#This Row],[Direccion]]="Chimal",'
+    'Tabla3[[#This Row],[Direccion]]="Antigua"),'
+    'IFERROR(VLOOKUP(Tabla3[[#This Row],[Producto]],Tabla29[#All],7,0),0),'
+    'IFERROR(VLOOKUP(Tabla3[[#This Row],[Producto]],'
+    'LIstPreciosProd[[Producto]:[Precio Sin IVA]],8,0),0))'
+)
+
 HOJA_PEDIDOS = "Pedidos"
 NOMBRE_TABLA = "Tabla3"
 TOTAL_COLS   = 31   # A hasta AE
@@ -68,15 +80,17 @@ def guardar_pedido(nombre_cliente: str, fecha_entrega: date, items: list) -> int
 
         # ── Cols E-AE: copiar formulas de la fila anterior ───────────────────
         for col in range(5, TOTAL_COLS + 1):
-            celda_ref  = ws.cell(row=fila_formula, column=col)
+            celda_ref   = ws.cell(row=fila_formula, column=col)
             celda_nueva = ws.cell(row=fila_actual,  column=col)
 
-            # Copiar valor (si es formula, la copiamos tal cual — Tabla3[#This Row]
-            # se refiere siempre a la fila actual, no necesita ajuste de referencia)
-            celda_nueva.value         = celda_ref.value
-            celda_nueva.number_format = celda_ref.number_format
+            if col == 5:
+                # Col E (Precio): escribir formula corregida (col 8 = Precio manual)
+                celda_nueva.value = _PRECIO_FORMULA
+            else:
+                # Resto: copiar formula tal cual (Tabla3[#This Row] = siempre fila actual)
+                celda_nueva.value = celda_ref.value
 
-            # Copiar estilos basicos si la celda tiene
+            celda_nueva.number_format = celda_ref.number_format
             if celda_ref.font:
                 from copy import copy
                 celda_nueva.font      = copy(celda_ref.font)
