@@ -1,149 +1,107 @@
 """
 order_helper.py
-Genera las filas del pedido y las escribe en la hoja 'Ped 22-24'.
+Escribe nuevas filas de pedido en la hoja 'Pedidos' (Tabla3).
+
+IMPORTANTE: La mayoria de columnas tienen formulas Excel (VLOOKUP).
+Solo se escriben manualmente los 4 campos de entrada:
+  A: Fecha Entrega  |  B: Nombre Cliente  |  C: Cantidad  |  D: Producto
+Las demas columnas copian la formula de la fila anterior y Excel recalcula todo.
 """
 
-from datetime import date, timedelta
+from datetime import datetime, date
 import streamlit as st
 from drive_helper import cargar_para_escritura, guardar_en_drive
 
 FILE_ID      = st.secrets["EXCEL_FILE_ID"]
-HOJA_PEDIDOS = "Ped 22-24"
-
-# Tablas de traducción
-DIAS_ES   = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-MESES_N   = ["ene", "feb", "mar", "abr", "may", "jun",
-             "jul", "ago", "sep", "oct", "nov", "dic"]
+HOJA_PEDIDOS = "Pedidos"
+NOMBRE_TABLA = "Tabla3"
+TOTAL_COLS   = 31   # A hasta AE
 
 
-# ── UTILIDADES DE FECHA ───────────────────────────────────────────────────────
-
-def _fecha_a_serial(d: date) -> int:
-    """Convierte fecha Python al número serial de Excel (días desde 30-dic-1899)."""
-    return (d - date(1899, 12, 30)).days
-
-
-def _generar_unico(codigo_cliente: str, fecha: date, semana: int) -> str:
+def guardar_pedido(nombre_cliente: str, fecha_entrega: date, items: list) -> int:
     """
-    Genera el código único del pedido.
-    Formato: {CódigoCliente}{Día:02}{Mes:02}{Semana:02}{Año}
-    Ejemplo: C0212705212022
+    Agrega filas a la tabla 'Pedidos':
+      - Escribe los 4 campos manuales (Fecha, Cliente, Cantidad, Producto)
+      - Copia las formulas de la fila anterior para el resto de columnas
+      - Expande la referencia de Tabla3
+
+    Parametros
+    ----------
+    nombre_cliente : nombre exacto del cliente (como aparece en la tabla Clientes)
+    fecha_entrega  : fecha Python
+    items          : lista de dicts con {"nombre": str, "cantidad": float}
+
+    Retorna el numero de filas agregadas.
     """
-    return (
-        f"{codigo_cliente}"
-        f"{fecha.day:02d}"
-        f"{fecha.month:02d}"
-        f"{semana:02d}"
-        f"{fecha.year}"
-    )
+    # Convertir date a datetime (formato que usa Excel/openpyxl)
+    fecha_dt = datetime(fecha_entrega.year, fecha_entrega.month, fecha_entrega.day)
 
-
-# ── CÁLCULOS FINANCIEROS ──────────────────────────────────────────────────────
-
-def _calcular_fila(cantidad: float, precio: float, costo: float) -> dict:
-    """
-    Calcula los campos financieros de una línea de pedido.
-
-    Basado en las fórmulas observadas en la hoja Ped 22-24:
-      IVA       = precio_unitario / 1.12   (base imponible sin IVA)
-      ISR       = precio_unitario / 1.15   (base para retención ISR)
-      Total     = cantidad × precio
-      TotalCost = cantidad × costo
-      Margen%   = 0.95 × (1 − costo×1.12/precio)
-      Margen    = Margen% × Total
-    """
-    total       = round(cantidad * precio, 2)
-    total_costo = round(cantidad * costo,  2)
-    iva         = round(precio / 1.12, 4) if precio else 0
-    isr         = round(precio / 1.15, 4) if precio else 0
-    margen_pct  = round(0.95 * (1 - (costo * 1.12 / precio)), 4) if precio else 0
-    margen      = round(margen_pct * total, 2)
-
-    return {
-        "total":       total,
-        "total_costo": total_costo,
-        "margen":      margen,
-        "margen_pct":  margen_pct,
-        "iva":         iva,
-        "isr":         isr,
-    }
-
-
-# ── GUARDADO DEL PEDIDO ───────────────────────────────────────────────────────
-
-def guardar_pedido(cliente: dict, fecha_entrega: date, items: list) -> int:
-    """
-    Descarga el Excel, agrega las filas del pedido a 'Ped 22-24'
-    y sube el archivo actualizado a Drive.
-
-    Retorna la cantidad de filas agregadas.
-    """
-    # ── Datos del encabezado del pedido
-    semana         = fecha_entrega.isocalendar()[1]
-    unico          = _generar_unico(cliente["codigo"], fecha_entrega, semana)
-    dia_semana     = DIAS_ES[fecha_entrega.weekday()]
-    mes_numero     = fecha_entrega.month
-    mes_n          = MESES_N[mes_numero - 1]
-    mes_nn         = f"{mes_numero:02d}"
-    fecha_serial   = _fecha_a_serial(fecha_entrega)
-
-    fecha_venc        = fecha_entrega + timedelta(days=cliente["credito"])
-    fecha_venc_serial = _fecha_a_serial(fecha_venc)
-    dias_venc         = fecha_venc_serial - _fecha_a_serial(date.today())
-
-    # ── Descargar y abrir el Excel
     wb = cargar_para_escritura(FILE_ID)
     ws = wb[HOJA_PEDIDOS]
 
-    filas_agregadas = 0
-    for item in items:
-        calcs = _calcular_fila(item["cantidad"], item["precio"], item["costo"])
+    primera_fila_nueva = ws.max_row + 1
+    filas_agregadas    = 0
 
-        # Orden exacto de columnas en 'Ped 22-24':
-        # Fecha Entrega | Nombre Cliente | Cantidad | Producto | Precio | Costo |
-        # Total | Total Costo | Margen | Margen % | IVA | ISR |
-        # Dia Semana | Mes | Semana | Año | Unidad de Medida | Proveedor |
-        # Direccion | NIT | Fecha Vencimiento | Dias Vencimiento |
-        # Empresa | Tipo | Segmento | Mes N | Mes NN |
-        # Unico | Parent | Unidad Despacho | Status
-        fila = [
-            fecha_serial,               # Fecha Entrega (serial Excel)
-            cliente["nombre"],          # Nombre Cliente
-            item["cantidad"],           # Cantidad
-            item["nombre"],             # Producto
-            item["precio"],             # Precio unitario
-            item["costo"],              # Costo unitario
-            calcs["total"],             # Total
-            calcs["total_costo"],       # Total Costo
-            calcs["margen"],            # Margen (Q)
-            calcs["margen_pct"],        # Margen %
-            calcs["iva"],               # IVA (base sin IVA)
-            calcs["isr"],               # ISR (base retención)
-            dia_semana,                 # Dia Semana
-            mes_numero,                 # Mes (número)
-            semana,                     # Semana del año
-            fecha_entrega.year,         # Año
-            item["unidad"],             # Unidad de Medida
-            item["proveedor"],          # Proveedor
-            cliente["direccion"],       # Direccion
-            cliente["nit"],             # NIT
-            fecha_venc_serial,          # Fecha Vencimiento (serial Excel)
-            dias_venc,                  # Dias Vencimiento
-            cliente["empresa"],         # Empresa
-            cliente["tipo"],            # Tipo (Restaurante, Bar, etc.)
-            item["segmento"],           # Segmento
-            mes_n,                      # Mes N (ene, feb...)
-            mes_nn,                     # Mes NN (01, 02...)
-            unico,                      # Código Unico del pedido
-            item["parent"],             # Parent (nombre base del producto)
-            item["unidad_despacho"],    # Unidad Despacho
-            "Pendiente",                # Status
-        ]
-        ws.append(fila)
+    for item in items:
+        nombre_prod = item["nombre"]
+        cantidad    = item["cantidad"]
+
+        if not nombre_prod or cantidad <= 0:
+            continue
+
+        fila_actual  = primera_fila_nueva + filas_agregadas
+        fila_formula = fila_actual - 1   # fila de referencia para copiar formulas
+
+        # ── Col A: Fecha Entrega ──────────────────────────────────────────────
+        c_fecha = ws.cell(row=fila_actual, column=1)
+        c_fecha.value         = fecha_dt
+        c_fecha.number_format = "dd/mm/yyyy;@"
+
+        # ── Col B: Nombre Cliente ─────────────────────────────────────────────
+        ws.cell(row=fila_actual, column=2).value = nombre_cliente
+
+        # ── Col C: Cantidad ───────────────────────────────────────────────────
+        ws.cell(row=fila_actual, column=3).value = cantidad
+
+        # ── Col D: Producto ───────────────────────────────────────────────────
+        ws.cell(row=fila_actual, column=4).value = nombre_prod
+
+        # ── Cols E-AE: copiar formulas de la fila anterior ───────────────────
+        for col in range(5, TOTAL_COLS + 1):
+            celda_ref  = ws.cell(row=fila_formula, column=col)
+            celda_nueva = ws.cell(row=fila_actual,  column=col)
+
+            # Copiar valor (si es formula, la copiamos tal cual — Tabla3[#This Row]
+            # se refiere siempre a la fila actual, no necesita ajuste de referencia)
+            celda_nueva.value         = celda_ref.value
+            celda_nueva.number_format = celda_ref.number_format
+
+            # Copiar estilos basicos si la celda tiene
+            if celda_ref.font:
+                from copy import copy
+                celda_nueva.font      = copy(celda_ref.font)
+                celda_nueva.fill      = copy(celda_ref.fill)
+                celda_nueva.border    = copy(celda_ref.border)
+                celda_nueva.alignment = copy(celda_ref.alignment)
+
         filas_agregadas += 1
 
-    # ── Subir de vuelta a Drive
+    if filas_agregadas == 0:
+        wb.close()
+        return 0
+
+    # ── Expandir la referencia de Tabla3 ─────────────────────────────────────
+    nueva_ultima_fila = primera_fila_nueva + filas_agregadas - 1
+    if NOMBRE_TABLA in ws.tables:
+        tbl = ws.tables[NOMBRE_TABLA]
+        # Mantener la columna inicial/final, solo actualizar la fila final
+        # Formato actual: "A1:AE275" → "A1:AE{nueva_ultima_fila}"
+        partes = tbl.ref.split(":")
+        inicio = partes[0]  # ej: "A1"
+        # Extraer la letra de columna de la referencia final
+        col_final = "".join(c for c in partes[1] if c.isalpha())  # ej: "AE"
+        tbl.ref   = f"{inicio}:{col_final}{nueva_ultima_fila}"
+
     guardar_en_drive(wb, FILE_ID)
     wb.close()
-
     return filas_agregadas

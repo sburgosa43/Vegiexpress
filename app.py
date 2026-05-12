@@ -1,15 +1,15 @@
 """
-app.py — Rio Veggi | Ingreso de Pedidos
-Interfaz web para ingresar pedidos de clientes.
-Funciona en computadora y celular Android.
+app.py - Rio Veggi | Ingreso de Pedidos
+Interfaz web multi-usuario para ingresar pedidos al Excel en Google Drive.
 """
 
 import streamlit as st
+import pandas as pd
 from datetime import date
 from data_helper import cargar_clientes, cargar_productos
 from order_helper import guardar_pedido
 
-# ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
+# ── CONFIGURACION ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Pedidos · Rio Veggi",
     page_icon="🥬",
@@ -17,82 +17,69 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# CSS para que se vea bien en celular y computadora
 st.markdown("""
 <style>
-    /* Botones grandes y fáciles de tocar */
-    .stButton > button {
-        width: 100%;
-        height: 3rem;
-        font-size: 1.05rem;
-        border-radius: 8px;
-    }
-    /* Tarjeta de resumen del cliente */
-    .cliente-card {
-        background: #f0f9f0;
+    .block-container { padding-top: 1rem !important; }
+    .stButton > button  { width: 100%; height: 3rem; font-size: 1rem; border-radius: 8px; }
+    .step-active { color: #2e7d32; font-weight: bold; font-size: 1.05rem; }
+    .step-done   { color: #aaa;    text-decoration: line-through; }
+    .step-todo   { color: #999;    font-size: 1rem; }
+    .card {
+        background: #f1f8f1;
         border-left: 4px solid #2e7d32;
         border-radius: 6px;
-        padding: 12px 16px;
-        margin: 8px 0;
-        font-size: 0.95rem;
+        padding: 10px 14px;
+        margin: 6px 0;
+        font-size: 0.93rem;
+        line-height: 1.6;
     }
-    /* Fila de producto en el carrito */
-    .producto-row {
-        background: #fafafa;
-        border: 1px solid #e0e0e0;
-        border-radius: 6px;
-        padding: 8px 12px;
-        margin: 4px 0;
-    }
-    /* Caja del total */
     .total-card {
         background: #e8f5e9;
         border-radius: 8px;
-        padding: 16px;
+        padding: 14px;
         text-align: center;
-        margin: 12px 0;
+        margin: 10px 0;
     }
-    /* Indicador de pasos */
-    .step-active { color: #2e7d32; font-weight: bold; }
-    .step-done   { color: #aaa; text-decoration: line-through; }
-    .step-todo   { color: #888; }
-    /* Quitar padding excesivo en móvil */
-    .block-container { padding-top: 1rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ── SESSION STATE ─────────────────────────────────────────────────────────────
-def _init_state():
-    defaults = {
-        "paso":           1,
-        "cliente":        None,
-        "fecha_entrega":  date.today(),
-        "lineas":          [],       # lista de dicts por línea de pedido
-        "guardado_ok":    False,
-        "filas_guardadas": 0,
-    }
-    for k, v in defaults.items():
+_DEFAULTS = {
+    "paso":            1,
+    "cliente":         None,
+    "fecha_entrega":   date.today(),
+    "lineas":          [],
+    "grid_data":       None,   # DataFrame del grid de productos
+    "filas_grid":      15,     # cuantas filas muestra el grid
+    "guardado_ok":     False,
+    "filas_guardadas": 0,
+}
+
+def _init():
+    for k, v in _DEFAULTS.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
 def _reset():
-    for k in ["paso", "cliente", "fecha_entrega", "lineas", "guardado_ok", "filas_guardadas"]:
-        del st.session_state[k]
-    _init_state()
+    for k in list(_DEFAULTS.keys()):
+        st.session_state[k] = _DEFAULTS[k]
+    # Limpiar el grid tambien
+    if "grid_data" in st.session_state:
+        del st.session_state["grid_data"]
 
-_init_state()
+_init()
 
 
 # ── INDICADOR DE PASOS ────────────────────────────────────────────────────────
-def _mostrar_pasos():
-    paso = st.session_state.paso
-    pasos = ["👤 Cliente", "🛒 Productos", "✅ Confirmar"]
-    cols = st.columns(3)
-    for i, (col, label) in enumerate(zip(cols, pasos), start=1):
+def _pasos():
+    paso   = st.session_state.paso
+    labels = ["👤 Cliente", "🛒 Productos", "✅ Confirmar"]
+    cols   = st.columns(3)
+    for i, (col, label) in enumerate(zip(cols, labels), 1):
         with col:
             if i == paso:
-                st.markdown(f"<span class='step-active'>{label}</span>", unsafe_allow_html=True)
+                st.markdown(f"<span class='step-active'>{label} ←</span>", unsafe_allow_html=True)
             elif i < paso:
                 st.markdown(f"<span class='step-done'>{label} ✔</span>", unsafe_allow_html=True)
             else:
@@ -100,285 +87,289 @@ def _mostrar_pasos():
     st.divider()
 
 
-# ── PASO 1: CLIENTE Y FECHA ───────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# PASO 1 — CLIENTE Y FECHA
+# ═══════════════════════════════════════════════════════════════════════════════
 def _paso_cliente():
     st.subheader("👤 ¿Para quién es el pedido?")
 
-    clientes = cargar_clientes()
-    todos    = [c["nombre"] for c in clientes]
-    activos  = [c["nombre"] for c in clientes if c["activo"]]
+    clientes      = cargar_clientes()
+    activos       = [c for c in clientes if c["activo"]]
+    todos         = clientes
 
-    mostrar_todos = st.checkbox("Mostrar clientes pendientes también", value=False)
-    opciones = todos if mostrar_todos else activos
+    ver_todos     = st.checkbox("Incluir clientes pendientes", value=False)
+    lista         = todos if ver_todos else activos
+    nombres       = [c["nombre"] for c in lista]
 
     nombre_sel = st.selectbox(
-        "Seleccionar cliente",
-        opciones,
+        "Cliente",
+        nombres,
         index=None,
-        placeholder="Escribe para buscar...",
+        placeholder="Escribí para buscar...",
     )
 
     if nombre_sel:
-        cliente = next(c for c in clientes if c["nombre"] == nombre_sel)
+        cliente = next(c for c in lista if c["nombre"] == nombre_sel)
 
         st.markdown(f"""
-        <div class='cliente-card'>
+        <div class='card'>
             📍 <b>Dirección:</b> {cliente['direccion']}<br>
-            🏢 <b>Empresa:</b> {cliente['empresa']}<br>
+            🏢 <b>Empresa:</b> {cliente['empresa']} &nbsp;|&nbsp;
             💳 <b>NIT:</b> {cliente['nit']}<br>
             🏷️ <b>Tipo:</b> {cliente['tipo']} &nbsp;|&nbsp;
             📅 <b>Crédito:</b> {cliente['credito']} días &nbsp;|&nbsp;
             📌 <b>Zona:</b> {cliente['codigo_lugar']}
-            {" &nbsp;🔖 <b>Precio Antigua</b>" if cliente['es_antigua'] else ""}
+            {"&nbsp;🔖 <b>Precio Antigua</b>" if cliente['es_antigua'] else ""}
         </div>
         """, unsafe_allow_html=True)
 
-        fecha = st.date_input(
-            "📅 Fecha de entrega",
-            value=date.today(),
-            min_value=date.today(),
-        )
+        fecha  = st.date_input("📅 Fecha de entrega", value=date.today(), min_value=date.today())
         semana = fecha.isocalendar()[1]
-        st.caption(f"Semana {semana} · {fecha.strftime('%A %d de %B %Y')}")
+        st.caption(f"Semana {semana} · {fecha.strftime('%A %d/%m/%Y')}")
 
         if st.button("Continuar → Agregar Productos", type="primary"):
             st.session_state.cliente       = cliente
             st.session_state.fecha_entrega = fecha
-            st.session_state.paso          = 2
+            # Resetear grid al cambiar cliente
+            st.session_state.grid_data = None
+            st.session_state.filas_grid = 15
+            st.session_state.paso = 2
             st.rerun()
     else:
         st.info("Seleccioná un cliente para continuar.")
 
 
-# ── PASO 2: PRODUCTOS ─────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# PASO 2 — GRILLA DE PRODUCTOS (15 lineas por defecto)
+# ═══════════════════════════════════════════════════════════════════════════════
 def _paso_productos():
     cliente = st.session_state.cliente
     fecha   = st.session_state.fecha_entrega
 
     st.subheader(f"🛒 Productos para {cliente['nombre']}")
-    st.caption(f"📅 Entrega: {fecha.strftime('%d/%m/%Y')} · 📍 {cliente['direccion']}")
+    st.caption(
+        f"📅 {fecha.strftime('%d/%m/%Y')} · "
+        f"📍 {cliente['direccion']}"
+        + (" · 🔖 Precios Antigua" if cliente["es_antigua"] else "")
+    )
 
-    if cliente["es_antigua"]:
-        st.info("🔖 Aplicando **lista de precios Antigua** para este cliente.")
+    # Cargar catalogo
+    productos  = cargar_productos(es_antigua=cliente["es_antigua"])
+    prod_dict  = {p["nombre"]: p for p in productos}
+    nombres_p  = [""] + [p["nombre"] for p in productos]
 
-    productos    = cargar_productos(es_antigua=cliente["es_antigua"])
-    nombres_prod = [p["nombre"] for p in productos]
+    n_filas = st.session_state.filas_grid
 
-    # ── Formulario para agregar producto ──────────────────────────────────────
-    with st.expander("➕ Agregar producto al pedido", expanded=True):
-        prod_sel = st.selectbox(
-            "Producto",
-            nombres_prod,
-            index=None,
-            placeholder="Escribe para buscar...",
-            key="sel_producto",
+    # Inicializar o recuperar el DataFrame del grid
+    if st.session_state.grid_data is None:
+        st.session_state.grid_data = pd.DataFrame({
+            "Producto":   [""] * n_filas,
+            "Cantidad":   [0.0] * n_filas,
+        })
+    elif len(st.session_state.grid_data) < n_filas:
+        # Agregar filas extra si el usuario pidio mas
+        extra_n = n_filas - len(st.session_state.grid_data)
+        extra   = pd.DataFrame({"Producto": [""] * extra_n, "Cantidad": [0.0] * extra_n})
+        st.session_state.grid_data = pd.concat(
+            [st.session_state.grid_data, extra], ignore_index=True
         )
 
-        if prod_sel:
-            prod = next(p for p in productos if p["nombre"] == prod_sel)
+    st.markdown("**Completá el pedido** — dejá en blanco las filas que no uses:")
 
-            col1, col2 = st.columns(2)
-            with col1:
-                cantidad = st.number_input(
-                    f"Cantidad ({prod['unidad']})",
-                    min_value=0.0,
-                    value=1.0,
-                    step=0.5,
-                    key="cant_input",
-                )
-            with col2:
-                precio = st.number_input(
-                    "Precio unitario (Q)",
-                    min_value=0.0,
-                    value=float(prod["precio"]),
-                    step=0.50,
-                    key="precio_input",
-                    help="Podés ajustar el precio manualmente si lo necesitás",
-                )
+    # ── GRILLA ────────────────────────────────────────────────────────────────
+    editado = st.data_editor(
+        st.session_state.grid_data,
+        column_config={
+            "Producto": st.column_config.SelectboxColumn(
+                "Producto",
+                options=nombres_p,
+                required=False,
+                width="large",
+            ),
+            "Cantidad": st.column_config.NumberColumn(
+                "Cantidad",
+                min_value=0.0,
+                step=0.5,
+                format="%.1f",
+                width="small",
+            ),
+        },
+        num_rows="fixed",
+        use_container_width=True,
+        hide_index=False,
+        key="grid_editor",
+    )
 
-            # Info del producto
-            info_parts = [f"💰 Costo: Q{prod['costo']:.2f}"]
-            if prod["proveedor"]:
-                info_parts.append(f"🏭 {prod['proveedor']}")
-            if prod["comentario"]:
-                info_parts.append(f"📝 {prod['comentario']}")
-            if prod["es_especialidad"]:
-                info_parts.append("⭐ Especialidad")
-            st.caption(" · ".join(info_parts))
+    # ── BOTONES ───────────────────────────────────────────────────────────────
+    col1, col2, col3 = st.columns([2, 2, 3])
 
-            if cantidad > 0:
-                subtotal = cantidad * precio
-                st.markdown(f"**Subtotal: Q{subtotal:,.2f}**")
+    with col1:
+        if st.button("+ 5 líneas", help="Agregar 5 filas más al pedido"):
+            st.session_state.grid_data  = editado
+            st.session_state.filas_grid = len(editado) + 5
+            st.rerun()
 
-            agregar_disabled = (cantidad <= 0 or precio <= 0)
-            if st.button("➕ Agregar al pedido", type="primary", disabled=agregar_disabled):
-                nuevo_item = {
-                    "nombre":          prod_sel,
-                    "unidad":          prod["unidad"],
-                    "segmento":        prod["segmento"],
-                    "costo":           prod["costo"],
-                    "precio":          precio,
-                    "cantidad":        cantidad,
-                    "proveedor":       prod["proveedor"],
-                    "parent":          prod["parent"],
-                    "unidad_despacho": prod["unidad_despacho"],
-                }
-                st.session_state.lineas.append(nuevo_item)
-                st.rerun()
+    with col2:
+        if st.button("+ 10 líneas", help="Agregar 10 filas más al pedido"):
+            st.session_state.grid_data  = editado
+            st.session_state.filas_grid = len(editado) + 10
+            st.rerun()
 
-    # ── Lista del pedido actual ───────────────────────────────────────────────
+    with col3:
+        if st.button("🗑 Limpiar todo", type="secondary"):
+            st.session_state.grid_data  = None
+            st.session_state.filas_grid = 15
+            st.rerun()
+
     st.divider()
-    items = st.session_state.lineas
 
-    if items:
-        st.markdown("#### 📋 Pedido actual")
+    # ── VISTA PREVIA DEL TOTAL ─────────────────────────────────────────────────
+    lineas_validas = [
+        row for _, row in editado.iterrows()
+        if row["Producto"] and row["Cantidad"] > 0
+    ]
 
-        total_venta = 0
-        total_costo = 0
+    if lineas_validas:
+        total_est = sum(
+            row["Cantidad"] * prod_dict[row["Producto"]]["precio"]
+            for row in lineas_validas
+            if row["Producto"] in prod_dict
+        )
+        st.markdown(
+            f"<div class='total-card'>"
+            f"<b>{len(lineas_validas)} productos</b> · "
+            f"Total estimado: <b>Q{total_est:,.2f}</b>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
-        for i, item in enumerate(items):
-            subtotal     = item["cantidad"] * item["precio"]
-            costo_linea  = item["cantidad"] * item["costo"]
-            total_venta += subtotal
-            total_costo += costo_linea
+    # ── NAVEGACION ─────────────────────────────────────────────────────────────
+    c_back, c_next = st.columns(2)
 
-            c1, c2, c3, c4, c5 = st.columns([3, 1.2, 1.2, 1.5, 0.6])
-            c1.write(f"**{item['nombre']}**")
-            c2.write(f"{item['cantidad']} {item['unidad']}")
-            c3.write(f"Q{item['precio']:.2f}")
-            c4.write(f"**Q{subtotal:,.2f}**")
-            if c5.button("🗑", key=f"del_{i}", help="Quitar"):
-                st.session_state.lineas.pop(i)
-                st.rerun()
-
-        # Total
-        margen_bruto = total_venta - total_costo
-        pct_margen   = (margen_bruto / total_venta * 100) if total_venta else 0
-
-        st.markdown(f"""
-        <div class='total-card'>
-            <h3>Total del Pedido: Q{total_venta:,.2f}</h3>
-            <small>Costo: Q{total_costo:,.2f} · Margen bruto: Q{margen_bruto:,.2f} ({pct_margen:.1f}%)</small>
-        </div>
-        """, unsafe_allow_html=True)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("← Cambiar cliente", type="secondary"):
-                st.session_state.paso = 1
-                st.rerun()
-        with col2:
-            if st.button("Revisar y Confirmar →", type="primary"):
-                st.session_state.paso = 3
-                st.rerun()
-    else:
-        st.info("Agregá al menos un producto para continuar.")
-        if st.button("← Volver", type="secondary"):
+    with c_back:
+        if st.button("← Cambiar cliente", type="secondary"):
+            st.session_state.grid_data = editado
             st.session_state.paso = 1
             st.rerun()
 
+    with c_next:
+        if st.button("Revisar y Confirmar →", type="primary"):
+            # Procesar filas validas
+            lineas = []
+            for row in lineas_validas:
+                prod = prod_dict.get(row["Producto"])
+                if prod:
+                    lineas.append({
+                        "nombre":   row["Producto"],
+                        "cantidad": row["Cantidad"],
+                        "precio":   prod["precio"],   # referencia visual, Excel recalcula
+                        "unidad":   prod["unidad"],
+                    })
 
-# ── PASO 3: CONFIRMACIÓN Y GUARDADO ──────────────────────────────────────────
+            if not lineas:
+                st.warning("⚠️ Completá al menos un producto con cantidad mayor a 0.")
+            else:
+                st.session_state.grid_data = editado
+                st.session_state.lineas    = lineas
+                st.session_state.paso      = 3
+                st.rerun()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PASO 3 — CONFIRMACION Y GUARDADO
+# ═══════════════════════════════════════════════════════════════════════════════
 def _paso_confirmar():
     cliente = st.session_state.cliente
     fecha   = st.session_state.fecha_entrega
-    items   = st.session_state.lineas
+    lineas  = st.session_state.lineas
 
     st.subheader("✅ Confirmar Pedido")
 
-    # Resumen cliente
     st.markdown(f"""
-    <div class='cliente-card'>
+    <div class='card'>
         👤 <b>{cliente['nombre']}</b> — {cliente['empresa']}<br>
-        💳 NIT: {cliente['nit']} &nbsp;|&nbsp;
-        📍 {cliente['direccion']}<br>
         📅 Entrega: <b>{fecha.strftime('%d/%m/%Y')}</b>
         (Semana {fecha.isocalendar()[1]}) &nbsp;|&nbsp;
-        📋 Crédito: {cliente['credito']} días
+        📅 Crédito: {cliente['credito']} días<br>
+        📍 {cliente['direccion']} &nbsp;|&nbsp; NIT: {cliente['nit']}
     </div>
     """, unsafe_allow_html=True)
 
     st.divider()
-
-    # Tabla de productos
     st.markdown("**Detalle del pedido:**")
-    h = st.columns([3.5, 1, 1.2, 1.2, 1.5])
+
+    # Encabezado de tabla
+    h = st.columns([4, 1, 1.5])
     h[0].markdown("**Producto**")
     h[1].markdown("**Cant.**")
-    h[2].markdown("**Precio**")
-    h[3].markdown("**Costo**")
-    h[4].markdown("**Subtotal**")
+    h[2].markdown("**Precio est.**")
 
-    total_venta = total_costo = 0
-    for item in items:
-        subtotal    = item["cantidad"] * item["precio"]
-        costo_linea = item["cantidad"] * item["costo"]
-        total_venta += subtotal
-        total_costo += costo_linea
-
-        r = st.columns([3.5, 1, 1.2, 1.2, 1.5])
-        r[0].write(item["nombre"])
-        r[1].write(f"{item['cantidad']} {item['unidad']}")
-        r[2].write(f"Q{item['precio']:.2f}")
-        r[3].write(f"Q{item['costo']:.2f}")
-        r[4].write(f"**Q{subtotal:,.2f}**")
+    total_est = 0
+    for linea in lineas:
+        r = st.columns([4, 1, 1.5])
+        r[0].write(linea["nombre"])
+        r[1].write(f"{linea['cantidad']} {linea['unidad']}")
+        precio_est = linea["precio"] * linea["cantidad"]
+        r[2].write(f"Q{precio_est:,.2f}")
+        total_est += precio_est
 
     st.divider()
-
-    # Métricas finales
-    margen_bruto = total_venta - total_costo
-    pct_margen   = (margen_bruto / total_venta * 100) if total_venta else 0
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("💰 Total Venta",    f"Q{total_venta:,.2f}")
-    c2.metric("📦 Total Costo",    f"Q{total_costo:,.2f}")
-    c3.metric("📈 Margen Bruto",   f"Q{margen_bruto:,.2f}",
-              delta=f"{pct_margen:.1f}%")
+    st.markdown(
+        f"<div class='total-card'>"
+        f"<b>{len(lineas)} productos</b> · Total estimado: <b>Q{total_est:,.2f}</b><br>"
+        f"<small>⚠️ El precio final lo calcula Excel con sus fórmulas al abrir el archivo</small>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
     st.divider()
+    c1, c2 = st.columns(2)
 
-    col1, col2 = st.columns(2)
-    with col1:
+    with c1:
         if st.button("← Editar productos", type="secondary"):
             st.session_state.paso = 2
             st.rerun()
-    with col2:
-        if st.button("💾 Guardar Pedido en Excel", type="primary"):
+
+    with c2:
+        if st.button("💾 Guardar en Excel", type="primary"):
             with st.spinner("⏳ Guardando en Google Drive..."):
                 try:
-                    n = guardar_pedido(cliente, fecha, items)
+                    n = guardar_pedido(
+                        nombre_cliente = cliente["nombre"],
+                        fecha_entrega  = fecha,
+                        items          = lineas,
+                    )
                     st.session_state.filas_guardadas = n
                     st.session_state.guardado_ok     = True
                     st.session_state.paso            = 4
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Error al guardar: {e}")
-                    st.caption("Verificá tu conexión a internet e intentá de nuevo.")
 
 
-# ── PASO 4: ÉXITO ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# PASO 4 — EXITO
+# ═══════════════════════════════════════════════════════════════════════════════
 def _paso_exito():
     cliente = st.session_state.cliente
     fecha   = st.session_state.fecha_entrega
-    items   = st.session_state.lineas
+    lineas  = st.session_state.lineas
     n       = st.session_state.filas_guardadas
-    total   = sum(i["cantidad"] * i["precio"] for i in items)
 
-    st.success("### 🎉 ¡Pedido guardado exitosamente!")
+    st.success(f"### 🎉 ¡Pedido guardado exitosamente!")
     st.balloons()
 
     st.markdown(f"""
-    <div class='cliente-card'>
+    <div class='card'>
         👤 <b>{cliente['nombre']}</b><br>
         📅 Entrega: {fecha.strftime('%d/%m/%Y')}<br>
-        🛒 {len(items)} productos · {n} líneas guardadas<br>
-        💰 Total: <b>Q{total:,.2f}</b>
+        🛒 {len(lineas)} productos · {n} filas escritas en Excel
     </div>
     """, unsafe_allow_html=True)
 
     st.info(
-        "⚠️ **Recordatorio:** Abrí el Excel y **actualizá las tablas dinámicas** "
-        "(Datos → Actualizar todo) para ver el nuevo pedido en tus reportes."
+        "📊 **Siguiente paso:** Abrí el Excel en Drive y hacé "
+        "**Datos → Actualizar todo** para refrescar las tablas dinámicas."
     )
 
     st.divider()
@@ -387,16 +378,15 @@ def _paso_exito():
         st.rerun()
 
 
-# ── MAIN ──────────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════════════════
 def main():
-    # Logo y título
     st.markdown("## 🥬 Rio Veggi — Pedidos")
 
-    # Indicador de pasos (solo en pasos 1-3)
     if st.session_state.paso in (1, 2, 3):
-        _mostrar_pasos()
+        _pasos()
 
-    # Router de pasos
     if   st.session_state.paso == 1: _paso_cliente()
     elif st.session_state.paso == 2: _paso_productos()
     elif st.session_state.paso == 3: _paso_confirmar()
