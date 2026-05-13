@@ -1,11 +1,248 @@
 """
-modulo_gestion.py — Historial de pedidos, edición y cancelación
+modulo_gestion.py — Revisar y Modificar Pedidos
+Sub-menú: Revisar Pedidos | Modificar Pedido
 """
 import streamlit as st
-from datetime import date
-from excel_helper import leer_pedidos, cancelar_pedido, restaurar_pedido, editar_cantidad_linea
+import pandas as pd
+from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido,
+                           editar_linea)
+from data_helper import cargar_productos
 
 
+# ── FILTROS COMPARTIDOS ───────────────────────────────────────────────────────
+def _aplicar_filtros(todos: list, sufijo: str = "") -> dict:
+    """
+    Renderiza los 5 filtros y retorna pedidos agrupados por Unico.
+    sufijo: para evitar key collision entre las dos pestañas.
+    """
+    años_disp    = sorted({str(p["año"])  for p in todos if p["año"]},  reverse=True)
+    sems_disp    = sorted({p["semana"]    for p in todos if p["semana"]})
+    fechas_disp  = sorted(
+        {p["fecha"].strftime("%d/%m/%Y") for p in todos if p["fecha"]},
+        reverse=True,
+    )
+    clientes_disp = sorted({p["cliente"] for p in todos if p["cliente"]})
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        sel_años = st.multiselect("Año",     años_disp,    key=f"g_años{sufijo}",
+                                   placeholder="Todos")
+    with c2:
+        sel_sems = st.multiselect("Semana",  [str(s) for s in sems_disp],
+                                   key=f"g_sems{sufijo}", placeholder="Todas")
+    with c3:
+        sel_fec  = st.multiselect("Fecha",   fechas_disp,  key=f"g_fec{sufijo}",
+                                   placeholder="Todas")
+    with c4:
+        sel_clis = st.multiselect("Cliente", clientes_disp, key=f"g_clis{sufijo}",
+                                   placeholder="Todos")
+    with c5:
+        sel_est  = st.selectbox("Estado", ["Todos", "Pendiente", "Cancelado"],
+                                 key=f"g_est{sufijo}")
+
+    # Aplicar filtros
+    f = todos
+    if sel_años:
+        f = [p for p in f if str(p["año"]) in sel_años]
+    if sel_sems:
+        f = [p for p in f if str(p["semana"]) in sel_sems]
+    if sel_fec:
+        f = [p for p in f if p["fecha"] and
+             p["fecha"].strftime("%d/%m/%Y") in sel_fec]
+    if sel_clis:
+        f = [p for p in f if p["cliente"] in sel_clis]
+
+    # Agrupar por Unico
+    grupos: dict = {}
+    for p in f:
+        grupos.setdefault(p["unico"], []).append(p)
+
+    # Filtro de estado
+    if sel_est != "Todos":
+        grupos = {
+            u: ls for u, ls in grupos.items()
+            if (sel_est == "Cancelado") == all(l["status"] == "Cancelado" for l in ls)
+        }
+
+    return dict(sorted(
+        grupos.items(),
+        key=lambda x: (x[1][0]["año"] or 0, x[1][0]["semana"] or 0),
+        reverse=True,
+    ))
+
+
+def _label_pedido(unico: str, lineas: list) -> str:
+    l0 = lineas[0]
+    total = sum(l["total"] or 0 for l in lineas)
+    est   = "🔴" if all(l["status"] == "Cancelado" for l in lineas) else "🟢"
+    fecha = l0["fecha"].strftime("%d/%m/%Y") if l0["fecha"] else "—"
+    return (f"{est}  {fecha}  ·  {l0['cliente']}  "
+            f"·  Sem {l0['semana']}/{l0['año']}  "
+            f"·  {len(lineas)} prod  ·  Q{total:,.2f}")
+
+
+# ── SUB-MÓDULO: REVISAR PEDIDOS ───────────────────────────────────────────────
+def _revisar(todos: list):
+    grupos = _aplicar_filtros(todos, sufijo="_rev")
+
+    if not grupos:
+        st.warning("No hay pedidos con esos filtros.")
+        return
+
+    st.divider()
+
+    # Multiselect de pedidos
+    opciones = {u: _label_pedido(u, ls) for u, ls in grupos.items()}
+    sel = st.multiselect(
+        "Pedidos a revisar (podés elegir más de uno)",
+        list(opciones.keys()),
+        format_func=lambda u: opciones[u],
+        key="rev_sel",
+        placeholder="Seleccioná uno o más pedidos...",
+    )
+
+    if not sel:
+        st.info("Seleccioná al menos un pedido para ver el detalle.")
+        return
+
+    for unico in sel:
+        lineas = grupos[unico]
+        l0     = lineas[0]
+        total  = sum(l["total"] or 0 for l in lineas)
+        est    = all(l["status"] == "Cancelado" for l in lineas)
+
+        with st.expander(
+            f"{'🔴' if est else '🟢'}  **{l0['cliente']}**  ·  "
+            f"{l0['fecha'].strftime('%d/%m/%Y') if l0['fecha'] else '—'}  ·  "
+            f"Sem {l0['semana']}/{l0['año']}",
+            expanded=True,
+        ):
+            hdr = st.columns([4, 1.2, 1.5, 1.5, 1.5])
+            hdr[0].markdown("**Producto**"); hdr[1].markdown("**Cant.**")
+            hdr[2].markdown("**Precio**");   hdr[3].markdown("**Total**")
+            hdr[4].markdown("**Estado**")
+            for l in lineas:
+                r = st.columns([4, 1.2, 1.5, 1.5, 1.5])
+                r[0].write(l["producto"]); r[1].write(l["cantidad"])
+                r[2].write(f"Q{l['precio']:,.2f}" if l["precio"] else "—")
+                r[3].write(f"Q{l['total']:,.2f}"  if l["total"]  else "—")
+                r[4].write(l["status"])
+            st.markdown(
+                f"<div style='text-align:right;font-weight:bold'>"
+                f"Total: Q{total:,.2f}</div>", unsafe_allow_html=True)
+
+
+# ── SUB-MÓDULO: MODIFICAR PEDIDO ──────────────────────────────────────────────
+def _modificar(todos: list):
+    grupos = _aplicar_filtros(todos, sufijo="_mod")
+
+    if not grupos:
+        st.warning("No hay pedidos con esos filtros.")
+        return
+
+    st.divider()
+
+    opciones = {u: _label_pedido(u, ls) for u, ls in grupos.items()}
+    sel = st.multiselect(
+        "Pedidos a modificar (podés elegir más de uno)",
+        list(opciones.keys()),
+        format_func=lambda u: opciones[u],
+        key="mod_sel",
+        placeholder="Seleccioná uno o más pedidos...",
+    )
+
+    if not sel:
+        st.info("Seleccioná al menos un pedido para modificarlo.")
+        return
+
+    # Catálogo de productos para el selectbox
+    prods_lista = [""] + [p["nombre"] for p in cargar_productos(False)]
+
+    for unico in sel:
+        lineas   = grupos[unico]
+        l0       = lineas[0]
+        cancelado = all(l["status"] == "Cancelado" for l in lineas)
+        total    = sum(l["total"] or 0 for l in lineas)
+
+        with st.expander(
+            f"{'🔴' if cancelado else '🟢'}  **{l0['cliente']}**  ·  "
+            f"{l0['fecha'].strftime('%d/%m/%Y') if l0['fecha'] else '—'}  ·  "
+            f"Sem {l0['semana']}/{l0['año']}  ·  Q{total:,.2f}",
+            expanded=True,
+        ):
+            # ── Acción sobre el pedido completo ───────────────────────────────
+            if not cancelado:
+                if st.button("🔴 Cancelar pedido completo",
+                             key=f"mod_cancel_{unico}", type="secondary"):
+                    with st.spinner("Cancelando..."):
+                        cancelar_pedido(unico)
+                    st.success("Pedido cancelado."); st.rerun()
+            else:
+                if st.button("🟢 Restaurar a Pendiente",
+                             key=f"mod_rest_{unico}", type="secondary"):
+                    with st.spinner("Restaurando..."):
+                        restaurar_pedido(unico)
+                    st.success("Pedido restaurado."); st.rerun()
+
+            # ── Edición línea por línea ───────────────────────────────────────
+            if not cancelado:
+                st.markdown("**Editar líneas del pedido:**")
+                st.caption("El precio aquí es puntual para este pedido "
+                           "(descuento o ajuste de costo). No modifica el catálogo.")
+
+                for linea in lineas:
+                    uid_l = f"{unico}_{linea['row_num']}"
+                    with st.container():
+                        st.markdown(f"---\n**{linea['producto']}**")
+                        ec1, ec2, ec3, ec4 = st.columns([3, 1.5, 1.5, 1.2])
+
+                        with ec1:
+                            prod_nuevo = st.selectbox(
+                                "Producto",
+                                prods_lista,
+                                index=prods_lista.index(linea["producto"])
+                                      if linea["producto"] in prods_lista else 0,
+                                key=f"mod_prod_{uid_l}",
+                            )
+                        with ec2:
+                            cant_nueva = st.number_input(
+                                "Cantidad",
+                                min_value=0.0,
+                                value=float(linea["cantidad"] or 0),
+                                step=0.5,
+                                key=f"mod_cant_{uid_l}",
+                            )
+                        with ec3:
+                            precio_nuevo = st.number_input(
+                                "Precio (Q)",
+                                min_value=0.0,
+                                value=float(linea["precio"] or 0),
+                                step=0.50,
+                                key=f"mod_prec_{uid_l}",
+                                help="Precio puntual para este pedido únicamente",
+                            )
+                        with ec4:
+                            st.markdown("&nbsp;", unsafe_allow_html=True)  # spacer
+                            if st.button("💾 Guardar",
+                                         key=f"mod_save_{uid_l}", type="primary"):
+                                cambios = {}
+                                if prod_nuevo and prod_nuevo != linea["producto"]:
+                                    cambios["nuevo_producto"] = prod_nuevo
+                                if cant_nueva != float(linea["cantidad"] or 0):
+                                    cambios["nueva_cantidad"] = cant_nueva
+                                if precio_nuevo != float(linea["precio"] or 0):
+                                    cambios["nuevo_precio"] = precio_nuevo
+
+                                if cambios:
+                                    with st.spinner("Guardando..."):
+                                        editar_linea(linea["row_num"], **cambios)
+                                    st.success("✅ Línea actualizada.")
+                                    st.rerun()
+                                else:
+                                    st.info("No hay cambios para guardar.")
+
+
+# ── ENTRY POINT ───────────────────────────────────────────────────────────────
 def mostrar():
     st.markdown("## 📋 Gestión de Pedidos")
 
@@ -16,137 +253,10 @@ def mostrar():
         st.info("No hay pedidos registrados aún.")
         return
 
-    # ── FILTROS ───────────────────────────────────────────────────────────────
-    c1, c2, c3, c4, c5 = st.columns(5)
+    tab_rev, tab_mod = st.tabs(["🔍 Revisar Pedidos", "✏️ Modificar Pedido"])
 
-    clientes_lista = ["Todos"] + sorted({p["cliente"] for p in todos if p["cliente"]})
-    with c1:
-        fil_cliente = st.selectbox("Cliente", clientes_lista, key="g_cli")
-    with c2:
-        fil_fecha = st.date_input("Fecha entrega", value=None, key="g_fecha")
-    with c3:
-        fil_semana = st.number_input("Semana (0=todas)", min_value=0,
-                                      max_value=53, value=0, step=1, key="g_sem")
-    with c4:
-        años_lista = ["Todos"] + sorted({str(p["año"]) for p in todos if p["año"]}, reverse=True)
-        fil_año = st.selectbox("Año", años_lista, key="g_año")
-    with c5:
-        fil_status = st.selectbox("Estado", ["Todos", "Pendiente", "Cancelado"], key="g_st")
+    with tab_rev:
+        _revisar(todos)
 
-    # ── Aplicar filtros ───────────────────────────────────────────────────────
-    filtrados = todos
-    if fil_cliente != "Todos":
-        filtrados = [p for p in filtrados if p["cliente"] == fil_cliente]
-    if fil_fecha:
-        filtrados = [p for p in filtrados if p["fecha"] == fil_fecha]
-    if fil_semana > 0:
-        filtrados = [p for p in filtrados if p["semana"] == fil_semana]
-    if fil_año != "Todos":
-        filtrados = [p for p in filtrados if str(p["año"]) == fil_año]
-
-    # Agrupar por Unico
-    grupos: dict = {}
-    for p in filtrados:
-        grupos.setdefault(p["unico"], []).append(p)
-
-    if fil_status != "Todos":
-        grupos = {
-            u: ls for u, ls in grupos.items()
-            if (fil_status == "Cancelado") == all(l["status"] == "Cancelado" for l in ls)
-        }
-
-    if not grupos:
-        st.warning("No hay pedidos con esos filtros.")
-        return
-
-    grupos_ord = sorted(
-        grupos.items(),
-        key=lambda x: (x[1][0]["año"] or 0, x[1][0]["semana"] or 0),
-        reverse=True,
-    )
-
-    # ── SELECTOR ─────────────────────────────────────────────────────────────
-    st.divider()
-    opciones = {
-        unico: (
-            f"{ls[0]['fecha'].strftime('%d/%m/%Y') if ls[0]['fecha'] else '—'}"
-            f"  ·  {ls[0]['cliente']}"
-            f"  ·  Sem {ls[0]['semana']}/{ls[0]['año']}"
-            f"  ·  {len(ls)} productos"
-            f"  ·  {'🔴 Cancelado' if all(l['status']=='Cancelado' for l in ls) else '🟢 Pendiente'}"
-        )
-        for unico, ls in grupos_ord
-    }
-
-    unico_sel = st.selectbox(
-        "Seleccioná un pedido",
-        list(opciones.keys()),
-        format_func=lambda u: opciones[u],
-        key="g_sel",
-    )
-
-    # ── DETALLE ───────────────────────────────────────────────────────────────
-    if not unico_sel:
-        return
-
-    lineas_sel = grupos[unico_sel]
-    l0         = lineas_sel[0]
-    total_sel  = sum((l["total"] or 0) for l in lineas_sel)
-    cancelado  = all(l["status"] == "Cancelado" for l in lineas_sel)
-
-    st.markdown(f"""
-    <div style='background:#f1f8f1;border-left:4px solid #2e7d32;border-radius:6px;
-                padding:8px 14px;margin:6px 0;font-size:.93rem'>
-    👤 <b>{l0['cliente']}</b> &nbsp;·&nbsp;
-    📅 {l0['fecha'].strftime('%d/%m/%Y') if l0['fecha'] else '—'} &nbsp;·&nbsp;
-    Semana {l0['semana']}/{l0['año']} &nbsp;·&nbsp;
-    {'🔴 Cancelado' if cancelado else '🟢 Pendiente'}
-    </div>""", unsafe_allow_html=True)
-
-    # Tabla compacta de productos
-    hdr = st.columns([4, 1.2, 1.5, 1.5])
-    hdr[0].markdown("**Producto**"); hdr[1].markdown("**Cant.**")
-    hdr[2].markdown("**Precio**");   hdr[3].markdown("**Total**")
-    for l in lineas_sel:
-        r = st.columns([4, 1.2, 1.5, 1.5])
-        r[0].write(l["producto"])
-        r[1].write(l["cantidad"])
-        r[2].write(f"Q{l['precio']:,.2f}" if l["precio"] else "—")
-        r[3].write(f"Q{l['total']:,.2f}"  if l["total"]  else "—")
-
-    st.markdown(
-        f"<div style='text-align:right;font-weight:bold;margin:4px 0'>"
-        f"Total: Q{total_sel:,.2f}</div>", unsafe_allow_html=True)
-    st.divider()
-
-    # ── ACCIONES ─────────────────────────────────────────────────────────────
-    col_acc, col_edit = st.columns([1, 2])
-
-    with col_acc:
-        st.markdown("**Acción:**")
-        if not cancelado:
-            if st.button("🔴 Cancelar pedido", key="btn_cancel", type="secondary"):
-                with st.spinner("Cancelando..."):
-                    cancelar_pedido(unico_sel)
-                st.success("Pedido cancelado."); st.rerun()
-        else:
-            if st.button("🟢 Restaurar pedido", key="btn_rest", type="secondary"):
-                with st.spinner("Restaurando..."):
-                    restaurar_pedido(unico_sel)
-                st.success("Pedido restaurado."); st.rerun()
-
-    with col_edit:
-        if not cancelado:
-            st.markdown("**Editar cantidad:**")
-            prod_edit = st.selectbox("Producto", [l["producto"] for l in lineas_sel],
-                                      key="g_pe")
-            linea_e   = next(l for l in lineas_sel if l["producto"] == prod_edit)
-            nueva_c   = st.number_input("Cantidad", min_value=0.0,
-                                         value=float(linea_e["cantidad"] or 0),
-                                         step=0.5, key=f"g_nc_{unico_sel}")
-            if st.button("💾 Guardar", key="btn_gc", type="primary"):
-                with st.spinner("Guardando..."):
-                    editar_cantidad_linea(linea_e["row_num"], nueva_c)
-                st.success(f"Cantidad actualizada a {nueva_c}."); st.rerun()
-        else:
-            st.info("Restaurá el pedido para editar cantidades.")
+    with tab_mod:
+        _modificar(todos)

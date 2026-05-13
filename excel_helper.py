@@ -103,6 +103,26 @@ def editar_cantidad_linea(row_num: int, nueva_cantidad: float):
     st.cache_data.clear()
 
 
+def editar_linea(row_num: int, nuevo_producto: str = None,
+                  nueva_cantidad: float = None, nuevo_precio: float = None):
+    """
+    Edita producto, cantidad y/o precio de una línea específica del pedido.
+    El precio se escribe como valor estático (sobrescribe el VLOOKUP solo en esa fila),
+    permitiendo descuentos o ajustes puntuales sin afectar el catálogo de precios.
+    """
+    wb = cargar_para_escritura(FILE_ID)
+    ws = wb["Pedidos"]
+    if nuevo_producto is not None:
+        ws.cell(row=row_num, column=4).value = nuevo_producto  # col D: Producto
+    if nueva_cantidad is not None:
+        ws.cell(row=row_num, column=3).value = nueva_cantidad  # col C: Cantidad
+    if nuevo_precio is not None:
+        ws.cell(row=row_num, column=5).value = nuevo_precio    # col E: Precio (estático)
+    guardar_en_drive(wb, FILE_ID)
+    wb.close()
+    st.cache_data.clear()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CLIENTES
 # ═══════════════════════════════════════════════════════════════════════════════
