@@ -25,7 +25,7 @@ with st.sidebar:
     st.divider()
     pagina = st.radio(
         "Módulo",
-        ["🛒 Nuevo Pedido", "📋 Gestión Pedidos", "👥 Clientes", "📦 Productos"],
+        ["🛒 Nuevo Pedido", "📋 Gestión Pedidos", "👥 Clientes", "📦 Productos", "🧮 Cotizador"],
         key="nav",
         label_visibility="collapsed",
     )
@@ -48,3 +48,7 @@ elif pagina == "👥 Clientes":
 elif pagina == "📦 Productos":
     import modulo_productos
     modulo_productos.mostrar()
+
+elif pagina == "🧮 Cotizador":
+    import modulo_cotizador
+    modulo_cotizador.mostrar()
