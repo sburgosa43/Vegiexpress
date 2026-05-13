@@ -1,5 +1,6 @@
 """
-modulo_gestion.py — Historial de pedidos, edicion de cantidades, cancelacion
+modulo_gestion.py — Historial de pedidos, edición y cancelación
+UX: Filtros → Tabla resumen → Seleccionar pedido → Ver detalle + acciones
 """
 import streamlit as st
 import pandas as pd
@@ -9,41 +10,43 @@ from excel_helper import leer_pedidos, cancelar_pedido, restaurar_pedido, editar
 def mostrar():
     st.markdown("## 📋 Gestión de Pedidos")
 
-    pedidos = leer_pedidos()
-    if not pedidos:
+    # ── Cargar datos ──────────────────────────────────────────────────────────
+    with st.spinner("Cargando pedidos..."):
+        todos = leer_pedidos()
+
+    if not todos:
         st.info("No hay pedidos registrados aún.")
         return
 
     # ── FILTROS ───────────────────────────────────────────────────────────────
-    with st.expander("🔍 Filtros", expanded=True):
-        col1, col2, col3 = st.columns(3)
+    st.markdown("#### 🔍 Filtros")
+    f1, f2, f3, f4 = st.columns(4)
 
-        clientes_unicos = sorted({p["cliente"] for p in pedidos if p["cliente"]})
-        with col1:
-            filtro_cliente = st.selectbox("Cliente", ["Todos"] + clientes_unicos,
-                                          key="gest_cli")
-        años_unicos = sorted({p["año"] for p in pedidos if p["año"]}, reverse=True)
-        with col2:
-            filtro_año = st.selectbox("Año", ["Todos"] + [str(a) for a in años_unicos],
-                                      key="gest_año")
-        with col3:
-            filtro_status = st.selectbox("Estado", ["Todos", "Pendiente", "Cancelado"],
-                                         key="gest_status")
+    clientes_lista = ["Todos"] + sorted({p["cliente"] for p in todos if p["cliente"]})
+    años_lista     = ["Todos"] + sorted({str(p["año"]) for p in todos if p["año"]},
+                                        reverse=True)
 
-    # Aplicar filtros
-    filtrados = pedidos
-    if filtro_cliente != "Todos":
-        filtrados = [p for p in filtrados if p["cliente"] == filtro_cliente]
-    if filtro_año != "Todos":
-        filtrados = [p for p in filtrados if str(p["año"]) == filtro_año]
-    if filtro_status != "Todos":
-        filtrados = [p for p in filtrados if p["status"] == filtro_status]
+    with f1:
+        fil_cliente = st.selectbox("Cliente", clientes_lista, key="g_cli")
+    with f2:
+        fil_año = st.selectbox("Año", años_lista, key="g_año")
+    with f3:
+        fil_semana = st.number_input("Semana (0 = todas)", min_value=0,
+                                      max_value=53, value=0, step=1, key="g_sem")
+    with f4:
+        fil_status = st.selectbox("Estado", ["Todos", "Pendiente", "Cancelado"],
+                                   key="g_status")
 
-    if not filtrados:
-        st.warning("No hay pedidos con esos filtros.")
-        return
+    # ── Aplicar filtros a nivel de línea ──────────────────────────────────────
+    filtrados = todos
+    if fil_cliente != "Todos":
+        filtrados = [p for p in filtrados if p["cliente"] == fil_cliente]
+    if fil_año != "Todos":
+        filtrados = [p for p in filtrados if str(p["año"]) == fil_año]
+    if fil_semana > 0:
+        filtrados = [p for p in filtrados if p["semana"] == fil_semana]
 
-    # ── AGRUPAR POR UNICO (= pedido completo) ─────────────────────────────────
+    # ── Agrupar por Unico ─────────────────────────────────────────────────────
     grupos: dict = {}
     for p in filtrados:
         u = p["unico"]
@@ -51,83 +54,158 @@ def mostrar():
             grupos[u] = []
         grupos[u].append(p)
 
+    # Filtrar por estado del pedido completo
+    if fil_status != "Todos":
+        grupos_f = {}
+        for u, lineas in grupos.items():
+            status_g = ("Cancelado"
+                        if all(l["status"] == "Cancelado" for l in lineas)
+                        else "Pendiente")
+            if status_g == fil_status:
+                grupos_f[u] = lineas
+        grupos = grupos_f
+
+    if not grupos:
+        st.warning("No hay pedidos con esos filtros.")
+        return
+
     # Ordenar por fecha descendente
-    grupos_ordenados = sorted(
+    grupos_ord = sorted(
         grupos.items(),
-        key=lambda x: x[1][0]["fecha"] if x[1][0]["fecha"] else "",
+        key=lambda x: (x[1][0]["año"] or 0, x[1][0]["semana"] or 0,
+                        str(x[1][0]["fecha"] or "")),
         reverse=True,
     )
 
-    st.markdown(f"**{len(grupos_ordenados)} pedidos encontrados**")
+    # ── TABLA RESUMEN ─────────────────────────────────────────────────────────
     st.divider()
+    st.markdown(f"**{len(grupos_ord)} pedidos encontrados**")
 
-    # ── MOSTRAR CADA PEDIDO ───────────────────────────────────────────────────
-    for unico, lineas in grupos_ordenados:
-        linea0    = lineas[0]
-        fecha_str = linea0["fecha"].strftime("%d/%m/%Y") if linea0["fecha"] else "—"
-        total_est = sum((l["total"] or 0) for l in lineas)
-        status_g  = "Cancelado" if all(l["status"] == "Cancelado" for l in lineas) else "Pendiente"
-        color     = "#ffebee" if status_g == "Cancelado" else "#f1f8f1"
-        badge     = "🔴 Cancelado" if status_g == "Cancelado" else "🟢 Pendiente"
+    resumen_rows = []
+    for unico, lineas in grupos_ord:
+        l0        = lineas[0]
+        total     = sum((l["total"] or 0) for l in lineas)
+        status_g  = ("Cancelado"
+                     if all(l["status"] == "Cancelado" for l in lineas)
+                     else "Pendiente")
+        fecha_str = l0["fecha"].strftime("%d/%m/%Y") if l0["fecha"] else "—"
+        resumen_rows.append({
+            "unico":   unico,
+            "Fecha":   fecha_str,
+            "Cliente": l0["cliente"],
+            "Sem":     f"{l0['semana']}/{l0['año']}",
+            "Productos": len(lineas),
+            "Total (Q)": f"Q{total:,.2f}",
+            "Estado":  "🔴 Cancelado" if status_g == "Cancelado" else "🟢 Pendiente",
+        })
 
-        with st.expander(
-            f"{fecha_str} · **{linea0['cliente']}** · "
-            f"Sem {linea0['semana']}/{linea0['año']} · "
-            f"{len(lineas)} productos · Q{total_est:,.2f} · {badge}",
-            expanded=False,
-        ):
-            # Detalle de lineas
-            hdr = st.columns([3.5, 1, 1.5, 1.5, 1.5])
-            hdr[0].markdown("**Producto**")
-            hdr[1].markdown("**Cant.**")
-            hdr[2].markdown("**Precio**")
-            hdr[3].markdown("**Total**")
-            hdr[4].markdown("**Estado**")
+    df_res = pd.DataFrame(resumen_rows).drop(columns=["unico"])
+    st.dataframe(df_res, use_container_width=True, hide_index=True)
 
-            for linea in lineas:
-                cols = st.columns([3.5, 1, 1.5, 1.5, 1.5])
-                cols[0].write(linea["producto"])
-                cols[1].write(linea["cantidad"])
-                cols[2].write(f"Q{linea['precio']:,.2f}" if linea["precio"] else "—")
-                cols[3].write(f"Q{linea['total']:,.2f}" if linea["total"] else "—")
-                cols[4].write(linea["status"])
+    # ── SELECTOR DE PEDIDO ────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### Seleccioná un pedido para ver el detalle")
 
-            st.divider()
+    opciones_label = {
+        unico: (
+            f"{lineas[0]['fecha'].strftime('%d/%m/%Y') if lineas[0]['fecha'] else '—'}  "
+            f"· {lineas[0]['cliente']}  "
+            f"· Sem {lineas[0]['semana']}  "
+            f"· {len(lineas)} productos"
+        )
+        for unico, lineas in grupos_ord
+    }
 
-            # ── Editar cantidad (solo si pendiente) ───────────────────────────
+    unico_sel = st.selectbox(
+        "Pedido",
+        list(opciones_label.keys()),
+        format_func=lambda u: opciones_label[u],
+        key="g_sel_pedido",
+    )
+
+    # ── DETALLE DEL PEDIDO SELECCIONADO ──────────────────────────────────────
+    if unico_sel:
+        lineas_sel = grupos[unico_sel]
+        l0         = lineas_sel[0]
+        total_sel  = sum((l["total"] or 0) for l in lineas_sel)
+        status_g   = ("Cancelado"
+                      if all(l["status"] == "Cancelado" for l in lineas_sel)
+                      else "Pendiente")
+        color_badge = "🔴 Cancelado" if status_g == "Cancelado" else "🟢 Pendiente"
+
+        st.markdown(f"""
+        <div style='background:#f1f8f1;border-left:4px solid #2e7d32;border-radius:6px;
+                    padding:10px 16px;margin:8px 0;font-size:.94rem;line-height:1.7'>
+        👤 <b>{l0['cliente']}</b> &nbsp;·&nbsp;
+        📅 {l0['fecha'].strftime('%d/%m/%Y') if l0['fecha'] else '—'} &nbsp;·&nbsp;
+        📌 Semana {l0['semana']}/{l0['año']} &nbsp;·&nbsp;
+        {color_badge}
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Tabla de productos
+        st.markdown("**Líneas del pedido:**")
+        hdr = st.columns([4, 1.2, 1.5, 1.5, 1.5])
+        hdr[0].markdown("**Producto**")
+        hdr[1].markdown("**Cant.**")
+        hdr[2].markdown("**Precio**")
+        hdr[3].markdown("**Total**")
+        hdr[4].markdown("**Estado**")
+
+        for l in lineas_sel:
+            r = st.columns([4, 1.2, 1.5, 1.5, 1.5])
+            r[0].write(l["producto"])
+            r[1].write(l["cantidad"])
+            r[2].write(f"Q{l['precio']:,.2f}" if l["precio"] else "—")
+            r[3].write(f"Q{l['total']:,.2f}"  if l["total"]  else "—")
+            r[4].write(l["status"])
+
+        st.markdown(
+            f"<div style='text-align:right;font-size:1rem;font-weight:bold;"
+            f"margin-top:4px'>Total: Q{total_sel:,.2f}</div>",
+            unsafe_allow_html=True,
+        )
+        st.divider()
+
+        # ── ACCIONES ─────────────────────────────────────────────────────────
+        col_acc, col_edit = st.columns([1, 2])
+
+        with col_acc:
+            st.markdown("**Acción sobre el pedido:**")
             if status_g == "Pendiente":
-                with st.expander("✏️ Editar cantidad de una línea"):
-                    nombres_prods = [l["producto"] for l in lineas]
-                    prod_sel = st.selectbox("Producto a editar", nombres_prods,
-                                            key=f"edit_prod_{unico}")
-                    linea_sel = next(l for l in lineas if l["producto"] == prod_sel)
-                    nueva_cant = st.number_input(
-                        "Nueva cantidad",
-                        min_value=0.0,
-                        value=float(linea_sel["cantidad"] or 0),
-                        step=0.5,
-                        key=f"edit_cant_{unico}_{prod_sel}",
-                    )
-                    if st.button("💾 Guardar cantidad", key=f"save_cant_{unico}"):
-                        with st.spinner("Guardando..."):
-                            editar_cantidad_linea(linea_sel["row_num"], nueva_cant)
-                        st.success(f"✅ Cantidad actualizada a {nueva_cant}")
-                        st.rerun()
+                if st.button("🔴 Cancelar pedido completo",
+                             key="btn_cancelar", type="secondary"):
+                    with st.spinner("Cancelando..."):
+                        cancelar_pedido(unico_sel)
+                    st.success("✅ Pedido cancelado.")
+                    st.rerun()
+            else:
+                if st.button("🟢 Restaurar a Pendiente",
+                             key="btn_restaurar", type="secondary"):
+                    with st.spinner("Restaurando..."):
+                        restaurar_pedido(unico_sel)
+                    st.success("✅ Pedido restaurado.")
+                    st.rerun()
 
-            # ── Acciones del pedido ───────────────────────────────────────────
-            col_a, col_b = st.columns(2)
-            with col_a:
-                if status_g == "Pendiente":
-                    if st.button("🔴 Cancelar pedido", key=f"cancel_{unico}",
-                                 type="secondary"):
-                        with st.spinner("Cancelando..."):
-                            cancelar_pedido(unico)
-                        st.success("Pedido cancelado.")
-                        st.rerun()
-                else:
-                    if st.button("🟢 Restaurar pedido", key=f"restore_{unico}",
-                                 type="secondary"):
-                        with st.spinner("Restaurando..."):
-                            restaurar_pedido(unico)
-                        st.success("Pedido restaurado a Pendiente.")
-                        st.rerun()
+        with col_edit:
+            if status_g == "Pendiente":
+                st.markdown("**Editar cantidad de una línea:**")
+                nombres_lineas = [l["producto"] for l in lineas_sel]
+                prod_edit = st.selectbox("Producto", nombres_lineas,
+                                          key="g_prod_edit")
+                linea_e   = next(l for l in lineas_sel if l["producto"] == prod_edit)
+                nueva_c   = st.number_input(
+                    "Nueva cantidad",
+                    min_value=0.0,
+                    value=float(linea_e["cantidad"] or 0),
+                    step=0.5,
+                    key=f"g_cant_{unico_sel}_{prod_edit}",
+                )
+                if st.button("💾 Guardar cantidad", key="btn_guardar_cant",
+                             type="primary"):
+                    with st.spinner("Guardando..."):
+                        editar_cantidad_linea(linea_e["row_num"], nueva_c)
+                    st.success(f"✅ Cantidad actualizada a {nueva_c}.")
+                    st.rerun()
+            else:
+                st.info("Restaurá el pedido para poder editar cantidades.")
