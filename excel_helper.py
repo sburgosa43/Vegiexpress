@@ -30,16 +30,18 @@ def _actualizar_tabla(ws, nombre_tabla: str):
 def leer_pedidos() -> list[dict]:
     """
     Lee todos los pedidos con numero de fila.
-    El precio se obtiene del catalogo de productos (columna "Precio" manual),
-    no del valor cacheado en la hoja Pedidos (que puede ser Precio Impuestos).
+    El precio usa la lista correcta segun el cliente:
+      - Clientes L03 (Antigua) → precios de Listado Productos Antigua
+      - Resto → precios de Listado Productos (general)
     """
-    from data_helper import cargar_productos
-    # Construir lookup de precio manual por nombre de producto
-    precios_real: dict = {}
-    for p in cargar_productos(False):          # lista general
-        precios_real[p["nombre"].lower()] = p["precio"]
-    for p in cargar_productos(True):           # lista Antigua (sobrescribe si mismo nombre)
-        precios_real[p["nombre"].lower()] = p["precio"]
+    from data_helper import cargar_productos, cargar_clientes
+
+    # Precios por lista
+    precios_normal  = {p["nombre"].lower(): p["precio"] for p in cargar_productos(False)}
+    precios_antigua = {p["nombre"].lower(): p["precio"] for p in cargar_productos(True)}
+
+    # Set de clientes que son Antigua
+    clientes_antigua = {c["nombre"].lower() for c in cargar_clientes() if c["es_antigua"]}
 
     wb = cargar_para_lectura(FILE_ID)
     ws = wb["Pedidos"]
@@ -50,14 +52,21 @@ def leer_pedidos() -> list[dict]:
         fecha = row[0]
         if hasattr(fecha, "date"):
             fecha = fecha.date()
-        producto = str(row[3] or "")
-        # Precio: usar catalogo (Precio manual). Si no encuentra, cae al valor Excel
-        precio = precios_real.get(producto.lower(), row[4])
-        cantidad = row[2] or 0
+        producto       = str(row[3] or "")
+        cliente_nombre = str(row[1] or "")
+        cantidad       = row[2] or 0
+
+        # Usar lista de precios correcta segun el cliente
+        if cliente_nombre.lower() in clientes_antigua:
+            precio = (precios_antigua.get(producto.lower())
+                      or precios_normal.get(producto.lower(), row[4]))
+        else:
+            precio = precios_normal.get(producto.lower(), row[4])
+
         pedidos.append({
             "row_num":   i,
             "fecha":     fecha,
-            "cliente":   str(row[1]  or ""),
+            "cliente":   cliente_nombre,
             "cantidad":  cantidad,
             "producto":  producto,
             "precio":    precio,
