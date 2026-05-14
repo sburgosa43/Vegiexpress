@@ -55,27 +55,29 @@ def leer_pedidos() -> list[dict]:
         producto       = str(row[3] or "")
         cliente_nombre = str(row[1] or "")
         cantidad       = row[2] or 0
+        precio_excel   = float(row[4] or 0)   # precio actual guardado en Excel
 
-        # Usar lista de precios correcta segun el cliente
+        # Usar lista de precios correcta segun el cliente (para display)
         if cliente_nombre.lower() in clientes_antigua:
             precio = (precios_antigua.get(producto.lower())
-                      or precios_normal.get(producto.lower(), row[4]))
+                      or precios_normal.get(producto.lower(), precio_excel))
         else:
-            precio = precios_normal.get(producto.lower(), row[4])
+            precio = precios_normal.get(producto.lower(), precio_excel)
 
         pedidos.append({
-            "row_num":   i,
-            "fecha":     fecha,
-            "cliente":   cliente_nombre,
-            "cantidad":  cantidad,
-            "producto":  producto,
-            "precio":    precio,
-            "total":     round((precio or 0) * cantidad, 2),
-            "semana":    row[14],
-            "año":       row[15],
-            "status":    str(row[30] or "Pendiente"),
-            "unico":     str(row[27] or ""),
-            "direccion": str(row[18] or ""),
+            "row_num":      i,
+            "fecha":        fecha,
+            "cliente":      cliente_nombre,
+            "cantidad":     cantidad,
+            "producto":     producto,
+            "precio":       precio,          # precio del catalogo (para referencia)
+            "precio_excel": precio_excel,    # precio actual en el Excel (para historial)
+            "total":        round((precio or 0) * cantidad, 2),
+            "semana":       row[14],
+            "año":          row[15],
+            "status":       str(row[30] or "Pendiente"),
+            "unico":        str(row[27] or ""),
+            "direccion":    str(row[18] or ""),
         })
     wb.close()
     return pedidos
@@ -130,6 +132,81 @@ def editar_linea(row_num: int, nuevo_producto: str = None,
     guardar_en_drive(wb, FILE_ID)
     wb.close()
     st.cache_data.clear()
+
+
+
+# ── HISTORIAL DE CAMBIOS DE PRECIO ────────────────────────────────────────────
+HOJA_HISTORIAL  = "Historial Cambios"
+_HIST_HEADERS   = [
+    "Fecha Cambio", "Cliente", "Producto",
+    "Precio Anterior (Q)", "Precio Nuevo (Q)", "Diferencia (Q)",
+    "Semana", "Año", "Unico", "Fila Pedido",
+]
+
+
+def guardar_cambios_precio(cambios: list) -> int:
+    """
+    Para cada línea con precio modificado:
+      1. Actualiza el precio en la hoja Pedidos (col E)
+      2. Registra el cambio en la hoja 'Historial Cambios'
+
+    cambios: lista de dicts con keys:
+      row_num, cliente, producto, precio_anterior, precio_nuevo,
+      semana, año, unico
+    Retorna: cantidad de precios efectivamente cambiados.
+    """
+    from datetime import datetime
+
+    # Filtrar solo los que realmente cambiaron
+    reales = [x for x in cambios if abs(x["precio_nuevo"] - x["precio_anterior"]) > 0.001]
+    if not reales:
+        return 0
+
+    wb      = cargar_para_escritura(FILE_ID)
+    ws_ped  = wb["Pedidos"]
+
+    # 1. Actualizar precios en Pedidos
+    for x in reales:
+        ws_ped.cell(row=x["row_num"], column=5).value = x["precio_nuevo"]
+
+    # 2. Crear o abrir hoja Historial
+    if HOJA_HISTORIAL not in wb.sheetnames:
+        ws_hist = wb.create_sheet(HOJA_HISTORIAL)
+        ws_hist.append(_HIST_HEADERS)
+        # Formato de encabezados
+        from openpyxl.styles import Font, PatternFill, Alignment
+        for col in range(1, len(_HIST_HEADERS) + 1):
+            cell = ws_hist.cell(row=1, column=col)
+            cell.font      = Font(bold=True, color="FFFFFF")
+            cell.fill      = PatternFill("solid", fgColor="2D7A2D")
+            cell.alignment = Alignment(horizontal="center")
+    else:
+        ws_hist = wb[HOJA_HISTORIAL]
+
+    # 3. Agregar filas al historial
+    ahora = datetime.now()
+    for x in reales:
+        diff = round(x["precio_nuevo"] - x["precio_anterior"], 4)
+        ws_hist.append([
+            ahora,
+            x["cliente"],
+            x["producto"],
+            round(x["precio_anterior"], 4),
+            round(x["precio_nuevo"],    4),
+            diff,
+            x["semana"],
+            x["año"],
+            x["unico"],
+            x["row_num"],
+        ])
+        # Formato de fecha en la nueva fila
+        last = ws_hist.max_row
+        ws_hist.cell(row=last, column=1).number_format = "dd/mm/yyyy hh:mm"
+
+    guardar_en_drive(wb, FILE_ID)
+    wb.close()
+    st.cache_data.clear()
+    return len(reales)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

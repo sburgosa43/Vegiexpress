@@ -61,11 +61,17 @@ def _label(unico, lineas):
 # ── COMPONENTE COMPARTIDO: LINEAS EDITABLES + PDF ─────────────────────────────
 def _pedido_detalle(unico: str, lineas: list, clientes_map: dict,
                      sufijo: str, expanded: bool = False):
-    """Expander con líneas editables de precio y botón de descarga PDF."""
-    l0         = lineas[0]
-    total_orig = sum(l["total"] or 0 for l in lineas)
-    cancelado  = all(l["status"] == "Cancelado" for l in lineas)
-    fecha_ped  = l0["fecha"] if l0["fecha"] else date.today()
+    """
+    Expander con líneas editables de precio, guardado en Excel con historial y PDF.
+    - precio_excel: precio actual en Excel (base para detectar cambios)
+    - precio:       precio del catálogo (referencia visual)
+    """
+    from excel_helper import guardar_cambios_precio
+
+    l0           = lineas[0]
+    total_orig   = sum(l["total"] or 0 for l in lineas)
+    cancelado    = all(l["status"] == "Cancelado" for l in lineas)
+    fecha_ped    = l0["fecha"] if l0["fecha"] else date.today()
     cliente_info = clientes_map.get(l0["cliente"], {"nombre": l0["cliente"]})
 
     label_exp = (
@@ -76,47 +82,87 @@ def _pedido_detalle(unico: str, lineas: list, clientes_map: dict,
     )
 
     with st.expander(label_exp, expanded=expanded):
-        st.caption("Podés ajustar precios antes de descargar el PDF. "
-                   "Los cambios aquí no se guardan en el Excel — "
-                   "usá 'Modificar Pedido' para guardar cambios.")
-
-        # Tabla editable
-        hdr = st.columns([4.5, 1.2, 1.8, 1.8])
+        # Encabezado tabla: mostrar precio catálogo vs precio Excel vs editable
+        hdr = st.columns([4, 1.2, 1.6, 1.6, 1.6])
         hdr[0].markdown("**Producto**")
         hdr[1].markdown("**Cant.**")
-        hdr[2].markdown("**Precio (Q)**")
-        hdr[3].markdown("**Subtotal**")
+        hdr[2].markdown("**Cat.**")
+        hdr[3].markdown("**Precio (Q)**")
+        hdr[4].markdown("**Subtotal**")
 
-        lineas_pdf = []
-        total_ed   = 0.0
+        lineas_pdf     = []
+        cambios_lista  = []
+        total_ed       = 0.0
+        hay_cambios    = False
 
         for linea in lineas:
-            k = f"sa_p_{sufijo}_{unico}_{linea['row_num']}"
-            if k not in st.session_state:
-                st.session_state[k] = float(linea["precio"] or 0)
+            k            = f"sa_p_{sufijo}_{unico}_{linea['row_num']}"
+            precio_excel = float(linea.get("precio_excel") or linea.get("precio") or 0)
+            precio_cat   = float(linea.get("precio") or 0)
 
-            r = st.columns([4.5, 1.2, 1.8, 1.8])
+            # Inicializar con el precio actual del Excel
+            if k not in st.session_state:
+                st.session_state[k] = precio_excel
+
+            r = st.columns([4, 1.2, 1.6, 1.6, 1.6])
             r[0].write(linea["producto"])
             r[1].write(f"{linea['cantidad']}")
-            precio_ed = r[2].number_input(
+            r[2].markdown(
+                f"<div style='padding-top:8px;color:#888;font-size:.85rem'>"
+                f"Q{precio_cat:,.2f}</div>", unsafe_allow_html=True)
+
+            precio_ed = r[3].number_input(
                 "", min_value=0.0,
                 value=float(st.session_state[k]),
                 step=0.25, key=k,
                 label_visibility="collapsed",
             )
+
+            # Indicador visual de cambio respecto al Excel
+            if abs(precio_ed - precio_excel) > 0.001:
+                hay_cambios = True
+                diff = precio_ed - precio_excel
+                r[3].caption(f"{'▲' if diff > 0 else '▼'} Q{abs(diff):.2f} vs Excel")
+
             sub = float(linea["cantidad"] or 0) * precio_ed
-            r[3].markdown(f"<div style='padding-top:8px'>Q{sub:,.2f}</div>",
-                           unsafe_allow_html=True)
+            r[4].markdown(f"<div style='padding-top:8px;font-weight:bold'>"
+                           f"Q{sub:,.2f}</div>", unsafe_allow_html=True)
             total_ed += sub
+
             lineas_pdf.append({**linea, "precio": precio_ed, "total": sub})
+            cambios_lista.append({
+                "row_num":         linea["row_num"],
+                "cliente":         linea["cliente"],
+                "producto":        linea["producto"],
+                "precio_anterior": precio_excel,
+                "precio_nuevo":    precio_ed,
+                "semana":          linea["semana"],
+                "año":             linea["año"],
+                "unico":           unico,
+            })
 
         st.markdown(
             f"<div style='text-align:right;font-weight:bold;margin:4px 0'>"
             f"Total: Q{total_ed:,.2f}</div>", unsafe_allow_html=True)
+
+        if hay_cambios:
+            st.caption("⚠️ Hay precios modificados respecto al Excel. "
+                       "Guardá para actualizar el Excel y dejar registro en el historial.")
         st.divider()
 
-        # Botón PDF
-        col_pdf, col_acc = st.columns([2, 2])
+        # ── Botones de acción ─────────────────────────────────────────────────
+        col_save, col_pdf, col_acc = st.columns([2, 2, 2])
+
+        with col_save:
+            btn_label = "💾 Guardar cambios" if hay_cambios else "✅ Sin cambios"
+            if st.button(btn_label, key=f"save_{sufijo}_{unico}",
+                          type="primary" if hay_cambios else "secondary",
+                          disabled=not hay_cambios):
+                with st.spinner("Guardando en Excel y registrando historial..."):
+                    n = guardar_cambios_precio(cambios_lista)
+                st.success(f"✅ {n} precio(s) guardado(s). Historial actualizado.")
+                st.rerun()
+
         with col_pdf:
             try:
                 pdf_bytes = generar_envio(
