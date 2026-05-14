@@ -86,8 +86,8 @@ def _pedido_detalle(unico: str, lineas: list, clientes_map: dict,
         hdr = st.columns([4, 1.2, 1.6, 1.6, 1.6])
         hdr[0].markdown("**Producto**")
         hdr[1].markdown("**Cant.**")
-        hdr[2].markdown("**Cat.**")
-        hdr[3].markdown("**Precio (Q)**")
+        hdr[2].markdown("**Catálogo**")
+        hdr[3].markdown("**A cobrar**")
         hdr[4].markdown("**Subtotal**")
 
         lineas_pdf     = []
@@ -100,9 +100,10 @@ def _pedido_detalle(unico: str, lineas: list, clientes_map: dict,
             precio_excel = float(linea.get("precio_excel") or linea.get("precio") or 0)
             precio_cat   = float(linea.get("precio") or 0)
 
-            # Inicializar con el precio actual del Excel
+            # Inicializar con el precio del catálogo (igual que columna Cat.)
+            # El usuario ve el precio "correcto" y decide si quiere modificarlo
             if k not in st.session_state:
-                st.session_state[k] = precio_excel
+                st.session_state[k] = precio_cat
 
             r = st.columns([4, 1.2, 1.6, 1.6, 1.6])
             r[0].write(linea["producto"])
@@ -118,11 +119,11 @@ def _pedido_detalle(unico: str, lineas: list, clientes_map: dict,
                 label_visibility="collapsed",
             )
 
-            # Indicador visual de cambio respecto al Excel
-            if abs(precio_ed - precio_excel) > 0.001:
+            # Indicador visual de cambio respecto al catálogo
+            diff_cat = precio_ed - precio_cat
+            if abs(diff_cat) > 0.001:
                 hay_cambios = True
-                diff = precio_ed - precio_excel
-                r[3].caption(f"{'▲' if diff > 0 else '▼'} Q{abs(diff):.2f} vs Excel")
+                r[3].caption(f"{'▲' if diff_cat > 0 else '▼'} Q{abs(diff_cat):.2f} vs catálogo")
 
             sub = float(linea["cantidad"] or 0) * precio_ed
             r[4].markdown(f"<div style='padding-top:8px;font-weight:bold'>"
