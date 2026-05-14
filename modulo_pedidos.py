@@ -160,7 +160,7 @@ def _paso3():
     c      = st.session_state.ped_cliente
     fec    = st.session_state.ped_fecha
     lineas = st.session_state.ped_lineas
-    st.subheader("✅ Confirmar pedido")
+    st.subheader("✅ Confirmar y ajustar precios")
     st.markdown(
         f"<div style='background:#f1f8f1;border-left:4px solid #2e7d32;border-radius:6px;"
         f"padding:10px 14px;font-size:.93rem;line-height:1.6'>"
@@ -169,35 +169,84 @@ def _paso3():
         f"Crédito {c['credito']} días<br>"
         f"📍 {c['direccion']} · NIT: {c['nit']}"
         f"</div>", unsafe_allow_html=True)
+
+    st.caption("💡 Los precios vienen del catálogo. Podés ajustar cualquiera "
+               "para este pedido — el cambio aplica solo aquí, no modifica el catálogo.")
     st.divider()
 
-    hdr = st.columns([4, 1, 1.5])
-    hdr[0].markdown("**Producto**"); hdr[1].markdown("**Cant.**"); hdr[2].markdown("**Precio est.**")
+    # Encabezado
+    hdr = st.columns([3.5, 1, 1.8, 1.8, 1.5])
+    hdr[0].markdown("**Producto**")
+    hdr[1].markdown("**Cant.**")
+    hdr[2].markdown("**Precio catálogo**")
+    hdr[3].markdown("**Precio a cobrar**")
+    hdr[4].markdown("**Subtotal**")
+
     total = 0
-    for l in lineas:
-        sub = l["cantidad"] * l["precio"]
-        r   = st.columns([4, 1, 1.5])
-        r[0].write(l["nombre"]); r[1].write(f"{l['cantidad']} {l['unidad']}"); r[2].write(f"Q{sub:,.2f}")
-        total += sub
+    precios_finales = []
+
+    for i, l in enumerate(lineas):
+        key_precio = f"ped_p3_precio_{i}"
+        # Inicializar con precio del catálogo si no hay valor previo
+        if key_precio not in st.session_state:
+            st.session_state[key_precio] = float(l["precio"])
+
+        r = st.columns([3.5, 1, 1.8, 1.8, 1.5])
+        r[0].write(l["nombre"])
+        r[1].write(f"{l['cantidad']} {l['unidad']}")
+        r[2].markdown(f"<div style='padding-top:8px'>Q{l['precio']:,.2f}</div>",
+                      unsafe_allow_html=True)
+
+        precio_cobrar = r[3].number_input(
+            "",
+            min_value=0.0,
+            value=float(st.session_state[key_precio]),
+            step=0.25,
+            key=key_precio,
+            label_visibility="collapsed",
+        )
+
+        # Indicador visual si el precio fue modificado
+        if abs(precio_cobrar - float(l["precio"])) > 0.001:
+            diff = precio_cobrar - float(l["precio"])
+            signo = "▲" if diff > 0 else "▼"
+            r[2].caption(f"{signo} Q{abs(diff):.2f}")
+
+        subtotal = l["cantidad"] * precio_cobrar
+        r[4].markdown(f"<div style='padding-top:8px;font-weight:bold'>"
+                      f"Q{subtotal:,.2f}</div>", unsafe_allow_html=True)
+        total += subtotal
+        precios_finales.append(precio_cobrar)
 
     st.divider()
     st.markdown(
         f"<div style='background:#e8f5e9;border-radius:8px;padding:12px;text-align:center'>"
-        f"<b>{len(lineas)} productos</b> · Total estimado <b>Q{total:,.2f}</b><br>"
-        f"<small>El precio final lo calculan las fórmulas de Excel al abrir el archivo</small>"
+        f"<b>{len(lineas)} productos · Total: Q{total:,.2f}</b>"
         f"</div>", unsafe_allow_html=True)
     st.divider()
 
     bc, bn = st.columns(2)
     with bc:
-        if st.button("← Editar", type="secondary"):
-            st.session_state.ped_paso = 2; st.rerun()
+        if st.button("← Editar productos", type="secondary"):
+            # Limpiar precios del paso 3 al volver
+            for i in range(len(lineas)):
+                st.session_state.pop(f"ped_p3_precio_{i}", None)
+            st.session_state.ped_paso = 2
+            st.rerun()
     with bn:
         if st.button("💾 Guardar en Excel", type="primary"):
+            # Aplicar precios finales editados
+            items_finales = [
+                {**l, "precio": precios_finales[i]}
+                for i, l in enumerate(lineas)
+            ]
             with st.spinner("Guardando en Google Drive..."):
                 try:
                     n = guardar_pedido(nombre_cliente=c["nombre"],
-                                       fecha_entrega=fec, items=lineas)
+                                       fecha_entrega=fec, items=items_finales)
+                    # Limpiar precios del paso 3
+                    for i in range(len(lineas)):
+                        st.session_state.pop(f"ped_p3_precio_{i}", None)
                     st.session_state.ped_guardado_n = n
                     st.session_state.ped_paso       = 4
                     st.rerun()

@@ -62,7 +62,7 @@ def cargar_productos(es_antigua: bool = False) -> list[dict]:
             "unidad_despacho": int(row[3]) if row[3] else 1,
             "costo":           costo,
             "precio":          precio,
-            "precio_sin_iva":  float(row[15] if es_antigua else row[17] or 0),
+            "precio_sin_iva":  float(row[15] or 0) if es_antigua else float(row[17] or 0),
             "proveedor":       str(row[12] if es_antigua else row[14] or "").strip(),
             "tipo_producto":   str(row[16] if es_antigua else row[18] or "").strip(),
             "parent":          str(row[0]  if es_antigua else row[19] or row[0]).strip(),
