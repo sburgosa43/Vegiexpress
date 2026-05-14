@@ -178,11 +178,20 @@ def _semana_actual(todos: list):
 
     clientes_map = {c["nombre"]: c for c in cargar_clientes()}
 
-    # Separar por zona
+    # Separar por zona usando dos métodos para mayor cobertura:
+    # 1) codigo_lugar del cliente (L03=Antigua, L04=Chimal)
+    # 2) campo Direccion del pedido (igual que la fórmula Excel: "Antigua" o "Chimal")
     ant_chim, resto = {}, {}
     for unico, ls in grupos.items():
-        cz = clientes_map.get(ls[0]["cliente"], {}).get("codigo_lugar", "")
-        (ant_chim if cz in ("L03", "L04") else resto)[unico] = ls
+        l0 = ls[0]
+        # Método 1: tabla de clientes
+        cz  = clientes_map.get(l0["cliente"], {}).get("codigo_lugar", "")
+        # Método 2: Direccion guardada en el pedido
+        dir_ped = str(l0.get("direccion", "")).lower()
+        es_ac   = (cz in ("L03", "L04") or
+                   "antigua" in dir_ped or
+                   "chimal"  in dir_ped)
+        (ant_chim if es_ac else resto)[unico] = ls
 
     # Ordenar por fecha descendente
     def _ord(d):
