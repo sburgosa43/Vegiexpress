@@ -19,7 +19,7 @@ ISR_RATE = 0.05
 
 def _desde_margen_pct(costo: float, margen_pct: float) -> dict | None:
     """Precio dado costo y margen neto deseado en %."""
-    denom = 1 - margen_pct / (1 - ISR_RATE)
+    denom = 1 - margen_pct / 0.95
     if denom <= 0 or costo <= 0:
         return None
     precio = costo * (1 + IVA_RATE) / denom
@@ -38,13 +38,13 @@ def _desglose(costo: float, precio: float) -> dict | None:
     """Todos los campos derivados dado costo y precio de venta."""
     if precio <= 0 or costo <= 0:
         return None
-    precio_sin_iva  = precio / (1 + IVA_RATE)
-    iva_amount      = precio - precio_sin_iva
-    isr_retencion   = precio * ISR_RATE
-    neto_recibido   = precio * (1 - ISR_RATE)
-    margen_neto_q   = (1 - ISR_RATE) * (precio - costo * (1 + IVA_RATE))
+    precio_sin_iva  = precio / 1.12
+    iva_amount      = precio - precio_sin_iva         # IVA = Precio - Precio/1.12
+    isr_retencion   = precio_sin_iva * 0.05           # ISR = (Precio/1.12) x 0.05
+    neto_recibido   = precio - isr_retencion          # Neto recibido despues de ISR
+    margen_neto_q   = 0.95 * (precio - costo * 1.12) # Formula acordada
     margen_neto_pct = (margen_neto_q / precio * 100) if precio else 0
-    pto_equilibrio  = costo * (1 + IVA_RATE)
+    pto_equilibrio  = costo * 1.12                    # Precio x 1.12 = equilibrio
     sobre_costo     = ((precio - costo) / costo * 100) if costo else 0
     return {
         "costo":           round(costo, 4),
@@ -99,7 +99,7 @@ def _mostrar_resultado(d: dict, titulo: str = "Resultado"):
             st.metric("Costo de compra",       f"Q{d['costo']:,.4f}")
             st.metric("Precio sin IVA",         f"Q{d['precio_sin_iva']:,.4f}")
             st.metric("IVA (12%)",              f"Q{d['iva_amount']:,.4f}")
-            st.metric("Retención ISR (5%)",     f"Q{d['isr_retencion']:,.4f}")
+            st.metric("ISR (Precio/1.12 × 5%)", f"Q{d['isr_retencion']:,.4f}")
         with c2:
             st.metric("Neto que recibís",       f"Q{d['neto_recibido']:,.4f}")
             st.metric("Margen neto (Q)",        f"Q{d['margen_neto_q']:,.4f}")
