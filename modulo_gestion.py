@@ -231,17 +231,23 @@ def _semana_actual(todos: list):
     for p in pedidos_sem:
         grupos.setdefault(p["unico"], []).append(p)
 
-    clientes_map = {c["nombre"]: c for c in cargar_clientes()}
+    # Mapa insensible a mayúsculas: los pedidos pueden tener nombres en minúscula
+    clientes_list = cargar_clientes()
+    clientes_map  = {c["nombre"]: c for c in clientes_list}
+    clientes_lower = {c["nombre"].lower(): c for c in clientes_list}
+
+    def _get_cli(nombre):
+        """Busca cliente por nombre exacto o insensible a mayúsculas."""
+        return clientes_map.get(nombre) or clientes_lower.get(nombre.lower(), {})
 
     # Separar por zona usando dos métodos para mayor cobertura:
     # 1) codigo_lugar del cliente (L03=Antigua, L04=Chimal)
     # 2) campo Direccion del pedido (igual que la fórmula Excel: "Antigua" o "Chimal")
     ant_chim, resto = {}, {}
     for unico, ls in grupos.items():
-        l0 = ls[0]
-        # Método 1: tabla de clientes
-        cz  = clientes_map.get(l0["cliente"], {}).get("codigo_lugar", "")
-        # Método 2: Direccion guardada en el pedido
+        l0  = ls[0]
+        cli = _get_cli(l0["cliente"])
+        cz  = cli.get("codigo_lugar", "")
         dir_ped = str(l0.get("direccion", "")).lower()
         es_ac   = (cz in ("L03", "L04") or
                    "antigua" in dir_ped or
