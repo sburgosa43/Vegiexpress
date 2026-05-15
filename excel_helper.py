@@ -83,15 +83,18 @@ def leer_pedidos() -> list[dict]:
             # Clave de agrupación temporal: cliente + semana + año
             unico_val = f"_fbk_{cliente_nombre}_{año_val}_{semana_val}_{fecha.strftime('%d%m')}"
 
+        # total usa precio_excel (lo que realmente está en Excel)
+        # precio_excel > 0: precio guardado. Si 0, cae al precio del catálogo.
+        precio_para_total = precio_excel if precio_excel > 0 else precio
         pedidos.append({
             "row_num":      i,
             "fecha":        fecha,
             "cliente":      cliente_nombre,
             "cantidad":     cantidad,
             "producto":     producto,
-            "precio":       precio,
-            "precio_excel": precio_excel,
-            "total":        round((precio or 0) * cantidad, 2),
+            "precio":       precio,            # catálogo (referencia visual)
+            "precio_excel": precio_excel,      # precio real en Excel
+            "total":        round(precio_para_total * cantidad, 2),
             "semana":       semana_val,
             "año":          año_val,
             "status":       str(row[30] or "Pendiente"),
