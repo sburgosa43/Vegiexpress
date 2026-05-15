@@ -52,17 +52,36 @@ def leer_pedidos() -> list[dict]:
         fecha = row[0]
         if hasattr(fecha, "date"):
             fecha = fecha.date()
+        elif isinstance(fecha, (int, float)) and fecha:
+            from datetime import timedelta
+            fecha = (date(1899, 12, 30) + timedelta(days=int(fecha)))
+
         producto       = str(row[3] or "")
         cliente_nombre = str(row[1] or "")
         cantidad       = row[2] or 0
-        precio_excel   = float(row[4] or 0)   # precio actual guardado en Excel
+        precio_excel   = float(row[4] or 0)
 
-        # Usar lista de precios correcta segun el cliente (para display)
+        # Usar lista de precios correcta segun el cliente
         if cliente_nombre.lower() in clientes_antigua:
             precio = (precios_antigua.get(producto.lower())
                       or precios_normal.get(producto.lower(), precio_excel))
         else:
             precio = precios_normal.get(producto.lower(), precio_excel)
+
+        # Semana y Año: derivar de la fecha si la fórmula no tiene valor cacheado
+        # (ocurre en filas escritas por la app con openpyxl)
+        semana_val = row[14]
+        año_val    = row[15]
+        if semana_val is None and fecha:
+            semana_val = fecha.isocalendar()[1]
+        if año_val is None and fecha:
+            año_val = fecha.year
+
+        # Unico: fallback si la fórmula no tiene valor cacheado
+        unico_val = str(row[27] or "").strip()
+        if not unico_val and fecha and cliente_nombre:
+            # Clave de agrupación temporal: cliente + semana + año
+            unico_val = f"_fbk_{cliente_nombre}_{año_val}_{semana_val}_{fecha.strftime('%d%m')}"
 
         pedidos.append({
             "row_num":      i,
@@ -70,13 +89,13 @@ def leer_pedidos() -> list[dict]:
             "cliente":      cliente_nombre,
             "cantidad":     cantidad,
             "producto":     producto,
-            "precio":       precio,          # precio del catalogo (para referencia)
-            "precio_excel": precio_excel,    # precio actual en el Excel (para historial)
+            "precio":       precio,
+            "precio_excel": precio_excel,
             "total":        round((precio or 0) * cantidad, 2),
-            "semana":       row[14],
-            "año":          row[15],
+            "semana":       semana_val,
+            "año":          año_val,
             "status":       str(row[30] or "Pendiente"),
-            "unico":        str(row[27] or ""),
+            "unico":        unico_val,
             "direccion":    str(row[18] or ""),
         })
     wb.close()
