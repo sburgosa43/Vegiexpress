@@ -70,15 +70,11 @@ def _aviso_costos() -> bool:
             st.session_state["nav"] = "📦 Productos (Nuevos y Mantenimiento)"
             st.rerun()
     with col2:
-        if st.button("✅ No hay cambios,
-continuar", type="primary",
-                     use_container_width=True):
+        if st.button("✅ No hay cambios, continuar", type="primary", use_container_width=True):
             st.session_state[AVISO_KEY] = "sin_cambios"
             st.rerun()
     with col3:
-        if st.button("✔️ Ya actualicé,
-continuar", type="primary",
-                     use_container_width=True):
+        if st.button("✔️ Ya actualicé costos, continuar", type="primary", use_container_width=True):
             st.session_state[AVISO_KEY] = "con_cambios"
             st.rerun()
 
