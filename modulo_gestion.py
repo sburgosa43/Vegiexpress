@@ -100,10 +100,11 @@ def _pedido_detalle(unico: str, lineas: list, clientes_map: dict,
             precio_excel = float(linea.get("precio_excel") or linea.get("precio") or 0)
             precio_cat   = float(linea.get("precio") or 0)
 
-            # Inicializar con el precio del catálogo (igual que columna Cat.)
-            # El usuario ve el precio "correcto" y decide si quiere modificarlo
+            # Inicializar SIEMPRE desde lo que está en el Excel
+            # → "A cobrar" muestra el precio real guardado, no el catálogo
+            # → Cambios guardados previamente son visibles
             if k not in st.session_state:
-                st.session_state[k] = precio_cat
+                st.session_state[k] = precio_excel if precio_excel > 0 else precio_cat
 
             r = st.columns([4, 1.2, 1.6, 1.6, 1.6])
             r[0].write(linea["producto"])
@@ -119,11 +120,13 @@ def _pedido_detalle(unico: str, lineas: list, clientes_map: dict,
                 label_visibility="collapsed",
             )
 
-            # Indicador visual de cambio respecto al catálogo
-            diff_cat = precio_ed - precio_cat
-            if abs(diff_cat) > 0.001:
+            # Comparar vs precio_excel (lo que hay en Excel ahora)
+            # → hay_cambios y el filtro de guardar usan la misma referencia
+            diff = precio_ed - precio_excel
+            if abs(diff) > 0.001:
                 hay_cambios = True
-                r[3].caption(f"{'▲' if diff_cat > 0 else '▼'} Q{abs(diff_cat):.2f} vs catálogo")
+                signo = "▲" if diff > 0 else "▼"
+                r[3].caption(f"{signo} Q{abs(diff):.2f} vs Excel  |  Cat: Q{precio_cat:,.2f}")
 
             sub = float(linea["cantidad"] or 0) * precio_ed
             r[4].markdown(f"<div style='padding-top:8px;font-weight:bold'>"
@@ -135,8 +138,8 @@ def _pedido_detalle(unico: str, lineas: list, clientes_map: dict,
                 "row_num":         linea["row_num"],
                 "cliente":         linea["cliente"],
                 "producto":        linea["producto"],
-                "precio_anterior": precio_excel,
-                "precio_nuevo":    precio_ed,
+                "precio_anterior": precio_excel,   # lo que había en Excel antes
+                "precio_nuevo":    precio_ed,      # lo que el usuario quiere guardar
                 "semana":          linea["semana"],
                 "año":             linea["año"],
                 "unico":           unico,
@@ -147,8 +150,8 @@ def _pedido_detalle(unico: str, lineas: list, clientes_map: dict,
             f"Total: Q{total_ed:,.2f}</div>", unsafe_allow_html=True)
 
         if hay_cambios:
-            st.caption("⚠️ Hay precios modificados respecto al Excel. "
-                       "Guardá para actualizar el Excel y dejar registro en el historial.")
+            st.caption("⚠️ Hay precios distintos al Excel. "
+                       "Guardá para actualizar y registrar en el historial.")
         st.divider()
 
         # ── Botones de acción ─────────────────────────────────────────────────
@@ -161,6 +164,11 @@ def _pedido_detalle(unico: str, lineas: list, clientes_map: dict,
                           disabled=not hay_cambios):
                 with st.spinner("Guardando en Excel y registrando historial..."):
                     n = guardar_cambios_precio(cambios_lista)
+                # Limpiar session state para que los campos se reinicien
+                # con los nuevos valores del Excel al recargar
+                for linea in lineas:
+                    kk = f"sa_p_{sufijo}_{unico}_{linea['row_num']}"
+                    st.session_state.pop(kk, None)
                 st.success(f"✅ {n} precio(s) guardado(s). Historial actualizado.")
                 st.rerun()
 
