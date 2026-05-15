@@ -29,20 +29,10 @@ def _actualizar_tabla(ws, nombre_tabla: str):
 @st.cache_data(ttl=120, show_spinner="Cargando pedidos...")
 def leer_pedidos() -> list[dict]:
     """
-    Lee todos los pedidos con numero de fila.
-    El precio usa la lista correcta segun el cliente:
-      - Clientes L03 (Antigua) → precios de Listado Productos Antigua
-      - Resto → precios de Listado Productos (general)
+    Lee pedidos. Fuente unica de precio: col E (precio_excel).
+    Sin cruce con catalogo. 1 solo download, sin ambiguedad.
     """
-    from data_helper import cargar_productos, cargar_clientes
-
-    # Precios por lista
-    precios_normal  = {p["nombre"].lower(): p["precio"] for p in cargar_productos(False)}
-    precios_antigua = {p["nombre"].lower(): p["precio"] for p in cargar_productos(True)}
-
-    # Set de clientes que son Antigua
-    clientes_antigua = {c["nombre"].lower() for c in cargar_clientes() if c["es_antigua"]}
-
+    from datetime import timedelta
     wb = cargar_para_lectura(FILE_ID)
     ws = wb["Pedidos"]
     pedidos = []
@@ -53,56 +43,39 @@ def leer_pedidos() -> list[dict]:
         if hasattr(fecha, "date"):
             fecha = fecha.date()
         elif isinstance(fecha, (int, float)) and fecha:
-            from datetime import timedelta
-            fecha = (date(1899, 12, 30) + timedelta(days=int(fecha)))
+            fecha = date(1899, 12, 30) + timedelta(days=int(fecha))
 
-        producto       = str(row[3] or "")
-        cliente_nombre = str(row[1] or "")
-        cantidad       = row[2] or 0
-        precio_excel   = float(row[4] or 0)
+        precio   = float(row[4] or 0)
+        costo    = float(row[5] or 0)
+        cantidad = float(row[2] or 0)
 
-        # Usar lista de precios correcta segun el cliente
-        if cliente_nombre.lower() in clientes_antigua:
-            precio = (precios_antigua.get(producto.lower())
-                      or precios_normal.get(producto.lower(), precio_excel))
-        else:
-            precio = precios_normal.get(producto.lower(), precio_excel)
+        semana_val = row[14] or (fecha.isocalendar()[1] if fecha else None)
+        año_val    = row[15] or (fecha.year              if fecha else None)
 
-        # Semana y Año: derivar de la fecha si la fórmula no tiene valor cacheado
-        # (ocurre en filas escritas por la app con openpyxl)
-        semana_val = row[14]
-        año_val    = row[15]
-        if semana_val is None and fecha:
-            semana_val = fecha.isocalendar()[1]
-        if año_val is None and fecha:
-            año_val = fecha.year
-
-        # Unico: fallback si la fórmula no tiene valor cacheado
         unico_val = str(row[27] or "").strip()
-        if not unico_val and fecha and cliente_nombre:
-            # Clave de agrupación temporal: cliente + semana + año
-            unico_val = f"_fbk_{cliente_nombre}_{año_val}_{semana_val}_{fecha.strftime('%d%m')}"
+        if not unico_val and fecha and row[1]:
+            unico_val = f"_fbk_{str(row[1]).strip()}_{año_val}_{semana_val}_{fecha.strftime('%d%m')}"
 
-        # total usa precio_excel (lo que realmente está en Excel)
-        # precio_excel > 0: precio guardado. Si 0, cae al precio del catálogo.
-        precio_para_total = precio_excel if precio_excel > 0 else precio
         pedidos.append({
             "row_num":      i,
             "fecha":        fecha,
-            "cliente":      cliente_nombre,
+            "cliente":      str(row[1]  or ""),
             "cantidad":     cantidad,
-            "producto":     producto,
-            "precio":       precio,            # catálogo (referencia visual)
-            "precio_excel": precio_excel,      # precio real en Excel
-            "total":        round(precio_para_total * cantidad, 2),
+            "producto":     str(row[3]  or ""),
+            "precio":       precio,
+            "precio_excel": precio,
+            "costo":        costo,
+            "total":        round(precio * cantidad, 2),
             "semana":       semana_val,
             "año":          año_val,
             "status":       str(row[30] or "Pendiente"),
             "unico":        unico_val,
             "direccion":    str(row[18] or ""),
+            "unidad":       str(row[16] or ""),
         })
     wb.close()
     return pedidos
+
 
 
 def cancelar_pedido(unico: str):
