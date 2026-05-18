@@ -216,3 +216,46 @@ def mostrar():
     tab_rev, tab_mod = st.tabs(["🔍 Revisar Pedidos", "✏️ Editar Pedidos"])
     with tab_rev: _revisar(todos)
     with tab_mod: _modificar(todos)
+
+    # ── MIGRACIÓN (operación única) ───────────────────────────────────────────
+    st.divider()
+    with st.expander("⚙️ Migración de datos — Convertir fórmulas a valores", expanded=False):
+        st.markdown("""
+        **¿Qué hace esto?**
+        Reemplaza todas las fórmulas VLOOKUP de la hoja **Pedidos** con sus valores
+        calculados estáticos. Es el equivalente a *Pegado Especial → Solo Valores* en Excel.
+
+        **Resultado:** el Excel queda 100% libre de fórmulas en la hoja Pedidos.
+        Todos los cálculos futuros los hace la app directamente.
+
+        **⚠️ Importante:** hacelo solo si tenés el backup de tu Excel guardado.
+        Esta operación no se puede deshacer desde la app.
+        """)
+
+        confirm_key = "confirm_migracion"
+        if not st.session_state.get(confirm_key):
+            if st.button("🔄 Quiero convertir fórmulas a valores", type="secondary"):
+                st.session_state[confirm_key] = True
+                st.rerun()
+        else:
+            st.warning("⚠️ ¿Confirmás? Se modificará la hoja Pedidos de tu Excel.")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("✅ Sí, ejecutar migración", type="primary"):
+                    from excel_helper import migrar_pedidos_a_valores
+                    with st.spinner("Migrando... puede tardar 30-60 segundos..."):
+                        try:
+                            resultado = migrar_pedidos_a_valores()
+                            st.success(
+                                f"✅ Migración completada: "
+                                f"**{resultado['filas']} filas** procesadas, "
+                                f"**{resultado['celdas']} fórmulas** convertidas a valores."
+                            )
+                            st.session_state[confirm_key] = False
+                        except Exception as e:
+                            st.error(f"❌ Error: {e}")
+                            st.session_state[confirm_key] = False
+            with c2:
+                if st.button("❌ Cancelar", type="secondary"):
+                    st.session_state[confirm_key] = False
+                    st.rerun()

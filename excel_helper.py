@@ -45,9 +45,18 @@ def leer_pedidos() -> list[dict]:
         elif isinstance(fecha, (int, float)) and fecha:
             fecha = date(1899, 12, 30) + timedelta(days=int(fecha))
 
-        precio   = float(row[4] or 0)
-        costo    = float(row[5] or 0)
-        cantidad = float(row[2] or 0)
+        precio_xl = float(row[4] or 0)   # col E: Precio
+        costo     = float(row[5] or 0)   # col F: Costo
+        total_xl  = float(row[6] or 0)   # col G: Total (puede estar calculado)
+        cantidad  = float(row[2] or 0)
+
+        # Si Precio es 0 pero Total está disponible, derivar precio
+        # (ocurre en filas históricas donde el VLOOKUP perdió caché)
+        if precio_xl <= 0 and total_xl > 0 and cantidad > 0:
+            precio_xl = round(total_xl / cantidad, 4)
+
+        # Usar Total del Excel cuando esté disponible (más preciso para historial)
+        total_final = total_xl if total_xl > 0 else round(precio_xl * cantidad, 2)
 
         semana_val = row[14] or (fecha.isocalendar()[1] if fecha else None)
         año_val    = row[15] or (fecha.year              if fecha else None)
@@ -62,10 +71,10 @@ def leer_pedidos() -> list[dict]:
             "cliente":      str(row[1]  or ""),
             "cantidad":     cantidad,
             "producto":     str(row[3]  or ""),
-            "precio":       precio,
-            "precio_excel": precio,
+            "precio":       precio_xl,
+            "precio_excel": precio_xl,
             "costo":        costo,
-            "total":        round(precio * cantidad, 2),
+            "total":        total_final,
             "semana":       semana_val,
             "año":          año_val,
             "status":       str(row[30] or "Pendiente"),
@@ -128,6 +137,63 @@ def editar_linea(row_num: int, nuevo_producto: str = None,
     wb.close()
     st.cache_data.clear()
 
+
+
+
+# ── MIGRACIÓN: PEDIDOS FÓRMULAS → VALORES ESTÁTICOS ──────────────────────────
+
+def migrar_pedidos_a_valores() -> dict:
+    """
+    Convierte todas las fórmulas de la hoja Pedidos a valores estáticos.
+    Equivalente a Excel: Copiar → Pegado Especial → Solo Valores.
+
+    Proceso:
+      1. Descarga el Excel y lee los valores cacheados de cada fórmula
+      2. Vuelve a abrir y reemplaza cada fórmula con su valor calculado
+      3. Sube el Excel limpio (cero fórmulas en la hoja Pedidos)
+
+    Retorna: dict con filas y celdas convertidas.
+    """
+    # ── Paso 1: Leer valores cacheados ────────────────────────────────────────
+    wb_r  = cargar_para_lectura(FILE_ID)
+    ws_r  = wb_r["Pedidos"]
+
+    cache = {}   # {(fila, col): valor}
+    for i, row in enumerate(ws_r.iter_rows(min_row=1), start=1):
+        for j, cell in enumerate(row, start=1):
+            cache[(i, j)] = cell.value
+    max_fila = ws_r.max_row
+    wb_r.close()
+
+    # ── Paso 2: Reemplazar fórmulas con valores ───────────────────────────────
+    wb_w = cargar_para_escritura(FILE_ID)
+    ws_w = wb_w["Pedidos"]
+
+    celdas_conv = 0
+    filas_conv  = set()
+
+    for i in range(2, max_fila + 1):
+        # Solo procesar filas con dato en col A (Fecha)
+        if not cache.get((i, 1)):
+            continue
+
+        for j in range(1, ws_w.max_column + 1):
+            cell = ws_w.cell(row=i, column=j)
+            val  = cell.value
+
+            # Si la celda tiene una fórmula (string que empieza con '=')
+            if isinstance(val, str) and val.startswith("="):
+                valor_cache = cache.get((i, j))
+                cell.value  = valor_cache   # reemplazar fórmula por valor
+                celdas_conv += 1
+
+        filas_conv.add(i)
+
+    guardar_en_drive(wb_w, FILE_ID)
+    wb_w.close()
+    st.cache_data.clear()
+
+    return {"filas": len(filas_conv), "celdas": celdas_conv}
 
 
 # ── HISTORIAL DE CAMBIOS DE PRECIO ────────────────────────────────────────────
