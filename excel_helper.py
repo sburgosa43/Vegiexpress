@@ -374,7 +374,7 @@ def leer_productos_con_fila(es_antigua: bool = False) -> list[dict]:
             "parent":        str(row[19] or row[0] or "") if not es_antigua else str(row[0] or ""),
             "para_cotizar":  str(row[21] or "") if not es_antigua else "",
             "comentario":    str(row[22] or "") if not es_antigua else "",
-            "pesos":         float(row[15] if es_antigua else row[15] or 0),
+            "pesos":         float(row[13] or 0) if es_antigua else float(row[15] or 0),
         })
     wb.close()
     return productos
