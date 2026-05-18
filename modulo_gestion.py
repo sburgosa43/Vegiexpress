@@ -9,25 +9,63 @@ from pdf_helper import generar_envio, nombre_archivo
 from excel_helper import guardar_cambios_precio
 
 
+MESES_LABEL = {
+    1:"01-Ene", 2:"02-Feb", 3:"03-Mar", 4:"04-Abr",
+    5:"05-May", 6:"06-Jun", 7:"07-Jul", 8:"08-Ago",
+    9:"09-Sep", 10:"10-Oct", 11:"11-Nov", 12:"12-Dic",
+}
+
+
 def _aplicar_filtros(todos: list, sufijo: str = "") -> dict:
-    años_disp     = sorted({str(p["año"])  for p in todos if p["año"]},  reverse=True)
-    sems_disp     = sorted({str(p["semana"]) for p in todos if p["semana"]})
-    fechas_disp   = sorted({p["fecha"].strftime("%d/%m/%Y") for p in todos if p["fecha"]},
-                            reverse=True)
-    clientes_disp = sorted({p["cliente"] for p in todos if p["cliente"]})
+    from datetime import date, timedelta
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1: sel_años = st.multiselect("Año",     años_disp,     key=f"g_años{sufijo}", placeholder="Todos")
-    with c2: sel_sems = st.multiselect("Semana",  sems_disp,     key=f"g_sems{sufijo}", placeholder="Todas")
-    with c3: sel_fec  = st.multiselect("Fecha",   fechas_disp,   key=f"g_fec{sufijo}",  placeholder="Todas")
-    with c4: sel_clis = st.multiselect("Cliente", clientes_disp, key=f"g_clis{sufijo}", placeholder="Todos")
-    with c5: sel_est  = st.selectbox("Estado", ["Todos", "Pendiente", "Cancelado"], key=f"g_est{sufijo}")
+    # ── Filtro base: últimos 3 meses por defecto ──────────────────────────────
+    cutoff     = date.today() - timedelta(days=90)
+    ver_todo   = st.checkbox("📅 Ver historial completo",
+                              value=False, key=f"g_hist{sufijo}")
+    base       = todos if ver_todo else [
+        p for p in todos if p["fecha"] and p["fecha"] >= cutoff
+    ]
+    if not ver_todo and base:
+        st.caption(f"Mostrando últimos 90 días ({cutoff.strftime('%d/%m/%Y')} → hoy).")
 
-    f = todos
-    if sel_años:  f = [p for p in f if str(p["año"])    in sel_años]
-    if sel_sems:  f = [p for p in f if str(p["semana"]) in sel_sems]
-    if sel_fec:   f = [p for p in f if p["fecha"] and p["fecha"].strftime("%d/%m/%Y") in sel_fec]
-    if sel_clis:  f = [p for p in f if p["cliente"]     in sel_clis]
+    # ── Opciones disponibles en el rango actual ───────────────────────────────
+    clientes_disp = sorted({p["cliente"]  for p in base if p["cliente"]})
+    años_disp     = sorted({str(p["año"]) for p in base if p["año"]}, reverse=True)
+    meses_nums    = sorted({p["fecha"].month for p in base if p["fecha"]})
+    meses_disp    = [MESES_LABEL[m] for m in meses_nums]
+    sems_disp     = sorted({str(p["semana"]) for p in base if p["semana"]})
+    fechas_disp   = sorted(
+        {p["fecha"].strftime("%d/%m/%Y") for p in base if p["fecha"]}, reverse=True)
+
+    # ── Filtros: Cliente | Año | Mes | Semana | Fecha ─────────────────────────
+    r1c1, r1c2, r1c3 = st.columns(3)
+    r2c1, r2c2, r2c3 = st.columns(3)
+
+    with r1c1: sel_clis = st.multiselect("Cliente", clientes_disp,
+                                          key=f"g_clis{sufijo}", placeholder="Todos")
+    with r1c2: sel_años = st.multiselect("Año",     años_disp,
+                                          key=f"g_años{sufijo}", placeholder="Todos")
+    with r1c3: sel_mes  = st.multiselect("Mes",     meses_disp,
+                                          key=f"g_mes{sufijo}",  placeholder="Todos")
+    with r2c1: sel_sems = st.multiselect("Semana",  sems_disp,
+                                          key=f"g_sems{sufijo}", placeholder="Todas")
+    with r2c2: sel_fec  = st.multiselect("Fecha",   fechas_disp,
+                                          key=f"g_fec{sufijo}",  placeholder="Todas")
+    with r2c3: sel_est  = st.selectbox("Estado", ["Todos","Pendiente","Cancelado"],
+                                        key=f"g_est{sufijo}")
+
+    # Convertir selección de mes a números
+    sel_mes_nums = {k for k, v in MESES_LABEL.items() if v in sel_mes}
+
+    # ── Aplicar filtros ───────────────────────────────────────────────────────
+    f = base
+    if sel_clis:     f = [p for p in f if p["cliente"]     in sel_clis]
+    if sel_años:     f = [p for p in f if str(p["año"])    in sel_años]
+    if sel_mes_nums: f = [p for p in f if p["fecha"] and p["fecha"].month in sel_mes_nums]
+    if sel_sems:     f = [p for p in f if str(p["semana"]) in sel_sems]
+    if sel_fec:      f = [p for p in f if p["fecha"] and
+                          p["fecha"].strftime("%d/%m/%Y") in sel_fec]
 
     grupos: dict = {}
     for p in f:
