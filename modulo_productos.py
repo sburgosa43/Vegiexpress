@@ -101,8 +101,10 @@ def _mostrar_lista(es_antigua: bool):
     st.markdown(f"**{len(filtrados)} productos**")
 
     # Mostrar en tabla compacta con acciones
-    for prod in filtrados:
-        modo_key = f"modo_prod_{lbl}_{prod['nombre']}"
+    for idx, prod in enumerate(filtrados):
+        # Key única: índice + lbl para evitar duplicados por nombre igual
+        uid      = f"{lbl}_{idx}"
+        modo_key = f"modo_prod_{uid}"
         if modo_key not in st.session_state:
             st.session_state[modo_key] = "ver"
 
@@ -121,17 +123,16 @@ def _mostrar_lista(es_antigua: bool):
 
             col_e, col_d = st.columns(2)
             with col_e:
-                if st.button("✏️ Editar", key=f"e_{lbl}_{prod['nombre']}"):
+                if st.button("✏️ Editar", key=f"e_{uid}"):
                     st.session_state[modo_key] = "editar"; st.rerun()
             with col_d:
-                if st.button("🗑️ Eliminar", key=f"d_{lbl}_{prod['nombre']}",
-                             type="secondary"):
+                if st.button("🗑️ Eliminar", key=f"d_{uid}", type="secondary"):
                     st.session_state[modo_key] = "confirmar"; st.rerun()
 
             if st.session_state[modo_key] == "editar":
                 st.divider()
                 datos = _form_producto(prefill=prod,
-                                       key_prefix=f"edit_{lbl}_{prod['nombre']}",
+                                       key_prefix=f"edit_{uid}",
                                        es_antigua=es_antigua)
                 if datos:
                     with st.spinner("Guardando..."):
@@ -143,14 +144,13 @@ def _mostrar_lista(es_antigua: bool):
                 st.error(f"⚠️ ¿Eliminar **{prod['nombre']}**? No se puede deshacer.")
                 cc1, cc2 = st.columns(2)
                 with cc1:
-                    if st.button("✅ Sí, eliminar",
-                                 key=f"confirm_d_{lbl}_{prod['nombre']}", type="primary"):
+                    if st.button("✅ Sí, eliminar", key=f"yes_{uid}", type="primary"):
                         with st.spinner("Eliminando..."):
                             eliminar_producto(prod["row_num"], es_antigua)
                         st.success("Producto eliminado.")
                         st.session_state[modo_key] = "ver"; st.rerun()
                 with cc2:
-                    if st.button("❌ Cancelar", key=f"cancel_d_{lbl}_{prod['nombre']}"):
+                    if st.button("❌ Cancelar", key=f"no_{uid}"):
                         st.session_state[modo_key] = "ver"; st.rerun()
 
 
