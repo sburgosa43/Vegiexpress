@@ -86,6 +86,7 @@ def _S():
                           textColor=VERDE_OSC, alignment=TA_RIGHT, leading=14),
         "tot_val":   sty("tot_val",   fontSize=14, fontName="Helvetica-Bold",
                           textColor=GRIS_CARB, alignment=TA_RIGHT, leading=17),
+        "normal":    sty("normal",    fontSize=9,  leading=12),
         "sign":      sty("sign",      fontSize=8,  textColor=colors.HexColor('#AAAAAA'),
                           alignment=TA_CENTER, leading=10),
         "footer":    sty("footer",    fontSize=8,  fontName="Helvetica-Oblique",
