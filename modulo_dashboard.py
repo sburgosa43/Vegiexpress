@@ -53,14 +53,12 @@ def _periodos(hoy=None):
     sem_ant_n = sem - 1; sem_ant_a = año
     if sem_ant_n < 1: sem_ant_n = 52; sem_ant_a -= 1
 
-    mismo_dia_py = date(año - 1, hoy.month, min(hoy.day, 28))
-
     return {
         "Sem Actual":  lambda p: p["semana"]==sem  and p["año"]==año,
         "Sem Ant.":    lambda p: p["semana"]==sem_ant_n and p["año"]==sem_ant_a,
         "MTD":         lambda p: p["año"]==año and p["fecha"] and p["fecha"].month==mes,
         "YTD":         lambda p: p["año"]==año and p["fecha"] and p["fecha"]<=hoy,
-        "PYTD":        lambda p: p["año"]==año-1 and p["fecha"] and p["fecha"]<=mismo_dia_py,
+        "PYTD":        lambda p: p["año"]==año-1 and p["fecha"] is not None,
     }
 
 def _filtrar(todos, fn_periodo, cli_map, excl_zona=None):
