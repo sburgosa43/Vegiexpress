@@ -13,7 +13,24 @@ from pdf_helper   import (generar_facturacion_mensual,
 # Excluir mismos clientes que el dashboard
 EXCLUIR = ["veggi", "chimalt", "wilson"]
 
+ZONAS_MAP = {
+    "🔖 Antigua & Chimal":      ["L03", "L04"],
+    "🏙️ Guatemala & Santiago":  ["L05", "L06"],
+    "🌊 Rio":                   ["L01"],
+}
+COLORES_ZONA = {
+    "🔖 Antigua & Chimal":      "#2D7A2D",
+    "🏙️ Guatemala & Santiago":  "#8DC63F",
+    "🌊 Rio":                   "#4A4A4A",
+}
+
 def _excluido(nombre): return any(x in nombre.lower() for x in EXCLUIR)
+
+def _zona_cliente(c: dict) -> str:
+    for zona, cods in ZONAS_MAP.items():
+        if c.get("codigo_lugar","") in cods:
+            return zona
+    return "Sin zona"
 
 
 def _construir_datos(pedidos: list, mes: int, año: int) -> dict:
@@ -232,9 +249,51 @@ def mostrar():
         f"Total del mes: Q{total_global:,.2f}</b></div>",
         unsafe_allow_html=True)
 
-    # ── Cards por cliente (orden por total desc) ──────────────────────────────
-    for cli_nombre, datos_cli in sorted(datos.items(),
-                                         key=lambda x: x[1]["total_mes"],
-                                         reverse=True):
-        cliente_info = cli_map.get(cli_nombre, {"nombre": cli_nombre})
-        _card_cliente(cli_nombre, datos_cli, cliente_info, mes_sel, año_sel)
+    # ── Organizar por zona ────────────────────────────────────────────────────
+    por_zona = {z: {} for z in ZONAS_MAP}
+    sin_zona = {}
+    for cli_nombre, datos_cli in datos.items():
+        cli_obj = cli_map.get(cli_nombre, {})
+        zona    = _zona_cliente(cli_obj)
+        if zona in por_zona:
+            por_zona[zona][cli_nombre] = datos_cli
+        else:
+            sin_zona[cli_nombre] = datos_cli
+
+    tabs_labels = [f"{z} ({len(v)})" for z, v in por_zona.items() if v]
+    if sin_zona:
+        tabs_labels.append(f"⚠️ Sin zona ({len(sin_zona)})")
+
+    if not tabs_labels:
+        st.info("No hay pedidos para este período.")
+        return
+
+    tabs = st.tabs(tabs_labels)
+    tab_idx = 0
+
+    for zona, grupo in por_zona.items():
+        if not grupo:
+            continue
+        with tabs[tab_idx]:
+            tab_idx += 1
+            color    = COLORES_ZONA[zona]
+            total_z  = sum(v["total_mes"] for v in grupo.values())
+            st.markdown(
+                f"<div style='border-left:4px solid {color};padding:3px 10px;"
+                f"border-radius:4px;margin-bottom:8px'>"
+                f"<b>{zona}</b> — {len(grupo)} cliente(s) — "
+                f"Total: Q{total_z:,.2f}</div>",
+                unsafe_allow_html=True)
+            for cli_nombre, datos_cli in sorted(grupo.items(),
+                                                 key=lambda x: x[1]["total_mes"],
+                                                 reverse=True):
+                cliente_info = cli_map.get(cli_nombre, {"nombre": cli_nombre})
+                _card_cliente(cli_nombre, datos_cli, cliente_info, mes_sel, año_sel)
+
+    if sin_zona:
+        with tabs[tab_idx]:
+            for cli_nombre, datos_cli in sorted(sin_zona.items(),
+                                                 key=lambda x: x[1]["total_mes"],
+                                                 reverse=True):
+                cliente_info = cli_map.get(cli_nombre, {"nombre": cli_nombre})
+                _card_cliente(cli_nombre, datos_cli, cliente_info, mes_sel, año_sel)
