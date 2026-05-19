@@ -297,6 +297,44 @@ def guardar_metas(metas: dict) -> None:
     wb.close()
 
 
+
+def eliminar_pedido(unico: str) -> int:
+    """
+    Elimina del Excel todas las filas de un pedido (por código Unico).
+    Borra de abajo hacia arriba para no desplazar índices.
+    Retorna el número de filas eliminadas.
+    """
+    wb = cargar_para_escritura(FILE_ID)
+    ws = wb["Pedidos"]
+
+    # Encontrar filas a eliminar
+    filas = []
+    for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
+        if str(row[27].value or "").strip() == unico:
+            filas.append(i)
+
+    # Eliminar de abajo hacia arriba para no afectar índices
+    for fila in sorted(filas, reverse=True):
+        ws.delete_rows(fila)
+
+    # Actualizar referencia de la tabla
+    if "Pedidos" in [s.title for s in wb.worksheets]:
+        from openpyxl.utils import get_column_letter
+        if "Tabla3" in ws.tables:
+            tbl    = ws.tables["Tabla3"]
+            partes = tbl.ref.split(":")
+            col_f  = "".join(ch for ch in partes[1] if ch.isalpha())
+            nueva  = ws.max_row
+            if nueva >= 2:
+                tbl.ref = f"{partes[0]}:{col_f}{nueva}"
+
+    if filas:
+        guardar_en_drive(wb, FILE_ID)
+        st.cache_data.clear()
+    wb.close()
+    return len(filas)
+
+
 # ── HISTORIAL DE CAMBIOS DE PRECIO ────────────────────────────────────────────
 HOJA_HISTORIAL  = "Historial Cambios"
 _HIST_HEADERS   = [

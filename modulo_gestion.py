@@ -3,7 +3,8 @@ modulo_gestion.py — Gestión de Pedidos (Revisar y Editar)
 """
 import streamlit as st
 from datetime import date
-from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido, editar_linea, editar_fecha_pedido)
+from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido,
+                          editar_linea, editar_fecha_pedido, eliminar_pedido)
 from data_helper import cargar_clientes, cargar_productos
 from pdf_helper import generar_envio, nombre_archivo
 from excel_helper import guardar_cambios_precio
@@ -167,14 +168,40 @@ def _modificar(todos):
             f"{fped.strftime('%d/%m/%Y')}  ·  Sem {l0['semana']}/{l0['año']}  ·  Q{total:,.2f}",
             expanded=True,
         ):
+            conf_key = f"confirm_elim_{unico}"
             if not canc:
-                if st.button("🔴 Cancelar pedido completo", key=f"mod_can_{unico}", type="secondary"):
+                if st.button("🔴 Cancelar pedido completo",
+                             key=f"mod_can_{unico}", type="secondary"):
                     with st.spinner(): cancelar_pedido(unico)
                     st.success("Cancelado."); st.rerun()
             else:
-                if st.button("🟢 Restaurar a Pendiente", key=f"mod_res_{unico}", type="secondary"):
-                    with st.spinner(): restaurar_pedido(unico)
-                    st.success("Restaurado."); st.rerun()
+                bc2, bd2 = st.columns(2)
+                with bc2:
+                    if st.button("🟢 Restaurar a Pendiente",
+                                 key=f"mod_res_{unico}", type="secondary"):
+                        with st.spinner(): restaurar_pedido(unico)
+                        st.success("Restaurado."); st.rerun()
+                with bd2:
+                    if st.button("🗑️ Eliminar pedido",
+                                 key=f"mod_del_{unico}", type="secondary"):
+                        st.session_state[conf_key] = True; st.rerun()
+
+            # Confirmación de eliminación
+            if st.session_state.get(conf_key):
+                st.error("⚠️ ¿Eliminar este pedido definitivamente del Excel? "
+                         "**No se puede deshacer.**")
+                ce1, ce2 = st.columns(2)
+                with ce1:
+                    if st.button("✅ Sí, eliminar", key=f"mod_delok_{unico}",
+                                 type="primary"):
+                        with st.spinner("Eliminando..."):
+                            n = eliminar_pedido(unico)
+                        st.session_state.pop(conf_key, None)
+                        st.success(f"✅ Pedido eliminado ({n} filas).")
+                        st.rerun()
+                with ce2:
+                    if st.button("❌ Cancelar", key=f"mod_delno_{unico}"):
+                        st.session_state.pop(conf_key, None); st.rerun()
 
             if not canc:
                 # ── Editar fecha de entrega ───────────────────────────────────
