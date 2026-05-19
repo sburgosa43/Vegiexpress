@@ -445,6 +445,12 @@ def _tab_crm(todos, clientes, sem_act, año_act):
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 def mostrar():
     st.markdown("## 📊 Dashboard — VeggiExpress")
+    # Botón de regreso al Inicio
+    if st.button("🏠 Inicio", key="btn_home_dash", type="secondary"):
+        st.session_state["_nav_target"] = "🏠 Inicio"
+        st.rerun()
+    st.divider()
+
 
     with st.spinner("Cargando datos..."):
         todos    = leer_pedidos()

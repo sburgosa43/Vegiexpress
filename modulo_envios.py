@@ -124,6 +124,12 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
 
 def mostrar():
     st.markdown("## 🚚 Envíos y Facturación — Semana Actual")
+    # Botón de regreso al Inicio
+    if st.button("🏠 Inicio", key="btn_home_env", type="secondary"):
+        st.session_state["_nav_target"] = "🏠 Inicio"
+        st.rerun()
+    st.divider()
+
 
     with st.spinner("Cargando..."):
         todos    = leer_pedidos()

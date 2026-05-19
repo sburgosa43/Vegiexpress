@@ -368,6 +368,12 @@ def _paso4():
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 def mostrar():
     st.markdown("## 🛒 Nuevo Pedido")
+    # Botón de regreso al Inicio
+    if st.button("🏠 Inicio", key="btn_home_ped", type="secondary"):
+        st.session_state["_nav_target"] = "🏠 Inicio"
+        st.rerun()
+    st.divider()
+
     _init()
 
     if not _aviso_costos():

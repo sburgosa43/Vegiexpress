@@ -156,6 +156,12 @@ def _mostrar_lista(es_antigua: bool):
 
 def mostrar():
     st.markdown("## 📦 Productos")
+    # Botón de regreso al Inicio
+    if st.button("🏠 Inicio", key="btn_home_prod", type="secondary"):
+        st.session_state["_nav_target"] = "🏠 Inicio"
+        st.rerun()
+    st.divider()
+
 
     tab_general, tab_antigua, tab_nuevo_g, tab_nuevo_a = st.tabs([
         "📋 Lista General",

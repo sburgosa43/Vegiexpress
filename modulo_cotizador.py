@@ -259,6 +259,11 @@ def _tab_escenarios():
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 def mostrar():
     st.markdown("## 🧮 Cotizador de Precios")
+    if st.button("🏠 Inicio", key="btn_home_cot", type="secondary"):
+        st.session_state["_nav_target"] = "🏠 Inicio"
+        st.rerun()
+    st.divider()
+
     st.caption("IVA 12% · ISR 5% · Fórmulas según Listado de Productos")
 
     tab1, tab2, tab3 = st.tabs([

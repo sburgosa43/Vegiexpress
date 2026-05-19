@@ -252,6 +252,12 @@ def _modificar(todos):
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 def mostrar():
     st.markdown("## 📋 Gestión de Pedidos")
+    # Botón de regreso al Inicio
+    if st.button("🏠 Inicio", key="btn_home_ges", type="secondary"):
+        st.session_state["_nav_target"] = "🏠 Inicio"
+        st.rerun()
+    st.divider()
+
     with st.spinner("Cargando..."):
         todos = leer_pedidos()
     if not todos:

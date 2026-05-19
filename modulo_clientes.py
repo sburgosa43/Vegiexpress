@@ -93,6 +93,12 @@ def _cargar_row_map():
 
 def mostrar():
     st.markdown("## 👥 Clientes")
+    # Botón de regreso al Inicio
+    if st.button("🏠 Inicio", key="btn_home_cli", type="secondary"):
+        st.session_state["_nav_target"] = "🏠 Inicio"
+        st.rerun()
+    st.divider()
+
 
     clientes = cargar_clientes()
     tab_lista, tab_nuevo = st.tabs(["📋 Lista de clientes", "➕ Nuevo cliente"])

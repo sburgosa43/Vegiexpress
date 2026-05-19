@@ -165,6 +165,12 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
 
 def mostrar():
     st.markdown("## 🧾 Facturación Mensual")
+    # Botón de regreso al Inicio
+    if st.button("🏠 Inicio", key="btn_home_fac", type="secondary"):
+        st.session_state["_nav_target"] = "🏠 Inicio"
+        st.rerun()
+    st.divider()
+
 
     with st.spinner("Cargando pedidos..."):
         todos    = leer_pedidos()
