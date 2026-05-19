@@ -335,6 +335,38 @@ def eliminar_pedido(unico: str) -> int:
     return len(filas)
 
 
+
+def editar_cambios_batch(cambios: list) -> int:
+    """
+    Aplica múltiples ediciones de pedidos en UN SOLO ciclo Drive.
+    cambios: lista de dicts con row_num + campos opcionales:
+      nuevo_producto, nueva_cantidad, nuevo_precio
+    Retorna: número de filas modificadas.
+    """
+    if not cambios:
+        return 0
+
+    wb = cargar_para_escritura(FILE_ID)
+    ws = wb["Pedidos"]
+    modificadas = 0
+
+    for cambio in cambios:
+        row = cambio["row_num"]
+        if "nuevo_producto" in cambio:
+            ws.cell(row=row, column=4).value = cambio["nuevo_producto"]
+        if "nueva_cantidad" in cambio:
+            ws.cell(row=row, column=3).value = cambio["nueva_cantidad"]
+        if "nuevo_precio"   in cambio:
+            ws.cell(row=row, column=5).value = cambio["nuevo_precio"]
+        modificadas += 1
+
+    if modificadas:
+        guardar_en_drive(wb, FILE_ID)
+        st.cache_data.clear()
+    wb.close()
+    return modificadas
+
+
 # ── HISTORIAL DE CAMBIOS DE PRECIO ────────────────────────────────────────────
 HOJA_HISTORIAL  = "Historial Cambios"
 _HIST_HEADERS   = [

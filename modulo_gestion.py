@@ -4,7 +4,8 @@ modulo_gestion.py — Gestión de Pedidos (Revisar y Editar)
 import streamlit as st
 from datetime import date
 from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido,
-                          editar_linea, editar_fecha_pedido, eliminar_pedido)
+                          editar_linea, editar_fecha_pedido, eliminar_pedido,
+                          editar_cambios_batch)
 from data_helper import cargar_clientes, cargar_productos
 from pdf_helper import generar_envio, nombre_archivo
 from excel_helper import guardar_cambios_precio
@@ -156,6 +157,10 @@ def _modificar(todos):
     if not sel:
         st.info("Seleccioná al menos un pedido."); return
 
+    # Acumular cambios de todos los pedidos seleccionados
+    lineas_originales = {}   # row_num → linea original
+    total_cambios     = 0
+
     for unico in sel:
         lineas = grupos[unico]
         l0     = lineas[0]
@@ -186,67 +191,111 @@ def _modificar(todos):
                                  key=f"mod_del_{unico}", type="secondary"):
                         st.session_state[conf_key] = True; st.rerun()
 
-            # Confirmación de eliminación
             if st.session_state.get(conf_key):
-                st.error("⚠️ ¿Eliminar este pedido definitivamente del Excel? "
+                st.error("⚠️ ¿Eliminar este pedido definitivamente? "
                          "**No se puede deshacer.**")
                 ce1, ce2 = st.columns(2)
                 with ce1:
                     if st.button("✅ Sí, eliminar", key=f"mod_delok_{unico}",
                                  type="primary"):
-                        with st.spinner("Eliminando..."):
-                            n = eliminar_pedido(unico)
+                        with st.spinner(): n = eliminar_pedido(unico)
                         st.session_state.pop(conf_key, None)
-                        st.success(f"✅ Pedido eliminado ({n} filas).")
-                        st.rerun()
+                        st.success(f"✅ Eliminado ({n} filas)."); st.rerun()
                 with ce2:
                     if st.button("❌ Cancelar", key=f"mod_delno_{unico}"):
                         st.session_state.pop(conf_key, None); st.rerun()
 
             if not canc:
-                # ── Editar fecha de entrega ───────────────────────────────────
+                # Fecha de entrega (sigue guardando individual — es a nivel pedido)
                 st.markdown("**Fecha de entrega:**")
                 fc1, fc2 = st.columns([2, 1])
-                nueva_fec = fc1.date_input(
-                    "Nueva fecha", value=fped,
-                    key=f"mod_fecha_{unico}")
+                nueva_fec = fc1.date_input("Nueva fecha", value=fped,
+                                            key=f"mod_fecha_{unico}")
                 if fc2.button("💾 Guardar fecha", key=f"mod_savefec_{unico}"):
                     if nueva_fec != fped:
-                        with st.spinner("Guardando fecha..."):
+                        with st.spinner():
                             n = editar_fecha_pedido(unico, nueva_fec)
-                        st.success(f"✅ Fecha actualizada en {n} filas.")
-                        st.rerun()
+                        st.success(f"✅ Fecha actualizada ({n} filas)."); st.rerun()
                     else:
                         st.info("La fecha no cambió.")
                 st.divider()
 
-                # ── Editar líneas ─────────────────────────────────────────────
-                st.markdown("**Editar líneas** (precio se guarda solo en este pedido):")
+                # Líneas — sin botón individual, detecta cambios para la cola
+                hdr = st.columns([3.5, 1.5, 1.5])
+                hdr[0].markdown("**Producto**")
+                hdr[1].markdown("**Cantidad**")
+                hdr[2].markdown("**Precio (Q)**")
+
+                cambios_pedido = 0
                 for linea in lineas:
-                    uid = f"{unico}_{linea['row_num']}"
-                    st.markdown(f"---\n**{linea['producto']}**")
-                    ec1, ec2, ec3, ec4 = st.columns([3, 1.5, 1.5, 1.2])
-                    prod_nuevo  = ec1.selectbox("Producto", prods_lista,
-                                                index=(prods_lista.index(linea["producto"])
-                                                       if linea["producto"] in prods_lista else 0),
-                                                key=f"mod_prod_{uid}")
-                    cant_nueva  = ec2.number_input("Cantidad", min_value=0.0,
-                                                   value=float(linea["cantidad"] or 0),
-                                                   step=0.5, key=f"mod_cant_{uid}")
-                    prec_nuevo  = ec3.number_input("Precio (Q)", min_value=0.0,
-                                                   value=float(linea["precio"] or 0),
-                                                   step=0.25, key=f"mod_prec_{uid}")
-                    ec4.markdown("&nbsp;", unsafe_allow_html=True)
-                    if ec4.button("💾", key=f"mod_save_{uid}", help="Guardar en Excel"):
-                        cambios = {}
-                        if prod_nuevo and prod_nuevo != linea["producto"]: cambios["nuevo_producto"] = prod_nuevo
-                        if cant_nueva != float(linea["cantidad"] or 0):   cambios["nueva_cantidad"] = cant_nueva
-                        if prec_nuevo != float(linea["precio"]   or 0):   cambios["nuevo_precio"]   = prec_nuevo
-                        if cambios:
-                            with st.spinner(): editar_linea(linea["row_num"], **cambios)
-                            st.success("✅ Actualizado."); st.rerun()
-                        else:
-                            st.info("Sin cambios.")
+                    rn  = linea["row_num"]
+                    uid = f"mod_{rn}"
+                    lineas_originales[rn] = linea
+
+                    ec1, ec2, ec3 = st.columns([3.5, 1.5, 1.5])
+                    prod_nuevo = ec1.selectbox("",  prods_lista,
+                        index=(prods_lista.index(linea["producto"])
+                               if linea["producto"] in prods_lista else 0),
+                        key=f"{uid}_prod", label_visibility="collapsed")
+                    cant_nueva = ec2.number_input("", min_value=0.0,
+                        value=float(linea["cantidad"] or 0),
+                        step=0.5, key=f"{uid}_cant",
+                        label_visibility="collapsed")
+                    prec_nuevo = ec3.number_input("", min_value=0.0,
+                        value=float(linea["precio"] or 0),
+                        step=0.25, key=f"{uid}_prec",
+                        label_visibility="collapsed")
+
+                    # Indicadores de cambio
+                    hay_diff = []
+                    if prod_nuevo and prod_nuevo != linea["producto"]:
+                        hay_diff.append("producto")
+                    if abs(cant_nueva - float(linea["cantidad"] or 0)) > 0.001:
+                        hay_diff.append("cantidad")
+                    if abs(prec_nuevo - float(linea["precio"] or 0)) > 0.001:
+                        hay_diff.append("precio")
+                    if hay_diff:
+                        st.caption(f"📝 {linea['producto']}: cambió {', '.join(hay_diff)}")
+                        cambios_pedido += 1
+                        total_cambios  += 1
+
+                if cambios_pedido:
+                    st.markdown(
+                        f"<div style='font-size:.78rem;color:#E65100;margin-top:4px'>"
+                        f"📝 {cambios_pedido} cambio(s) pendiente(s) en este pedido"
+                        f"</div>", unsafe_allow_html=True)
+
+    # ── Botón global de guardado ───────────────────────────────────────────────
+    st.divider()
+    if total_cambios > 0:
+        st.info(f"📝 **{total_cambios} cambio(s) pendiente(s)** en {len(sel)} pedido(s) "
+                f"— se grabarán en un solo ciclo de Drive.")
+        if st.button(f"📤 Guardar todos los cambios ({total_cambios})",
+                     type="primary", use_container_width=True):
+            # Recopilar todos los cambios desde session state
+            cambios_batch = []
+            for rn, linea in lineas_originales.items():
+                uid = f"mod_{rn}"
+                prod_n = st.session_state.get(f"{uid}_prod", linea["producto"])
+                cant_n = st.session_state.get(f"{uid}_cant", linea["cantidad"])
+                prec_n = st.session_state.get(f"{uid}_prec", linea["precio"])
+
+                cambio = {"row_num": rn}
+                if prod_n and prod_n != linea["producto"]:
+                    cambio["nuevo_producto"] = prod_n
+                if abs(float(cant_n or 0) - float(linea["cantidad"] or 0)) > 0.001:
+                    cambio["nueva_cantidad"] = cant_n
+                if abs(float(prec_n or 0) - float(linea["precio"] or 0)) > 0.001:
+                    cambio["nuevo_precio"] = prec_n
+                if len(cambio) > 1:
+                    cambios_batch.append(cambio)
+
+            with st.spinner(f"Guardando {len(cambios_batch)} cambio(s) en Drive..."):
+                n = editar_cambios_batch(cambios_batch)
+            st.success(f"✅ {n} línea(s) guardadas en 1 ciclo Drive.")
+            st.rerun()
+    else:
+        st.info("Sin cambios detectados en los pedidos seleccionados.")
 
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
