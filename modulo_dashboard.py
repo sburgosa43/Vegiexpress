@@ -87,16 +87,27 @@ def _agg_periodo(todos, periodos, cli_map, campo="total"):
     return {nombre: sum(p[campo] or 0 for p in _filtrar(todos, fn, cli_map))
             for nombre, fn in periodos.items()}
 
-def _agg_grupo(todos, periodos, cli_map, by="cliente", campo="total"):
-    """Agrega campo por grupo (cliente o producto) para cada período."""
+def _agg_grupo(todos, periodos, cli_map, by="cliente",
+               campo="total", zona_filter=None):
+    """
+    Agrega campo por grupo (cliente o producto) para cada período.
+    Para productos: agrega por (producto, zona) para evitar mezcla de zonas.
+    zona_filter: si se indica, solo incluye pedidos de esa zona.
+    """
     result = {}
     for nombre_p, fn in periodos.items():
-        pedidos = _filtrar(todos, fn, cli_map)
+        pedidos = _filtrar(todos, fn, cli_map,
+                           excl_zona=zona_filter if zona_filter else None)
         for p in pedidos:
-            key = p[by]
+            if by == "producto":
+                # Clave compuesta para separar el mismo producto por zona
+                key = (p[by], p["zona"])
+            else:
+                key = p[by]
             if key not in result:
                 result[key] = {k: 0 for k in periodos}
-                result[key]["zona"] = p["zona"]
+                result[key]["zona"]     = p["zona"]
+                result[key]["_nombre"]  = p[by]
             result[key][nombre_p] += p[campo] or 0
     return result
 
@@ -202,8 +213,9 @@ def _tab_top_clientes(todos, cli_map, periodos):
         st.info("Sin datos."); return
 
     df_all = pd.DataFrame([
-        {"cliente": k, "zona": v["zona"], **{p: v[p] for p in periodos}}
-        for k, v in agg.items()
+        {"cliente": v["_nombre"], "zona": v["zona"],
+         **{p: v[p] for p in periodos}}
+        for v in agg.values()
     ])
 
     for zona in ZONAS_MAP:
@@ -213,7 +225,8 @@ def _tab_top_clientes(todos, cli_map, periodos):
             f"margin:8px 0 4px 0;border-radius:4px;font-weight:bold'>{zona}</div>",
             unsafe_allow_html=True)
 
-        df_z = df_all[df_all["zona"]==zona].nlargest(3, "YTD")
+        top_n = 5 if zona in ("Antigua & Chimal", "Rio") else 3
+        df_z = df_all[df_all["zona"]==zona].nlargest(top_n, "YTD")
         if df_z.empty:
             st.caption("Sin pedidos."); continue
 
@@ -252,17 +265,16 @@ def _tab_top_productos(todos, cli_map, periodos):
 
     campo = {"Q Venta": "total", "Q Margen Neto": "margen_q", "Unidades": "cantidad"}[metric]
 
-    agg = _agg_grupo(todos, periodos, cli_map, by="producto", campo=campo)
+    agg = _agg_grupo(todos, periodos, cli_map, by="producto", campo=campo,
+                     zona_filter=zona_f if zona_f != "Todas" else None)
     if not agg:
         st.info("Sin datos."); return
 
     df_all = pd.DataFrame([
-        {"producto": k, "zona": v["zona"], **{p: v[p] for p in periodos}}
-        for k, v in agg.items()
+        {"producto": v["_nombre"], "zona": v["zona"],
+         **{p: v[p] for p in periodos}}
+        for v in agg.values()
     ])
-
-    if zona_f != "Todas":
-        df_all = df_all[df_all["zona"] == zona_f]
 
     df_top = df_all.nlargest(10, "YTD")
 

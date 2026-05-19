@@ -55,8 +55,9 @@ def leer_pedidos() -> list[dict]:
         if precio_xl <= 0 and total_xl > 0 and cantidad > 0:
             precio_xl = round(total_xl / cantidad, 4)
 
-        # Usar Total del Excel cuando esté disponible (más preciso para historial)
-        total_final = total_xl if total_xl > 0 else round(precio_xl * cantidad, 2)
+        # Siempre calcular total desde precio × cantidad
+        # NO usar col G como fallback — puede contener Precio Impuestos inflado
+        total_final = round(precio_xl * cantidad, 2)
 
         semana_val = row[14] or (fecha.isocalendar()[1] if fecha else None)
         año_val    = row[15] or (fecha.year              if fecha else None)
