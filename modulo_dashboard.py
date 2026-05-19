@@ -185,21 +185,38 @@ def _tab_desempeno(todos, cli_map, periodos):
     st.divider()
     st.markdown("#### Detalle por zona")
     for zona in ZONAS_MAP:
-        color = COLORES_ZONA[zona]
-        st.markdown(
-            f"<div style='border-left:4px solid {color};padding:4px 10px;"
-            f"margin:4px 0;border-radius:4px'><b>{zona}</b></div>",
-            unsafe_allow_html=True)
-        zc = st.columns(5)
-        for col, (per, fn) in zip(zc, periodos.items()):
-            val = sum(p["total"] or 0 for p in _filtrar(todos, fn, cli_map, excl_zona=zona))
-            col.metric(per, f"Q{val:,.0f}")
+        color  = COLORES_ZONA[zona]
+        vals   = {per: sum(p["total"] or 0
+                           for p in _filtrar(todos, fn, cli_map, excl_zona=zona))
+                  for per, fn in periodos.items()}
         meta_z = st.session_state.get(f"meta_{zona}", 0)
-        val_act = sum(p["total"] or 0 for p in _filtrar(todos, periodos["Sem Actual"],
-                                                          cli_map, excl_zona=zona))
+
+        # Nombre de zona
+        st.markdown(
+            f"<div style='border-left:4px solid {color};padding:3px 10px;"
+            f"margin:6px 0 2px 0;border-radius:4px;font-size:.85rem;"
+            f"font-weight:bold'>{zona}</div>",
+            unsafe_allow_html=True)
+
+        # Métricas compactas en HTML
+        items_html = "".join(
+            f"<div style='text-align:center;min-width:90px;flex:1'>"
+            f"<div style='font-size:.65rem;color:#888;margin-bottom:2px'>{per}</div>"
+            f"<div style='font-size:.8rem;font-weight:bold;color:#2D2D2D'>"
+            f"Q{val:,.0f}</div></div>"
+            for per, val in vals.items()
+        )
+        st.markdown(
+            f"<div style='display:flex;gap:4px;flex-wrap:wrap;"
+            f"background:#f9f9f9;border-radius:6px;padding:6px 4px;"
+            f"margin-bottom:4px'>{items_html}</div>",
+            unsafe_allow_html=True)
+
         if meta_z > 0:
-            pz = min(val_act / meta_z, 1.0)
-            st.progress(pz, text=f"Sem Actual: Q{val_act:,.0f} / Meta Q{meta_z:,.0f} ({pz*100:.1f}%)")
+            pz = min(vals["Sem Actual"] / meta_z, 1.0)
+            st.progress(pz,
+                text=f"Q{vals['Sem Actual']:,.0f} / Meta Q{meta_z:,.0f} "
+                     f"({pz*100:.1f}%)")
 
 
 # ── TAB 2: TOP CLIENTES ───────────────────────────────────────────────────────
