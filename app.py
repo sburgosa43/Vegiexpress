@@ -26,6 +26,7 @@ MENU = [
     "🛒 Nuevo Pedido",
     "📋 Gestión Pedidos (Revisar y Editar)",
     "🚚 Envíos y Facturación Semana",
+    "📊 Dashboard",
     "🧮 Cotizador",
 ]
 
@@ -66,6 +67,10 @@ elif pagina.startswith("📋"):
 elif pagina.startswith("🚚"):
     import modulo_envios
     modulo_envios.mostrar()
+
+elif pagina.startswith("📊"):
+    import modulo_dashboard
+    modulo_dashboard.mostrar()
 
 elif pagina.startswith("🧮"):
     import modulo_cotizador

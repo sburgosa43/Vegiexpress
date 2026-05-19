@@ -65,6 +65,20 @@ def leer_pedidos() -> list[dict]:
         if not unico_val and fecha and row[1]:
             unico_val = f"_fbk_{str(row[1]).strip()}_{año_val}_{semana_val}_{fecha.strftime('%d%m')}"
 
+        # Fecha Vencimiento (col U = index 20) para créditos pendientes
+        fvenc = row[20]
+        if hasattr(fvenc, "date"):
+            fvenc = fvenc.date()
+        elif isinstance(fvenc, (int, float)) and fvenc:
+            fvenc = date(1899, 12, 30) + timedelta(days=int(fvenc))
+        else:
+            fvenc = None
+
+        # Margen Neto Q calculado en Python (no depende de fórmula Excel)
+        margen_q = round(
+            0.95 * (precio_xl - costo * 1.12) * cantidad, 2
+        ) if precio_xl > 0 and costo >= 0 else 0.0
+
         pedidos.append({
             "row_num":      i,
             "fecha":        fecha,
@@ -75,12 +89,14 @@ def leer_pedidos() -> list[dict]:
             "precio_excel": precio_xl,
             "costo":        costo,
             "total":        total_final,
+            "margen_q":     margen_q,
             "semana":       semana_val,
             "año":          año_val,
             "status":       str(row[30] or "Pendiente"),
             "unico":        unico_val,
             "direccion":    str(row[18] or ""),
             "unidad":       str(row[16] or ""),
+            "fecha_venc":   fvenc,
         })
     wb.close()
     return pedidos
