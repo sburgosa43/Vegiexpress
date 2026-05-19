@@ -213,6 +213,47 @@ def migrar_pedidos_a_valores() -> dict:
     return {"filas": len(filas_conv), "celdas": celdas_conv}
 
 
+
+def editar_fecha_pedido(unico: str, nueva_fecha) -> int:
+    """
+    Cambia la Fecha Entrega de todas las filas de un pedido (mismo unico).
+    Actualiza también los campos derivados: DiaSemana, Mes, Semana, Año, MesN, MesNN.
+    Retorna el número de filas modificadas.
+    """
+    from datetime import datetime
+    DIAS_ES  = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
+    MESES_N  = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
+
+    fecha_dt = datetime(nueva_fecha.year, nueva_fecha.month, nueva_fecha.day)
+    semana   = nueva_fecha.isocalendar()[1]
+    año      = nueva_fecha.year
+    mes      = nueva_fecha.month
+
+    wb = cargar_para_escritura(FILE_ID)
+    ws = wb["Pedidos"]
+
+    modificadas = 0
+    for row in ws.iter_rows(min_row=2):
+        # Buscar por Unico (col AB = col 28)
+        if str(row[27].value or "").strip() != unico:
+            continue
+        row[0].value  = fecha_dt              # A: Fecha Entrega
+        row[0].number_format = "dd/mm/yyyy;@"
+        row[12].value = DIAS_ES[nueva_fecha.weekday()]   # M: DiaSemana
+        row[13].value = mes                               # N: Mes
+        row[14].value = semana                            # O: Semana
+        row[15].value = año                               # P: Año
+        row[25].value = MESES_N[mes - 1]                 # Z: MesN
+        row[26].value = f"{mes:02d}"                      # AA: MesNN
+        modificadas  += 1
+
+    if modificadas:
+        guardar_en_drive(wb, FILE_ID)
+        st.cache_data.clear()
+    wb.close()
+    return modificadas
+
+
 # ── HISTORIAL DE CAMBIOS DE PRECIO ────────────────────────────────────────────
 HOJA_HISTORIAL  = "Historial Cambios"
 _HIST_HEADERS   = [

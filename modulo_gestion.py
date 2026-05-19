@@ -3,7 +3,7 @@ modulo_gestion.py — Gestión de Pedidos (Revisar y Editar)
 """
 import streamlit as st
 from datetime import date
-from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido, editar_linea)
+from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido, editar_linea, editar_fecha_pedido)
 from data_helper import cargar_clientes, cargar_productos
 from pdf_helper import generar_envio, nombre_archivo
 from excel_helper import guardar_cambios_precio
@@ -177,6 +177,23 @@ def _modificar(todos):
                     st.success("Restaurado."); st.rerun()
 
             if not canc:
+                # ── Editar fecha de entrega ───────────────────────────────────
+                st.markdown("**Fecha de entrega:**")
+                fc1, fc2 = st.columns([2, 1])
+                nueva_fec = fc1.date_input(
+                    "Nueva fecha", value=fped,
+                    key=f"mod_fecha_{unico}")
+                if fc2.button("💾 Guardar fecha", key=f"mod_savefec_{unico}"):
+                    if nueva_fec != fped:
+                        with st.spinner("Guardando fecha..."):
+                            n = editar_fecha_pedido(unico, nueva_fec)
+                        st.success(f"✅ Fecha actualizada en {n} filas.")
+                        st.rerun()
+                    else:
+                        st.info("La fecha no cambió.")
+                st.divider()
+
+                # ── Editar líneas ─────────────────────────────────────────────
                 st.markdown("**Editar líneas** (precio se guarda solo en este pedido):")
                 for linea in lineas:
                     uid = f"{unico}_{linea['row_num']}"

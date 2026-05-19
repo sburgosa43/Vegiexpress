@@ -37,6 +37,12 @@ with st.sidebar:
         st.markdown("## 🥬 VeggiExpress")
     st.divider()
 
+    # Interceptar navegación programática antes de renderizar el radio
+    if "_nav_target" in st.session_state:
+        target = st.session_state.pop("_nav_target")
+        if target in MENU:
+            st.session_state["nav"] = target
+
     pagina = st.radio("", MENU, key="nav", label_visibility="collapsed")
 
     st.divider()

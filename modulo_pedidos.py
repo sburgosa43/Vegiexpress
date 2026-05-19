@@ -67,7 +67,7 @@ def _aviso_costos() -> bool:
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("📦 Ir a Productos", type="secondary", use_container_width=True):
-            st.session_state["nav"] = "📦 Productos (Nuevos y Mantenimiento)"
+            st.session_state["_nav_target"] = "📦 Productos (Nuevos y Mantenimiento)"
             st.rerun()
     with col2:
         if st.button("✅ No hay cambios, continuar", type="primary", use_container_width=True):
