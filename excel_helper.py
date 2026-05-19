@@ -254,6 +254,49 @@ def editar_fecha_pedido(unico: str, nueva_fecha) -> int:
     return modificadas
 
 
+
+# ── METAS POR ZONA (hoja Config) ─────────────────────────────────────────────
+HOJA_CONFIG  = "Config"
+ZONAS_CONFIG = ["Antigua & Chimal", "Guatemala & Santiago", "Rio"]
+
+def leer_metas() -> dict:
+    """Lee metas desde hoja Config. Crea la hoja si no existe."""
+    wb = cargar_para_lectura(FILE_ID)
+    if HOJA_CONFIG not in wb.sheetnames:
+        wb.close()
+        return {z: 0.0 for z in ZONAS_CONFIG}
+    ws = wb[HOJA_CONFIG]
+    metas = {z: 0.0 for z in ZONAS_CONFIG}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if row[0] and str(row[0]) in ZONAS_CONFIG:
+            metas[str(row[0])] = float(row[1] or 0)
+    wb.close()
+    return metas
+
+def guardar_metas(metas: dict) -> None:
+    """Guarda metas en hoja Config (la crea si no existe)."""
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = cargar_para_escritura(FILE_ID)
+    if HOJA_CONFIG not in wb.sheetnames:
+        ws = wb.create_sheet(HOJA_CONFIG)
+        # Encabezados
+        for col, txt in enumerate(["Zona", "Meta Semanal (Q)"], 1):
+            cell = ws.cell(row=1, column=col, value=txt)
+            cell.font      = Font(bold=True, color="FFFFFF")
+            cell.fill      = PatternFill("solid", fgColor="2D7A2D")
+            cell.alignment = Alignment(horizontal="center")
+        ws.column_dimensions["A"].width = 30
+        ws.column_dimensions["B"].width = 20
+    else:
+        ws = wb[HOJA_CONFIG]
+    # Escribir metas (fila por zona)
+    for i, zona in enumerate(ZONAS_CONFIG, start=2):
+        ws.cell(row=i, column=1).value = zona
+        ws.cell(row=i, column=2).value = float(metas.get(zona, 0))
+    guardar_en_drive(wb, FILE_ID)
+    wb.close()
+
+
 # ── HISTORIAL DE CAMBIOS DE PRECIO ────────────────────────────────────────────
 HOJA_HISTORIAL  = "Historial Cambios"
 _HIST_HEADERS   = [

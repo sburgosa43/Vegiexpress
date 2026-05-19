@@ -6,7 +6,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import date
-from excel_helper import leer_pedidos
+from excel_helper import leer_pedidos, leer_metas, guardar_metas
 from data_helper import cargar_clientes
 
 # ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
@@ -147,15 +147,22 @@ def _warning_sin_pedido(todos, cli_map, periodos):
 # ── TAB 1: DESEMPEÑO ──────────────────────────────────────────────────────────
 def _tab_desempeno(todos, cli_map, periodos, campo, label_campo):
 
-    # Metas
-    with st.expander("⚙️ Metas semanales por zona (Q)", expanded=False):
+    # Metas — persisten en hoja Config del Excel
+    with st.expander("⚙️ Metas semanales por zona (Q) — se guardan automáticamente",
+                     expanded=False):
         mc = st.columns(len(ZONAS_MAP))
+        nuevas_metas = {}
         for col, zona in zip(mc, ZONAS_MAP):
             k = f"meta_{zona}"
-            if k not in st.session_state: st.session_state[k] = 0.0
-            st.session_state[k] = col.number_input(
+            nuevas_metas[zona] = col.number_input(
                 zona, min_value=0.0, step=100.0,
-                value=float(st.session_state[k]), key=f"inp_{k}")
+                value=float(st.session_state.get(k, 0.0)), key=f"inp_{k}")
+        if st.button("💾 Guardar metas", type="primary"):
+            with st.spinner("Guardando metas en Excel..."):
+                guardar_metas(nuevas_metas)
+            for zona, val in nuevas_metas.items():
+                st.session_state[f"meta_{zona}"] = val
+            st.success("✅ Metas guardadas.")
 
     st.divider()
 
@@ -188,26 +195,36 @@ def _tab_desempeno(todos, cli_map, periodos, campo, label_campo):
     st.markdown(f"<div style='font-size:.75rem;font-weight:bold;color:#555;"
                 f"margin-bottom:4px'>Detalle por zona</div>", unsafe_allow_html=True)
 
-    filas_zona = []
     for zona in ZONAS_MAP:
+        color  = COLORES_ZONA[zona]
         vals_z = {pnm: sum(p[campo] or 0
                            for p in _filtrar(todos, fn, cli_map, zona_only=zona))
                   for pnm, fn in periodos.items()}
-        filas_zona.append({"label": zona, "vals": vals_z,
-                            "color": COLORES_ZONA[zona]})
+        v_act  = vals_z["Sem Actual"]
+        v_ant  = vals_z["Sem Ant."]
+        delta  = v_act - v_ant
+        signo  = "▲" if delta >= 0 else "▼"
+        delta_txt = f"{signo} Q{abs(delta):,.0f} vs sem ant."
+
+        # Nombre de zona con delta
+        st.markdown(
+            f"<div style='border-left:4px solid {color};padding:3px 10px;"
+            f"margin:6px 0 2px 0;border-radius:4px'>"
+            f"<span style='font-size:.82rem;font-weight:bold'>{zona}</span>"
+            f"&nbsp;&nbsp;<span style='font-size:.7rem;"
+            f"color:{'#2D7A2D' if delta>=0 else '#C0392B'}'>{delta_txt}</span>"
+            f"</div>", unsafe_allow_html=True)
+
+        # Valores compactos
+        st.markdown(_html_compacto([{"label":"", "vals": vals_z, "color": color}]),
+                    unsafe_allow_html=True)
+
+        # Barra vs meta
         meta_z = st.session_state.get(f"meta_{zona}", 0)
-        v_z    = vals_z["Sem Actual"]
         if meta_z > 0 and campo == "total":
-            filas_zona[-1]["meta_txt"] = (
-                f"Meta: Q{v_z:,.0f} / Q{meta_z:,.0f} "
-                f"({min(v_z/meta_z,1)*100:.1f}%)")
-            filas_zona[-1]["meta_pct"] = min(v_z / meta_z, 1.0)
-
-    st.markdown(_html_compacto(filas_zona), unsafe_allow_html=True)
-
-    for f in filas_zona:
-        if "meta_pct" in f:
-            st.progress(f["meta_pct"], text=f.get("meta_txt",""))
+            pz = min(v_act / meta_z, 1.0)
+            st.progress(pz,
+                text=f"Q{v_act:,.0f} / Meta Q{meta_z:,.0f} ({pz*100:.1f}%)")
 
     st.divider()
 
@@ -432,6 +449,11 @@ def mostrar():
     with st.spinner("Cargando datos..."):
         todos    = leer_pedidos()
         clientes = cargar_clientes()
+        # Cargar metas persistentes (una vez por sesión)
+        if not any(f"meta_{z}" in st.session_state for z in ZONAS_MAP):
+            metas_guardadas = leer_metas()
+            for zona, val in metas_guardadas.items():
+                st.session_state[f"meta_{zona}"] = val
 
     cli_map  = _build_cli_map(clientes)
     hoy      = date.today()

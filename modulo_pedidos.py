@@ -97,7 +97,8 @@ def _paso1():
             f"🏷️ {c['tipo']} · 📅 Crédito: {c['credito']} días · 📌 {c['codigo_lugar']}"
             f"{'&nbsp;🔖 <b>Precios Antigua</b>' if c['es_antigua'] else ''}"
             f"</div>", unsafe_allow_html=True)
-        fecha = st.date_input("📅 Fecha de entrega", value=date.today(), min_value=date.today())
+        fecha = st.date_input("📅 Fecha de entrega", value=date.today(),
+                      min_value=date.today() - __import__("datetime").timedelta(days=30))
         st.caption(f"Semana {fecha.isocalendar()[1]} · {fecha.strftime('%A %d/%m/%Y')}")
         if st.button("Continuar → Agregar Productos", type="primary"):
             st.session_state.ped_cliente = c
