@@ -380,7 +380,7 @@ def preview_correccion_masiva(cliente: str, producto: str,
     Retorna: {total_filas, delta_ventas, delta_margen, filas (list)}
     """
     import calendar
-    from datetime import timedelta
+    from datetime import date, timedelta
 
     wb = cargar_para_lectura(FILE_ID)
     ws = wb["Pedidos"]
