@@ -193,7 +193,11 @@ def mostrar():
         todos    = leer_pedidos()
         cli_list = cargar_clientes()
 
-    cli_map = {c["nombre"]: c for c in cli_list}
+    cli_map       = {c["nombre"]: c for c in cli_list}
+    cli_map_lower = {c["nombre"].lower(): c for c in cli_list}
+
+    def _get_cli_info(nombre):
+        return cli_map.get(nombre) or cli_map_lower.get(nombre.lower(), {})
 
     # ── Selectores ────────────────────────────────────────────────────────────
     hoy = date.today()
@@ -253,7 +257,7 @@ def mostrar():
     por_zona = {z: {} for z in ZONAS_MAP}
     sin_zona = {}
     for cli_nombre, datos_cli in datos.items():
-        cli_obj = cli_map.get(cli_nombre, {})
+        cli_obj = _get_cli_info(cli_nombre)
         zona    = _zona_cliente(cli_obj)
         if zona in por_zona:
             por_zona[zona][cli_nombre] = datos_cli
@@ -287,7 +291,7 @@ def mostrar():
             for cli_nombre, datos_cli in sorted(grupo.items(),
                                                  key=lambda x: x[1]["total_mes"],
                                                  reverse=True):
-                cliente_info = cli_map.get(cli_nombre, {"nombre": cli_nombre})
+                cliente_info = _get_cli_info(cli_nombre) or {"nombre": cli_nombre}
                 _card_cliente(cli_nombre, datos_cli, cliente_info, mes_sel, año_sel)
 
     if sin_zona:
