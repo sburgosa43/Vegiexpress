@@ -28,6 +28,9 @@ MODULOS = {
         ("📦", "Productos",           "Gestionar catálogo y precios",   "📦 Productos (Nuevos y Mantenimiento)"),
         ("👥", "Clientes",            "Gestionar cartera de clientes",  "👥 Clientes (Nuevos y Mantenimiento)"),
     ],
+    "🔧 Herramientas": [
+        ("🔧", "Mantenimiento", "Corrección de datos y migraciones", "🔧 Mantenimiento"),
+    ],
     "📈 Análisis": [
         ("📊", "Dashboard",           "KPIs y análisis de negocio",     "📊 Dashboard"),
         ("🧮", "Cotizador",           "Calcular precios y márgenes",    "🧮 Cotizador"),

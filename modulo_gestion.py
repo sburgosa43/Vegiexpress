@@ -4,8 +4,8 @@ modulo_gestion.py — Gestión de Pedidos (Revisar y Editar)
 import streamlit as st
 from datetime import date
 from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido,
-                          editar_linea, editar_fecha_pedido, eliminar_pedido,
-                          editar_cambios_batch)
+                          editar_linea, editar_fecha_pedido, eliminar_pedido)
+from order_helper import guardar_edicion_pedidos
 from data_helper import cargar_clientes, cargar_productos
 from pdf_helper import generar_envio, nombre_archivo
 from excel_helper import guardar_cambios_precio
@@ -265,21 +265,64 @@ def _modificar(todos):
                         f"📝 {cambios_pedido} cambio(s) pendiente(s) en este pedido"
                         f"</div>", unsafe_allow_html=True)
 
+                # ── Agregar nuevas líneas ─────────────────────────────────────
+                st.markdown("---")
+                st.markdown("**➕ Agregar productos a este pedido:**")
+                key_nv = f"mod_nuevas_{unico}"
+                if key_nv not in st.session_state:
+                    st.session_state[key_nv] = []
+                nuevas_ui = st.session_state[key_nv]
+
+                for jj, nv in enumerate(nuevas_ui):
+                    nj1, nj2, nj3, njx = st.columns([3.5, 1.5, 1.5, 0.5])
+                    nv["producto"] = nj1.selectbox("",  prods_lista,
+                        index=(prods_lista.index(nv.get("producto",""))
+                               if nv.get("producto","") in prods_lista else 0),
+                        key=f"nv_{unico}_{jj}_prod",
+                        label_visibility="collapsed")
+                    nv["cantidad"] = nj2.number_input("", min_value=0.0, step=0.5,
+                        value=float(nv.get("cantidad", 0.0)),
+                        key=f"nv_{unico}_{jj}_cant",
+                        label_visibility="collapsed")
+                    nv["precio"]   = nj3.number_input("", min_value=0.0, step=0.25,
+                        value=float(nv.get("precio", 0.0)),
+                        key=f"nv_{unico}_{jj}_prec",
+                        label_visibility="collapsed")
+                    if njx.button("🗑", key=f"nv_{unico}_{jj}_del"):
+                        nuevas_ui.pop(jj)
+                        st.session_state[key_nv] = nuevas_ui; st.rerun()
+
+                if st.button("➕ Agregar línea", key=f"addlin_{unico}"):
+                    nuevas_ui.append({"producto":"","cantidad":0.0,"precio":0.0})
+                    st.session_state[key_nv] = nuevas_ui; st.rerun()
+
     # ── Botón global de guardado ───────────────────────────────────────────────
     st.divider()
-    if total_cambios > 0:
-        st.info(f"📝 **{total_cambios} cambio(s) pendiente(s)** en {len(sel)} pedido(s) "
+
+    # Contar nuevas líneas válidas
+    nuevas_validas = sum(
+        1 for u in sel
+        for nv in st.session_state.get(f"mod_nuevas_{u}", [])
+        if nv.get("producto") and float(nv.get("cantidad",0)) > 0
+    )
+    hay_algo = total_cambios > 0 or nuevas_validas > 0
+
+    if hay_algo:
+        resumen_parts = []
+        if total_cambios:  resumen_parts.append(f"{total_cambios} edición(es)")
+        if nuevas_validas: resumen_parts.append(f"{nuevas_validas} línea(s) nueva(s)")
+        st.info(f"📝 **{' + '.join(resumen_parts)}** en {len(sel)} pedido(s) "
                 f"— se grabarán en un solo ciclo de Drive.")
-        if st.button(f"📤 Guardar todos los cambios ({total_cambios})",
+
+        if st.button(f"📤 Guardar todo ({' + '.join(resumen_parts)})",
                      type="primary", use_container_width=True):
-            # Recopilar todos los cambios desde session state
+            # Recopilar ediciones
             cambios_batch = []
             for rn, linea in lineas_originales.items():
-                uid = f"mod_{rn}"
+                uid   = f"mod_{rn}"
                 prod_n = st.session_state.get(f"{uid}_prod", linea["producto"])
                 cant_n = st.session_state.get(f"{uid}_cant", linea["cantidad"])
                 prec_n = st.session_state.get(f"{uid}_prec", linea["precio"])
-
                 cambio = {"row_num": rn}
                 if prod_n and prod_n != linea["producto"]:
                     cambio["nuevo_producto"] = prod_n
@@ -290,12 +333,47 @@ def _modificar(todos):
                 if len(cambio) > 1:
                     cambios_batch.append(cambio)
 
-            with st.spinner(f"Guardando {len(cambios_batch)} cambio(s) en Drive..."):
-                n = editar_cambios_batch(cambios_batch)
-            st.success(f"✅ {n} línea(s) guardadas en 1 ciclo Drive.")
+            # Recopilar líneas nuevas
+            prods_cat = {p["nombre"]: p for p in cargar_productos(False)}
+            nuevas_batch = []
+            for unico in sel:
+                key_nv  = f"mod_nuevas_{unico}"
+                nv_list = st.session_state.get(key_nv, [])
+                l0      = grupos[unico][0]
+                items_nv = []
+                for nv in nv_list:
+                    if not nv.get("producto") or float(nv.get("cantidad",0)) <= 0:
+                        continue
+                    prod_info = prods_cat.get(nv["producto"], {})
+                    items_nv.append({
+                        "nombre":   nv["producto"],
+                        "cantidad": nv["cantidad"],
+                        "precio":   nv["precio"],
+                        "costo":    prod_info.get("costo", 0),
+                        "unidad":   prod_info.get("unidad", ""),
+                    })
+                if items_nv:
+                    nuevas_batch.append({
+                        "unico":           unico,
+                        "cliente_nombre":  l0["cliente"],
+                        "fecha":           l0["fecha"] or date.today(),
+                        "items":           items_nv,
+                    })
+
+            with st.spinner("Guardando en Drive (1 solo ciclo)..."):
+                res = guardar_edicion_pedidos(cambios_batch, nuevas_batch)
+
+            # Limpiar session state de nuevas líneas
+            for unico in sel:
+                st.session_state.pop(f"mod_nuevas_{unico}", None)
+
+            partes = []
+            if res["ediciones"]:   partes.append(f"{res['ediciones']} edición(es)")
+            if res["nuevas_filas"]: partes.append(f"{res['nuevas_filas']} línea(s) nueva(s)")
+            st.success(f"✅ {' + '.join(partes)} guardadas en 1 ciclo Drive.")
             st.rerun()
     else:
-        st.info("Sin cambios detectados en los pedidos seleccionados.")
+        st.info("Sin cambios ni líneas nuevas detectadas.")
 
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────

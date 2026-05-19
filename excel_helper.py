@@ -367,6 +367,136 @@ def editar_cambios_batch(cambios: list) -> int:
     return modificadas
 
 
+
+# ── CORRECCIÓN MASIVA DE PRECIOS / COSTOS ─────────────────────────────────────
+
+def preview_correccion_masiva(cliente: str, producto: str,
+                               desde_mes: int, desde_año: int,
+                               hasta_mes: int, hasta_año: int,
+                               nuevo_precio: float, nuevo_costo: float,
+                               cambiar_precio: bool, cambiar_costo: bool) -> dict:
+    """
+    Simula la corrección y retorna un resumen del impacto SIN modificar el Excel.
+    Retorna: {total_filas, delta_ventas, delta_margen, filas (list)}
+    """
+    import calendar
+    from datetime import timedelta
+
+    wb = cargar_para_lectura(FILE_ID)
+    ws = wb["Pedidos"]
+
+    desde = date(desde_año, desde_mes, 1)
+    ultimo = calendar.monthrange(hasta_año, hasta_mes)[1]
+    hasta  = date(hasta_año, hasta_mes, ultimo)
+
+    filas = []
+    for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        if not row[0]: continue
+        if str(row[30] or "") == "Cancelado": continue
+        if str(row[1] or "").strip().lower() != cliente.lower(): continue
+        if str(row[3] or "").strip().lower() != producto.lower(): continue
+
+        fecha = row[0]
+        if hasattr(fecha, "date"): fecha = fecha.date()
+        elif isinstance(fecha, (int, float)) and fecha:
+            fecha = date(1899, 12, 30) + timedelta(days=int(fecha))
+        if not fecha or not (desde <= fecha <= hasta): continue
+
+        cant      = float(row[2] or 0)
+        p_act     = float(row[4] or 0)
+        c_act     = float(row[5] or 0)
+        p_new     = nuevo_precio if cambiar_precio else p_act
+        c_new     = nuevo_costo  if cambiar_costo  else c_act
+
+        filas.append({
+            "row_num":    i,
+            "fecha":      fecha,
+            "cantidad":   cant,
+            "p_act": p_act, "p_new": p_new,
+            "c_act": c_act, "c_new": c_new,
+            "total_act":  round(p_act * cant, 2),
+            "total_new":  round(p_new * cant, 2),
+            "margen_act": round(0.95*(p_act-c_act*1.12)*cant, 2),
+            "margen_new": round(0.95*(p_new-c_new*1.12)*cant, 2),
+        })
+
+    wb.close()
+
+    return {
+        "total_filas":  len(filas),
+        "delta_ventas": round(sum(f["total_new"]-f["total_act"] for f in filas), 2),
+        "delta_margen": round(sum(f["margen_new"]-f["margen_act"] for f in filas), 2),
+        "filas":        filas,
+    }
+
+
+def aplicar_correccion_masiva(preview_data: dict,
+                               cliente: str, producto: str,
+                               nuevo_precio: float, nuevo_costo: float,
+                               cambiar_precio: bool, cambiar_costo: bool,
+                               desde_mes: int, desde_año: int,
+                               hasta_mes: int, hasta_año: int) -> int:
+    """
+    Aplica la corrección masiva de precios/costos y recalcula columnas E-L.
+    Registra cada cambio en la hoja Historial Cambios.
+    Retorna: número de filas modificadas.
+    """
+    from datetime import datetime as dt_cls
+    filas = preview_data.get("filas", [])
+    if not filas: return 0
+
+    wb     = cargar_para_escritura(FILE_ID)
+    ws_ped = wb["Pedidos"]
+
+    for f in filas:
+        row  = f["row_num"]
+        cant = f["cantidad"]
+        p    = f["p_new"]
+        c_   = f["c_new"]
+
+        if cambiar_precio: ws_ped.cell(row=row, column=5).value  = p
+        if cambiar_costo:  ws_ped.cell(row=row, column=6).value  = c_
+
+        ws_ped.cell(row=row, column=7).value  = round(p * cant, 4)
+        ws_ped.cell(row=row, column=8).value  = round(c_ * cant, 4)
+        ws_ped.cell(row=row, column=9).value  = round(0.95*(p-c_*1.12)*cant, 4)
+        ws_ped.cell(row=row, column=10).value = round(0.95*(1-c_*1.12/p), 4) if p else 0
+        ws_ped.cell(row=row, column=11).value = round((p-p/1.12)*cant, 4)
+        ws_ped.cell(row=row, column=12).value = round(p/1.12*0.05*cant, 4)
+
+    # Registrar en Historial Cambios
+    if HOJA_HISTORIAL not in wb.sheetnames:
+        from openpyxl.styles import Font, PatternFill, Alignment
+        ws_h = wb.create_sheet(HOJA_HISTORIAL)
+        ws_h.append(_HIST_HEADERS)
+        for col in range(1, len(_HIST_HEADERS)+1):
+            cell = ws_h.cell(row=1, column=col)
+            cell.font      = Font(bold=True, color="FFFFFF")
+            cell.fill      = PatternFill("solid", fgColor="2D7A2D")
+            cell.alignment = Alignment(horizontal="center")
+    else:
+        ws_h = wb[HOJA_HISTORIAL]
+
+    ahora  = dt_cls.now()
+    rango  = (f"CORRECCIÓN MASIVA "
+              f"{desde_mes:02d}/{desde_año}→{hasta_mes:02d}/{hasta_año}")
+
+    for f in filas:
+        sem = f["fecha"].isocalendar()[1] if f["fecha"] else ""
+        año = f["fecha"].year             if f["fecha"] else ""
+        if cambiar_precio:
+            ws_h.append([ahora, cliente, producto,
+                          f["p_act"], f["p_new"],
+                          round(f["p_new"]-f["p_act"], 4),
+                          sem, año, rango, f["row_num"]])
+            ws_h.cell(ws_h.max_row, 1).number_format = "dd/mm/yyyy hh:mm"
+
+    guardar_en_drive(wb, FILE_ID)
+    wb.close()
+    st.cache_data.clear()
+    return len(filas)
+
+
 # ── HISTORIAL DE CAMBIOS DE PRECIO ────────────────────────────────────────────
 HOJA_HISTORIAL  = "Historial Cambios"
 _HIST_HEADERS   = [

@@ -43,9 +43,11 @@ def _codigo_cliente(wb, nombre: str) -> str:
 
 
 def _escribir_pedido_en_ws(ws, wb, nombre_cliente: str,
-                            fecha_entrega: date, items: list) -> int:
+                            fecha_entrega: date, items: list,
+                            unico_override: str = None) -> int:
     """
     Escribe las filas de UN pedido en el ws dado.
+    unico_override: si se provee, usa ese Unico en lugar de generar uno nuevo.
     No hace upload — llamar guardar_en_drive() externamente.
     Retorna número de filas escritas.
     """
@@ -54,7 +56,7 @@ def _escribir_pedido_en_ws(ws, wb, nombre_cliente: str,
     año      = fecha_entrega.year
     mes      = fecha_entrega.month
     cod      = _codigo_cliente(wb, nombre_cliente)
-    unico    = f"{cod}{fecha_entrega.day:02d}{mes:02d}{semana:02d}{año}"
+    unico    = unico_override or f"{cod}{fecha_entrega.day:02d}{mes:02d}{semana:02d}{año}"
 
     static_fecha = {
         13: DIAS_ES[fecha_entrega.weekday()],
@@ -111,6 +113,54 @@ def _expandir_tabla(ws, n_filas_nuevas: int):
         partes = tbl.ref.split(":")
         col_f  = "".join(c for c in partes[1] if c.isalpha())
         tbl.ref = f"{partes[0]}:{col_f}{nueva_ult}"
+
+
+
+def guardar_edicion_pedidos(cambios_edicion: list, nuevas_lineas: list) -> dict:
+    """
+    Edita filas existentes Y agrega líneas nuevas en UN SOLO ciclo Drive.
+
+    cambios_edicion: [{row_num, nuevo_producto?, nueva_cantidad?, nuevo_precio?}]
+    nuevas_lineas:   [{unico, cliente_nombre, fecha, items}]
+    Retorna: {ediciones, nuevas_filas}
+    """
+    if not cambios_edicion and not nuevas_lineas:
+        return {"ediciones": 0, "nuevas_filas": 0}
+
+    wb  = cargar_para_escritura(FILE_ID)
+    ws  = wb[HOJA_PEDIDOS]
+
+    # 1. Editar filas existentes
+    ediciones = 0
+    for cambio in cambios_edicion:
+        row = cambio["row_num"]
+        if "nuevo_producto" in cambio:
+            ws.cell(row=row, column=4).value = cambio["nuevo_producto"]
+        if "nueva_cantidad" in cambio:
+            ws.cell(row=row, column=3).value = cambio["nueva_cantidad"]
+        if "nuevo_precio"   in cambio:
+            ws.cell(row=row, column=5).value = cambio["nuevo_precio"]
+        ediciones += 1
+
+    # 2. Agregar líneas nuevas (mismo Unico del pedido original)
+    nuevas_filas = 0
+    for grupo in nuevas_lineas:
+        n = _escribir_pedido_en_ws(
+            ws, wb,
+            grupo["cliente_nombre"],
+            grupo["fecha"],
+            grupo["items"],
+            unico_override=grupo["unico"],
+        )
+        nuevas_filas += n
+
+    if ediciones or nuevas_filas:
+        _expandir_tabla(ws, nuevas_filas)
+        guardar_en_drive(wb, FILE_ID)
+        st.cache_data.clear()
+
+    wb.close()
+    return {"ediciones": ediciones, "nuevas_filas": nuevas_filas}
 
 
 # ── API PÚBLICA ────────────────────────────────────────────────────────────────
