@@ -102,12 +102,20 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
             lineas_sem = bloque["lineas"]
             sub_sem    = sum(l["total"] for l in lineas_sem)
 
+            base_sem = round(sub_sem / 1.12, 2)
+            isr_sem  = round(base_sem * 0.05, 2) if sub_sem >= 2500 else 0.0
+            liq_sem  = round(sub_sem - isr_sem, 2)
+            isr_txt  = f"ISR: Q{isr_sem:,.2f}  ·  " if isr_sem > 0 else ""
             st.markdown(
-                f"<div style='background:#2D7A2D;color:white;padding:4px 10px;"
+                f"<div style='background:#2D7A2D;color:white;padding:6px 10px;"
                 f"border-radius:4px;font-size:.82rem;font-weight:bold;"
                 f"margin:8px 0 4px 0'>"
                 f"Semana {sem_num} · {fecha_sem.strftime('%d/%m/%Y')} · "
-                f"Subtotal: Q{sub_sem:,.2f}</div>",
+                f"Subtotal: Q{sub_sem:,.2f}"
+                f"<br><span style='font-weight:normal;font-size:.75rem;opacity:.9'>"
+                f"Base IVA: Q{base_sem:,.2f}  ·  "
+                f"{isr_txt}"
+                f"Líquido: Q{liq_sem:,.2f}</span></div>",
                 unsafe_allow_html=True)
 
             hdr = st.columns([4, 1.2, 1.5, 1.5])

@@ -223,9 +223,86 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    t1, t2 = st.tabs([
+    t1, t2, t3 = st.tabs([
         "🔧 Corrección Masiva de Precios / Costos",
         "⚙️ Migración de Datos",
+        "📋 Estructura del Excel",
     ])
     with t1: _tab_correccion()
     with t2: _tab_migracion()
+    with t3: _tab_estructura()
+
+
+# ── TAB 3: ESTRUCTURA DEL EXCEL ──────────────────────────────────────────────
+def _tab_estructura():
+    st.markdown("""
+    Lee la estructura completa del Excel: hojas, tablas, columnas y tipo de contenido
+    (valores estáticos vs fórmulas). Útil para planificar la separación de datos.
+    """)
+    st.divider()
+
+    if st.button("📖 Leer estructura del Excel", type="primary"):
+        from drive_helper import cargar_para_lectura
+        import streamlit as st
+
+        FILE_ID = st.secrets["EXCEL_FILE_ID"]
+
+        with st.spinner("Descargando y analizando Excel..."):
+            wb = cargar_para_lectura(FILE_ID)
+
+        st.success(f"✅ Excel leído — {len(wb.sheetnames)} hojas encontradas")
+        st.divider()
+
+        for hoja in wb.sheetnames:
+            ws = wb[hoja]
+            n_filas = ws.max_row
+            n_cols  = ws.max_column
+
+            # Tablas en la hoja
+            tablas = list(ws.tables.keys()) if ws.tables else []
+
+            # Encabezados (fila 1)
+            headers = []
+            for col in range(1, n_cols + 1):
+                val = ws.cell(row=1, column=col).value
+                if val:
+                    headers.append(str(val))
+
+            # Detectar qué columnas tienen fórmulas (muestra de fila 2)
+            cols_formula = []
+            cols_valor   = []
+            if n_filas > 1:
+                for col in range(1, n_cols + 1):
+                    cell = ws.cell(row=2, column=col)
+                    if isinstance(cell.value, str) and cell.value.startswith("="):
+                        h = headers[col-1] if col-1 < len(headers) else f"Col{col}"
+                        cols_formula.append(h)
+                    elif cell.value is not None:
+                        h = headers[col-1] if col-1 < len(headers) else f"Col{col}"
+                        cols_valor.append(h)
+
+            with st.expander(
+                f"**{hoja}** — {n_filas:,} filas × {n_cols} cols"
+                + (f" — Tablas: {', '.join(tablas)}" if tablas else ""),
+                expanded=False,
+            ):
+                if headers:
+                    st.markdown("**Columnas:**")
+                    st.code(", ".join(headers), language=None)
+                if tablas:
+                    st.markdown(f"**Tablas Excel:** `{'`, `'.join(tablas)}`")
+                if cols_valor:
+                    st.markdown(
+                        f"**✅ Valores estáticos ({len(cols_valor)}):** "
+                        f"{', '.join(cols_valor[:15])}"
+                        + (" ..." if len(cols_valor) > 15 else ""))
+                if cols_formula:
+                    st.markdown(
+                        f"**⚙️ Columnas con fórmulas ({len(cols_formula)}):** "
+                        f"{', '.join(cols_formula[:15])}"
+                        + (" ..." if len(cols_formula) > 15 else ""))
+                if not headers:
+                    st.caption("Hoja vacía o sin encabezados en fila 1.")
+
+        wb.close()
+
