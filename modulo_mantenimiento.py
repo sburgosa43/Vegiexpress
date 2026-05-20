@@ -243,8 +243,6 @@ def _tab_estructura():
 
     if st.button("📖 Leer estructura del Excel", type="primary"):
         from drive_helper import cargar_para_lectura
-        import streamlit as st
-
         FILE_ID = st.secrets["EXCEL_FILE_ID"]
 
         with st.spinner("Descargando y analizando Excel..."):
