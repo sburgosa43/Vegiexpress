@@ -257,12 +257,14 @@ def _tab_estructura():
             n_cols  = ws.max_column
 
             # Tablas en la hoja
+            tablas = []
             try:
-                # openpyxl < 3.1: tables es dict
-                tablas = list(ws.tables.keys()) if ws.tables else []
-            except AttributeError:
-                # openpyxl >= 3.1: tables es TableList
-                tablas = [t.displayName for t in ws.tables] if ws.tables else []
+                for t in ws.tables:
+                    nombre_t = getattr(t, "name", None) or \
+                               getattr(t, "displayName", None) or str(t)
+                    tablas.append(nombre_t)
+            except Exception:
+                tablas = []
 
             # Encabezados (fila 1)
             headers = []
