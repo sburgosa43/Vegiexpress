@@ -208,7 +208,7 @@ def migrar_pedidos_a_valores() -> dict:
 
     guardar_en_drive(wb_w, FILE_ID)
     wb_w.close()
-    st.cache_data.clear()
+    leer_pedidos.clear()
 
     return {"filas": len(filas_conv), "celdas": celdas_conv}
 
@@ -295,6 +295,7 @@ def guardar_metas(metas: dict) -> None:
         ws.cell(row=i, column=2).value = float(metas.get(zona, 0))
     guardar_en_drive(wb, FILE_ID)
     wb.close()
+    # metas are config only, no cache to clear
 
 
 
@@ -330,7 +331,7 @@ def eliminar_pedido(unico: str) -> int:
 
     if filas:
         guardar_en_drive(wb, FILE_ID)
-        st.cache_data.clear()
+        leer_pedidos.clear()
     wb.close()
     return len(filas)
 
@@ -493,7 +494,7 @@ def aplicar_correccion_masiva(preview_data: dict,
 
     guardar_en_drive(wb, FILE_ID)
     wb.close()
-    st.cache_data.clear()
+    leer_pedidos.clear()
     return len(filas)
 
 
@@ -567,7 +568,7 @@ def guardar_cambios_precio(cambios: list) -> int:
 
     guardar_en_drive(wb, FILE_ID)
     wb.close()
-    st.cache_data.clear()
+    leer_pedidos.clear()
     return len(reales)
 
 

@@ -9,6 +9,14 @@ from copy import copy
 import streamlit as st
 from drive_helper import cargar_para_escritura, guardar_en_drive
 
+def _clear_pedidos_cache():
+    """Clear only the pedidos cache, not clientes/productos."""
+    try:
+        from excel_helper import leer_pedidos
+        leer_pedidos.clear()
+    except Exception:
+        st.cache_data.clear()
+
 FILE_ID      = st.secrets["EXCEL_FILE_ID"]
 HOJA_PEDIDOS = "Pedidos"
 NOMBRE_TABLA = "Tabla3"
@@ -157,7 +165,7 @@ def guardar_edicion_pedidos(cambios_edicion: list, nuevas_lineas: list) -> dict:
     if ediciones or nuevas_filas:
         _expandir_tabla(ws, nuevas_filas)
         guardar_en_drive(wb, FILE_ID)
-        st.cache_data.clear()
+        _clear_pedidos_cache()
 
     wb.close()
     return {"ediciones": ediciones, "nuevas_filas": nuevas_filas}
@@ -172,7 +180,7 @@ def guardar_pedido(nombre_cliente: str, fecha_entrega: date, items: list) -> int
     if agr:
         _expandir_tabla(ws, agr)
         guardar_en_drive(wb, FILE_ID)
-        st.cache_data.clear()
+        _clear_pedidos_cache()
     wb.close()
     return agr
 
@@ -202,7 +210,7 @@ def guardar_pedidos_batch(cola: list) -> dict:
     if total_filas:
         _expandir_tabla(ws, total_filas)
         guardar_en_drive(wb, FILE_ID)
-        st.cache_data.clear()
+        _clear_pedidos_cache()
 
     wb.close()
     return {"pedidos": len(cola), "filas": total_filas}

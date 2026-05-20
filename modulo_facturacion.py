@@ -88,8 +88,6 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
                    cliente_info: dict, mes: int, año: int):
     """Muestra el expander de un cliente con desglose semanal y PDF."""
     total = datos_cli["total_mes"]
-    iva   = round(total * 0.12 / 1.12, 2)
-    isr   = round(total * 0.05 / 1.12, 2)
     sems  = len(datos_cli["por_semana"])
 
     with st.expander(
@@ -149,16 +147,28 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
 
         st.divider()
 
-        # Totales
-        tc1, tc2, tc3 = st.columns(3)
-        tc1.metric("Total del mes", f"Q{total:,.2f}")
-        tc2.metric("IVA (12%)",     f"Q{iva:,.2f}")
-        tc3.metric("ISR retenido",  f"Q{isr:,.2f}")
+        # Totales con fórmulas fiscales correctas
+        base_iva  = round(total / 1.12, 2)                          # Base sin IVA
+        isr_ret   = round(base_iva * 0.05, 2) if total >= 2500 else 0.0   # ISR solo si >= Q2,500
+        liquido   = round(total - isr_ret, 2)                       # Líquido a recibir
+
+        tc1, tc2, tc3, tc4 = st.columns(4)
+        tc1.metric("Total a Facturar",  f"Q{total:,.2f}")
+        tc2.metric("Base sin IVA",      f"Q{base_iva:,.2f}",
+                   help="Valor Factura / 1.12")
+        tc3.metric("ISR a Retener",     f"Q{isr_ret:,.2f}",
+                   delta="Solo si factura ≥ Q2,500" if total >= 2500 else "No aplica (< Q2,500)",
+                   delta_color="off",
+                   help="Base sin IVA × 5% (solo si factura ≥ Q2,500)")
+        tc4.metric("Líquido a Recibir", f"Q{liquido:,.2f}",
+                   help="Total Factura − ISR retenido")
 
         st.markdown(
             f"<div style='background:#e8f5e9;border-radius:8px;padding:10px;"
             f"text-align:center;margin:8px 0'>"
-            f"<b>TOTAL A FACTURAR: Q{total:,.2f}</b></div>",
+            f"<b>TOTAL A FACTURAR: Q{total:,.2f}"
+            f"{'  |  ISR: Q' + f'{isr_ret:,.2f}' if isr_ret > 0 else ''}"
+            f"  |  LÍQUIDO: Q{liquido:,.2f}</b></div>",
             unsafe_allow_html=True)
 
         # PDF
