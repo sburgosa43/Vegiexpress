@@ -42,40 +42,38 @@ def _form_producto(prefill: dict = None, key_prefix: str = "new",
                 index=PROVEEDORES.index(pf["proveedor"]) if pf.get("proveedor") in PROVEEDORES else 0,
             )
         with col2:
-            costo  = st.number_input("Costo (Q)", value=float(pf.get("costo",0)), min_value=0.0, step=0.5)
-
-            # Referencia de precios calculada en tiempo real
-            if costo > 0:
-                SEGS = {"Premium":50,"Alto":40,"Media Alta":35,"Media":30,
-                        "Media Baja":25,"Baja":20,"Sin Segmento":0}
-                seg_k   = pf.get("tipo_producto2","")
-                seg_pct = SEGS.get(seg_k, 0) / 100
-                pto_eq  = round(costo * 1.12, 2)
-                p_imp   = round(costo/(1-seg_pct/0.95)*1.12,2) if seg_pct>0 else 0
-                ri1, ri2 = st.columns(2)
-                ri1.markdown(
-                    f"<div style='background:#f0f8f0;border-radius:6px;"
-                    f"padding:6px 10px;font-size:.82rem;margin-bottom:6px'>"
-                    f"<b>Punto Equilibrio:</b> Q{pto_eq:,.2f}<br>"
-                    f"<span style='color:#888;font-size:.72rem'>Costo × 1.12</span>"
-                    f"</div>", unsafe_allow_html=True)
-                if p_imp:
-                    ri2.markdown(
-                        f"<div style='background:#f0f8f0;border-radius:6px;"
-                        f"padding:6px 10px;font-size:.82rem;margin-bottom:6px'>"
-                        f"<b>Precio Impuestos:</b> Q{p_imp:,.2f}<br>"
-                        f"<span style='color:#888;font-size:.72rem'>"
-                        f"Margen {int(seg_pct*100)}%</span>"
-                        f"</div>", unsafe_allow_html=True)
-
-            precio = st.number_input("Precio (Q)", value=float(pf.get("precio",0)), min_value=0.0, step=0.5)
-            pesos  = st.number_input("Pesos/Costo referencia",
-                                      value=float(pf.get("pesos",0)), min_value=0.0, step=0.1)
             tipo2 = st.selectbox(
                 "Segmentación de margen",
                 TIPOS_P2,
                 index=TIPOS_P2.index(pf["tipo_producto2"]) if pf.get("tipo_producto2") in TIPOS_P2 else 3,
             )
+            costo  = st.number_input("Costo (Q)", value=float(pf.get("costo",0)), min_value=0.0, step=0.5)
+
+            # Referencia de precios calculada en tiempo real
+            SEGS = {"Premium":50,"Alto":40,"Media Alta":35,"Media":30,
+                    "Media Baja":25,"Baja":20,"Sin Segmento":0}
+            seg_pct = SEGS.get(tipo2, 0) / 100
+            pto_eq  = round(costo * 1.12, 2) if costo > 0 else 0
+            p_imp   = round(costo/(1-seg_pct/0.95)*1.12, 2) if (costo>0 and seg_pct>0) else 0
+            ri1, ri2 = st.columns(2)
+            ri1.markdown(
+                f"<div style='background:#f0f8f0;border-radius:6px;"
+                f"padding:6px 10px;font-size:.82rem;margin-bottom:6px'>"
+                f"<b>Pto. Equilibrio:</b> {'Q'+f'{pto_eq:,.2f}' if pto_eq else '—'}<br>"
+                f"<span style='color:#888;font-size:.72rem'>Costo × 1.12</span>"
+                f"</div>", unsafe_allow_html=True)
+            ri2.markdown(
+                f"<div style='background:#f0f8f0;border-radius:6px;"
+                f"padding:6px 10px;font-size:.82rem;margin-bottom:6px'>"
+                f"<b>P. Impuestos:</b> {'Q'+f'{p_imp:,.2f}' if p_imp else '—'}<br>"
+                f"<span style='color:#888;font-size:.72rem'>"
+                f"{'Margen '+str(int(seg_pct*100))+'%' if p_imp else 'Seleccioná segmento'}</span>"
+                f"</div>", unsafe_allow_html=True)
+
+            precio = st.number_input("Precio (Q)", value=float(pf.get("precio",0)), min_value=0.0, step=0.5)
+            pesos  = st.number_input("Pesos/Costo referencia",
+                                      value=float(pf.get("pesos",0)), min_value=0.0, step=0.1)
+
             if not es_antigua:
                 tipo1 = st.selectbox(
                     "Tipo de producto",

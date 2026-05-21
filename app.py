@@ -62,6 +62,10 @@ if pagina.startswith("🏠"):
     import modulo_inicio
     modulo_inicio.mostrar()
 
+elif pagina == "📦 Pedidos a Proveedores":
+    import modulo_proveedores
+    modulo_proveedores.mostrar()
+
 elif pagina.startswith("📦"):
     import modulo_productos
     modulo_productos.mostrar()
@@ -90,9 +94,6 @@ elif pagina.startswith("🧾"):
     import modulo_facturacion
     modulo_facturacion.mostrar()
 
-elif pagina.startswith("📦 Pedidos"):
-    import modulo_proveedores
-    modulo_proveedores.mostrar()
 
 elif pagina.startswith("🔧"):
     import modulo_mantenimiento
