@@ -844,8 +844,8 @@ def generar_cotizacion(lineas: list, desde: "date", hasta: "date") -> bytes:
     story.append(Spacer(1, 2*mm))
     story.append(_p(
         _s(f"A continuación le compartimos nuestro listado de productos y precios "
-           f"con vigencia del {desde.strftime('%d de %B de %Y')} "
-           f"al {hasta.strftime('%d de %B de %Y')}. "
+           f"con vigencia del {desde.day} de {MESES_ES[desde.month]} de {desde.year} "
+           f"al {hasta.day} de {MESES_ES[hasta.month]} de {hasta.year}. "
            f"Quedamos atentos a sus comentarios o dudas."),
         intro_style))
     story.append(Spacer(1, 5*mm))

@@ -134,10 +134,14 @@ def mostrar():
         st.session_state[reset_key] = reset_n + 1
         st.rerun()
 
-    # ── Sección por proveedor ─────────────────────────────────────────────────
+    if not sel_prov:
+        st.info("Seleccioná al menos un proveedor para ver el detalle.")
+        return
+
+    # ── Sección por proveedor (solo los seleccionados) ────────────────────────
     total_est_global = 0.0
 
-    for prov in provs:
+    for prov in sel_prov:
         df = dfs[prov].copy()
         color = "#2D7A2D" if prov != "SIN PROVEEDOR" else "#E65100"
         st.markdown(
