@@ -299,16 +299,16 @@ def _cotizacion():
     lineas_pdf = []
 
     # Encabezado
-    hdr = st.columns([2.8, 0.9, 1.1, 1.1, 1.3, 1.0, 1.0, 1.0])
-    for h, lbl in zip(hdr, ["Producto","Unidad","Pto. Eq.","P. Imp.",
-                              "Precio Cotizar","Margen %","IVA/u","ISR/u"]):
+    hdr = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
+    for h, lbl in zip(hdr, ["Producto","Unidad","Costo","Pto. Eq.","P. Imp.",
+                              "Precio Cotizar","Margen %","Margen Q","IVA/u","ISR/u"]):
         h.markdown(f"<small><b>{lbl}</b></small>", unsafe_allow_html=True)
 
     for i, fila in enumerate(grilla):
         k_prod = f"cot_prod_{i}"
         k_prec = f"cot_prec_{i}"
 
-        r = st.columns([2.8, 0.9, 1.1, 1.1, 1.3, 1.0, 1.0, 1.0])
+        r = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
         prod_sel = r[0].selectbox("", nombres,
             index=(nombres.index(fila["producto"]) if fila["producto"] in nombres else 0),
             key=k_prod, label_visibility="collapsed")
@@ -331,26 +331,29 @@ def _cotizacion():
             r[1].markdown(
                 f"<div style='padding-top:8px;font-size:.82rem'>"
                 f"{p.get('unidad','')}</div>", unsafe_allow_html=True)
-            _ref(r[2], f"Q{pto_eq:,.2f}" if pto_eq else "—")
-            _ref(r[3], f"Q{p_imp:,.2f}"  if p_imp  else "—")
+            _ref(r[2], f"Q{costo:,.2f}" if costo else "—")
+            _ref(r[3], f"Q{pto_eq:,.2f}" if pto_eq else "—")
+            _ref(r[4], f"Q{p_imp:,.2f}"  if p_imp  else "—")
 
-            precio_ed = r[4].number_input("", min_value=0.0,
+            precio_ed = r[5].number_input("", min_value=0.0,
                 value=float(st.session_state[k_prec]),
                 step=0.25, key=k_prec, label_visibility="collapsed")
 
             # Cálculos por unidad en tiempo real
             if precio_ed > 0 and costo > 0:
                 margen_pct = round(0.95 * (1 - costo * 1.12 / precio_ed) * 100, 1)
+                margen_q   = round(0.95 * (precio_ed - costo * 1.12), 2)
                 iva_u      = round(precio_ed - precio_ed / 1.12, 2)
                 isr_u      = round(precio_ed / 1.12 * 0.05, 2)
                 color_m    = "#2D7A2D" if margen_pct >= 20 else "#E65100"
-                _ref(r[5], f"<span style='color:{color_m}'><b>{margen_pct}%</b></span>")
-                _ref(r[6], f"Q{iva_u:,.2f}")
-                _ref(r[7], f"Q{isr_u:,.2f}")
+                _ref(r[6], f"<span style='color:{color_m}'><b>{margen_pct}%</b></span>")
+                _ref(r[7], f"<span style='color:{color_m}'>Q{margen_q:,.2f}</span>")
+                _ref(r[8], f"Q{iva_u:,.2f}")
+                _ref(r[9], f"Q{isr_u:,.2f}")
             elif precio_ed > 0:
-                for col in r[5:]: _ref(col, "—")
+                for col in r[6:]: _ref(col, "—")
             else:
-                for col in r[5:]: col.write("")
+                for col in r[6:]: col.write("")
 
             grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed}
 
