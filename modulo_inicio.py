@@ -29,6 +29,7 @@ MODULOS = {
         ("👥", "Clientes",            "Gestionar cartera de clientes",  "👥 Clientes (Nuevos y Mantenimiento)"),
     ],
     "🔧 Herramientas": [
+        ("📦", "Proveedores", "Lista de compras semanal", "📦 Pedidos a Proveedores"),
         ("🔧", "Mantenimiento", "Corrección de datos y migraciones", "🔧 Mantenimiento"),
     ],
     "📈 Análisis": [

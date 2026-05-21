@@ -97,6 +97,7 @@ def leer_pedidos() -> list[dict]:
             "unico":        unico_val,
             "direccion":    str(row[18] or ""),
             "unidad":       str(row[16] or ""),
+            "proveedor":    str(row[17] or ""),
             "fecha_venc":   fvenc,
         })
     wb.close()

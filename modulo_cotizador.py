@@ -256,6 +256,128 @@ def _tab_escenarios():
         cc4.metric("Precio sin IVA",    f"Q{d_custom['precio_sin_iva']:,.4f}")
 
 
+
+# ── COTIZACIÓN DE PRECIOS ─────────────────────────────────────────────────────
+def _cotizacion():
+    from datetime import date, timedelta
+    from data_helper import cargar_productos
+    from pdf_helper  import generar_cotizacion
+
+    st.markdown("Generá un PDF de cotización para prospectar clientes o "
+                "comunicar cambios de precios.")
+    st.divider()
+
+    # Vigencia
+    v1, v2 = st.columns(2)
+    with v1:
+        desde = st.date_input("Vigente desde", value=date.today(), key="cot_desde")
+    with v2:
+        hasta = st.date_input("Vigente hasta",
+                               value=date.today() + timedelta(days=30),
+                               key="cot_hasta")
+
+    st.divider()
+    st.markdown("**Productos a cotizar** — seleccioná y ajustá el precio:")
+
+    SEGS = {"Premium":50,"Alto":40,"Media Alta":35,"Media":30,
+            "Media Baja":25,"Baja":20,"Sin Segmento":0}
+
+    prods      = cargar_productos(False)
+    prod_dict  = {p["nombre"]: p for p in prods}
+    nombres    = [""] + sorted([p["nombre"] for p in prods])
+    n_filas    = st.session_state.get("cot_nfilas", 15)
+
+    # Init grilla
+    if "cot_grilla" not in st.session_state:
+        st.session_state["cot_grilla"] = [
+            {"producto":"","precio_cotizar":0.0} for _ in range(n_filas)]
+    elif len(st.session_state["cot_grilla"]) < n_filas:
+        while len(st.session_state["cot_grilla"]) < n_filas:
+            st.session_state["cot_grilla"].append({"producto":"","precio_cotizar":0.0})
+
+    grilla = st.session_state["cot_grilla"]
+    lineas_pdf = []
+
+    # Encabezado
+    hdr = st.columns([3.5, 1.2, 1.5, 1.5, 1.8])
+    for h, lbl in zip(hdr, ["Producto","Unidad","Pto. Eq.","P. Impuestos","Precio Cotizar"]):
+        h.markdown(f"**{lbl}**")
+
+    for i, fila in enumerate(grilla):
+        k_prod = f"cot_prod_{i}"
+        k_prec = f"cot_prec_{i}"
+
+        r = st.columns([3.5, 1.2, 1.5, 1.5, 1.8])
+        prod_sel = r[0].selectbox("", nombres,
+            index=(nombres.index(fila["producto"]) if fila["producto"] in nombres else 0),
+            key=k_prod, label_visibility="collapsed")
+
+        if prod_sel and prod_sel in prod_dict:
+            p      = prod_dict[prod_sel]
+            costo  = float(p.get("costo", 0))
+            seg    = SEGS.get(p.get("tipo_producto2",""), 0) / 100
+            pto_eq = round(costo * 1.12, 2) if costo else 0
+            p_imp  = round(costo / (1 - seg/0.95) * 1.12, 2) if seg > 0 and costo else 0
+
+            r[1].write(p.get("unidad",""))
+            r[2].markdown(f"<div style='padding-top:8px;font-size:.82rem'>"
+                          f"Q{pto_eq:,.2f}</div>", unsafe_allow_html=True)
+            r[3].markdown(f"<div style='padding-top:8px;font-size:.82rem'>"
+                          f"Q{p_imp:,.2f}</div>" if p_imp else
+                          "<div style='padding-top:8px;color:#aaa'>—</div>",
+                          unsafe_allow_html=True)
+
+            if k_prec not in st.session_state:
+                st.session_state[k_prec] = float(p.get("precio", 0))
+
+            precio_ed = r[4].number_input("", min_value=0.0,
+                value=float(st.session_state[k_prec]),
+                step=0.25, key=k_prec, label_visibility="collapsed")
+
+            grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed}
+
+            if precio_ed > 0:
+                lineas_pdf.append({"producto": prod_sel,
+                                   "unidad":   p.get("unidad",""),
+                                   "precio_cotizar": precio_ed})
+        else:
+            grilla[i] = {"producto":"","precio_cotizar":0.0}
+            for col in r[1:]: col.write("")
+
+    st.session_state["cot_grilla"] = grilla
+
+    # Botones de fila
+    ba, bb, bc = st.columns(3)
+    with ba:
+        if st.button("+ 5 líneas", key="cot_add5"):
+            st.session_state["cot_nfilas"] = n_filas + 5; st.rerun()
+    with bb:
+        if st.button("+ 10 líneas", key="cot_add10"):
+            st.session_state["cot_nfilas"] = n_filas + 10; st.rerun()
+    with bc:
+        if st.button("🗑 Limpiar grilla", key="cot_clear", type="secondary"):
+            st.session_state.pop("cot_grilla", None)
+            st.session_state["cot_nfilas"] = 15
+            for i in range(50):
+                st.session_state.pop(f"cot_prod_{i}", None)
+                st.session_state.pop(f"cot_prec_{i}", None)
+            st.rerun()
+
+    st.divider()
+
+    if lineas_pdf:
+        st.success(f"**{len(lineas_pdf)} producto(s)** listos para el PDF.")
+        if st.button("📄 Generar PDF de Cotización", type="primary"):
+            with st.spinner("Generando PDF..."):
+                pdf_bytes = generar_cotizacion(lineas_pdf, desde, hasta)
+            nombre = f"Cotizacion_VeggiExpress_{desde.strftime('%d%m%Y')}.pdf"
+            st.download_button("📥 Descargar PDF", data=pdf_bytes,
+                file_name=nombre, mime="application/pdf",
+                key="cot_dl", type="primary")
+    else:
+        st.info("Seleccioná al menos un producto para generar la cotización.")
+
+
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 def mostrar():
     st.markdown("## 🧮 Cotizador de Precios")

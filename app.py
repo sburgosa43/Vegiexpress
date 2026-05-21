@@ -29,6 +29,7 @@ MENU = [
     "🚚 Envíos y Facturación Semana",
     "📊 Dashboard",
     "🧾 Facturación Mensual",
+    "📦 Pedidos a Proveedores",
     "🔧 Mantenimiento",
     "🧮 Cotizador",
 ]
@@ -88,6 +89,10 @@ elif pagina.startswith("📊"):
 elif pagina.startswith("🧾"):
     import modulo_facturacion
     modulo_facturacion.mostrar()
+
+elif pagina.startswith("📦 Pedidos"):
+    import modulo_proveedores
+    modulo_proveedores.mostrar()
 
 elif pagina.startswith("🔧"):
     import modulo_mantenimiento
