@@ -124,16 +124,27 @@ def _expandir_tabla(ws, n_filas_nuevas: int):
 
 
 
-def guardar_edicion_pedidos(cambios_edicion: list, nuevas_lineas: list) -> dict:
+def _actualizar_ref_tabla(ws):
+    """Actualiza la referencia de la tabla al tamaño actual (expansión O reducción)."""
+    if NOMBRE_TABLA in ws.tables:
+        tbl   = ws.tables[NOMBRE_TABLA]
+        partes = tbl.ref.split(":")
+        col_f  = "".join(ch for ch in partes[1] if ch.isalpha())
+        tbl.ref = f"{partes[0]}:{col_f}{ws.max_row}"
+
+
+def guardar_edicion_pedidos(cambios_edicion: list, nuevas_lineas: list,
+                            filas_eliminar: list = None) -> dict:
     """
-    Edita filas existentes Y agrega líneas nuevas en UN SOLO ciclo Drive.
+    Edita filas, agrega líneas nuevas Y elimina filas en UN SOLO ciclo Drive.
 
     cambios_edicion: [{row_num, nuevo_producto?, nueva_cantidad?, nuevo_precio?}]
     nuevas_lineas:   [{unico, cliente_nombre, fecha, items}]
-    Retorna: {ediciones, nuevas_filas}
+    filas_eliminar:  [row_num, ...] — se eliminan de abajo hacia arriba
+    Retorna: {ediciones, nuevas_filas, eliminadas}
     """
-    if not cambios_edicion and not nuevas_lineas:
-        return {"ediciones": 0, "nuevas_filas": 0}
+    if not cambios_edicion and not nuevas_lineas and not filas_eliminar:
+        return {"ediciones": 0, "nuevas_filas": 0, "eliminadas": 0}
 
     wb  = cargar_para_escritura(FILE_ID)
     ws  = wb[HOJA_PEDIDOS]
@@ -150,7 +161,14 @@ def guardar_edicion_pedidos(cambios_edicion: list, nuevas_lineas: list) -> dict:
             ws.cell(row=row, column=5).value = cambio["nuevo_precio"]
         ediciones += 1
 
-    # 2. Agregar líneas nuevas (mismo Unico del pedido original)
+    # 2. Eliminar filas (de abajo hacia arriba para no desplazar índices)
+    eliminadas = 0
+    if filas_eliminar:
+        for fila in sorted(filas_eliminar, reverse=True):
+            ws.delete_rows(fila)
+            eliminadas += 1
+
+    # 3. Agregar líneas nuevas
     nuevas_filas = 0
     for grupo in nuevas_lineas:
         n = _escribir_pedido_en_ws(
@@ -162,13 +180,14 @@ def guardar_edicion_pedidos(cambios_edicion: list, nuevas_lineas: list) -> dict:
         )
         nuevas_filas += n
 
-    if ediciones or nuevas_filas:
-        _expandir_tabla(ws, nuevas_filas)
+    if ediciones or nuevas_filas or eliminadas:
+        _actualizar_ref_tabla(ws)
         guardar_en_drive(wb, FILE_ID)
         _clear_pedidos_cache()
 
     wb.close()
-    return {"ediciones": ediciones, "nuevas_filas": nuevas_filas}
+    return {"ediciones": ediciones, "nuevas_filas": nuevas_filas,
+            "eliminadas": eliminadas}
 
 
 # ── API PÚBLICA ────────────────────────────────────────────────────────────────

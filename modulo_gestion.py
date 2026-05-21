@@ -148,6 +148,7 @@ def _modificar(todos):
         st.warning("No hay pedidos con esos filtros."); return
 
     prods_lista = [""] + [p["nombre"] for p in cargar_productos(False)]
+    prods_cat   = {p["nombre"]: p for p in cargar_productos(False)}
     st.divider()
 
     opciones = {u: _label(u, ls) for u, ls in grupos.items()}
@@ -299,26 +300,33 @@ def _modificar(todos):
     # ── Botón global de guardado ───────────────────────────────────────────────
     st.divider()
 
-    # Contar nuevas líneas válidas
+    # Contar nuevas líneas válidas y eliminaciones
     nuevas_validas = sum(
         1 for u in sel
         for nv in st.session_state.get(f"mod_nuevas_{u}", [])
         if nv.get("producto") and float(nv.get("cantidad",0)) > 0
     )
-    hay_algo = total_cambios > 0 or nuevas_validas > 0
+    a_eliminar = sum(
+        1 for rn in lineas_originales
+        if st.session_state.get(f"del_row_{rn}")
+    )
+    hay_algo = total_cambios > 0 or nuevas_validas > 0 or a_eliminar > 0
 
     if hay_algo:
         resumen_parts = []
         if total_cambios:  resumen_parts.append(f"{total_cambios} edición(es)")
         if nuevas_validas: resumen_parts.append(f"{nuevas_validas} línea(s) nueva(s)")
+        if a_eliminar:     resumen_parts.append(f"{a_eliminar} a eliminar")
         st.info(f"📝 **{' + '.join(resumen_parts)}** en {len(sel)} pedido(s) "
                 f"— se grabarán en un solo ciclo de Drive.")
 
         if st.button(f"📤 Guardar todo ({' + '.join(resumen_parts)})",
                      type="primary", use_container_width=True):
-            # Recopilar ediciones
+            # Recopilar ediciones (excluir filas marcadas para eliminar)
             cambios_batch = []
             for rn, linea in lineas_originales.items():
+                if st.session_state.get(f"del_row_{rn}"):
+                    continue  # Se elimina, no se edita
                 uid   = f"mod_{rn}"
                 prod_n = st.session_state.get(f"{uid}_prod", linea["producto"])
                 cant_n = st.session_state.get(f"{uid}_cant", linea["cantidad"])
@@ -333,8 +341,11 @@ def _modificar(todos):
                 if len(cambio) > 1:
                     cambios_batch.append(cambio)
 
+            # Recopilar filas a eliminar
+            filas_eliminar = [rn for rn in lineas_originales
+                              if st.session_state.get(f"del_row_{rn}")]
+
             # Recopilar líneas nuevas
-            prods_cat = {p["nombre"]: p for p in cargar_productos(False)}
             nuevas_batch = []
             for unico in sel:
                 key_nv  = f"mod_nuevas_{unico}"
@@ -361,16 +372,20 @@ def _modificar(todos):
                     })
 
             with st.spinner("Guardando en Drive (1 solo ciclo)..."):
-                res = guardar_edicion_pedidos(cambios_batch, nuevas_batch)
+                res = guardar_edicion_pedidos(cambios_batch, nuevas_batch,
+                                              filas_eliminar)
 
-            # Limpiar session state de nuevas líneas
+            # Limpiar session state
             for unico in sel:
                 st.session_state.pop(f"mod_nuevas_{unico}", None)
+            for rn in list(lineas_originales.keys()):
+                st.session_state.pop(f"del_row_{rn}", None)
 
             partes = []
             if res["ediciones"]:   partes.append(f"{res['ediciones']} edición(es)")
             if res["nuevas_filas"]: partes.append(f"{res['nuevas_filas']} línea(s) nueva(s)")
-            st.success(f"✅ {' + '.join(partes)} guardadas en 1 ciclo Drive.")
+            if res["eliminadas"]:   partes.append(f"{res['eliminadas']} eliminada(s)")
+            st.success(f"✅ {' + '.join(partes)} en 1 ciclo Drive.")
             st.rerun()
     else:
         st.info("Sin cambios ni líneas nuevas detectadas.")
