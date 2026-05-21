@@ -1,11 +1,34 @@
 """
 modulo_proveedores.py — Lista de Compras a Proveedores
-Agrega pedidos de la semana seleccionada por proveedor y genera PDF compacto.
+- Proveedor desde catálogo (no desde pedidos)
+- Columna editable "A Comprar" (número o "P" de pendiente)
+- Costo estimado solo en pantalla
+- Multi-select por proveedor + PDF consolidado
 """
 import streamlit as st
 from datetime import date
 from excel_helper import leer_pedidos
+from data_helper  import cargar_productos
 from pdf_helper   import generar_lista_compras
+
+EXCLUIR_CLIENTES = ["veggi", "chimalt", "wilson"]
+
+
+def _excluido(nombre):
+    return any(x in nombre.lower() for x in EXCLUIR_CLIENTES)
+
+
+def _val_comprar(v: str):
+    """Interpreta el valor de A Comprar. Retorna (es_valido, es_pendiente, cantidad)."""
+    if not v or v.strip() == "" or v.strip() == "0":
+        return False, False, 0.0
+    if v.strip().upper() == "P":
+        return True, True, 0.0
+    try:
+        n = float(v.strip().replace(",", "."))
+        return (n > 0), False, n
+    except ValueError:
+        return False, False, 0.0
 
 
 def mostrar():
@@ -15,110 +38,215 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    st.markdown("Agrega los pedidos de clientes por proveedor para generar "
-                "tu lista de compra semanal.")
-
-    # Selectores de semana
+    # ── Selector de semana ────────────────────────────────────────────────────
     hoy     = date.today()
-    sem_act = hoy.isocalendar()[1]
-    año_act = hoy.year
+    sem_hoy = hoy.isocalendar()[1]
+    año_hoy = hoy.year
 
     c1, c2, c3 = st.columns(3)
-    with c1:
-        semana = st.number_input("Semana", min_value=1, max_value=53,
-                                  value=sem_act, step=1, key="prov_sem")
-    with c2:
-        año = st.selectbox("Año",
-                            list(range(año_act, año_act - 3, -1)),
-                            key="prov_año")
+    semana = c1.number_input("Semana", min_value=1, max_value=53,
+                              value=sem_hoy, step=1, key="prov_sem")
+    año    = c2.selectbox("Año", list(range(año_hoy, año_hoy-3, -1)), key="prov_año")
     with c3:
         st.markdown("&nbsp;")
-        generar = st.button("🔍 Generar lista", type="primary",
-                             use_container_width=True)
+        cargar = st.button("🔍 Cargar semana", type="primary",
+                           use_container_width=True)
 
-    if not generar:
-        st.info("Seleccioná la semana y hacé clic en **Generar lista**.")
-        return
+    # Llave de estado para esta semana
+    state_key = f"compras_{semana}_{año}"
 
-    with st.spinner("Cargando pedidos..."):
-        todos = leer_pedidos()
+    if cargar:
+        # Reset A Comprar al cambiar de semana
+        st.session_state.pop(state_key, None)
+        st.session_state["prov_datos"] = None
 
-    pedidos_sem = [p for p in todos
-                   if p["semana"] == semana and p["año"] == año
-                   and p["status"] != "Cancelado"
-                   and p["cantidad"] and p["cantidad"] > 0]
+    # ── Carga de datos ────────────────────────────────────────────────────────
+    if cargar or st.session_state.get("prov_datos"):
+        if cargar or not st.session_state.get("prov_datos"):
+            with st.spinner("Cargando pedidos y catálogo..."):
+                todos   = leer_pedidos()
+                catalog = cargar_productos(False)
+                catalog_ant = cargar_productos(True)
 
-    if not pedidos_sem:
-        st.warning(f"No hay pedidos activos para la semana {semana}/{año}.")
-        return
+            # Mapa producto → {proveedor, costo} desde catálogo (case-insensitive)
+            prod_map = {}
+            for p in catalog + catalog_ant:
+                prod_map[p["nombre"].lower()] = {
+                    "proveedor": p.get("proveedor",""),
+                    "costo":     float(p.get("costo",0)),
+                }
 
-    # Agregar por proveedor → producto → cantidad
-    por_proveedor: dict = {}
-    sin_proveedor: list = []
+            # Filtrar pedidos de la semana
+            pedidos_sem = [p for p in todos
+                           if p["semana"] == semana and p["año"] == año
+                           and p["status"] != "Cancelado"
+                           and float(p.get("cantidad") or 0) > 0
+                           and not _excluido(p["cliente"])]
 
-    for p in pedidos_sem:
-        prov = str(p.get("proveedor", "")).strip()
-        prod = p["producto"]
-        cant = float(p["cantidad"] or 0)
-        uni  = p["unidad"]
+            if not pedidos_sem:
+                st.warning(f"No hay pedidos activos para la semana {semana}/{año}.")
+                return
 
-        if not prov:
-            sin_proveedor.append(p)
-            continue
+            # Agregar por proveedor → producto (proveedor desde catálogo)
+            por_prov = {}
+            sin_prov = {}
 
-        if prov not in por_proveedor:
-            por_proveedor[prov] = {}
+            for p in pedidos_sem:
+                info_cat  = prod_map.get(p["producto"].lower(), {})
+                prov      = info_cat.get("proveedor","").strip()
+                prod      = p["producto"]
+                cant      = float(p["cantidad"])
+                unidad    = p.get("unidad","")
+                costo_cat = info_cat.get("costo", 0)
 
-        key = (prod, uni)
-        if key not in por_proveedor[prov]:
-            por_proveedor[prov][key] = 0.0
-        por_proveedor[prov][key] += cant
+                dest = por_prov if prov else sin_prov
+                if not prov: prov = "SIN PROVEEDOR"
 
-    # Convertir a lista de dicts para el PDF
-    por_proveedor_lista = {}
-    for prov, prods in sorted(por_proveedor.items()):
-        por_proveedor_lista[prov] = [
-            {"producto": prod, "unidad": uni, "cantidad": cant}
-            for (prod, uni), cant in sorted(prods.items())
-        ]
+                if prov not in dest:
+                    dest[prov] = {}
+                key = (prod, unidad, costo_cat)
+                dest[prov][key] = dest[prov].get(key, 0) + cant
 
-    # Resumen en pantalla
-    total_items = sum(len(v) for v in por_proveedor_lista.values())
-    st.success(f"**Semana {semana}/{año}** — "
-               f"{len(por_proveedor_lista)} proveedor(es) · "
-               f"{total_items} producto(s) distintos")
+            # Convertir a lista ordenada
+            def _to_list(d):
+                return {
+                    prov: [{"producto": k[0], "unidad": k[1],
+                            "costo": k[2], "cantidad": v}
+                           for k, v in sorted(items.items())]
+                    for prov, items in sorted(d.items())
+                }
 
-    for prov, items in sorted(por_proveedor_lista.items()):
-        color = "#2D7A2D"
-        st.markdown(
-            f"<div style='border-left:4px solid {color};padding:3px 10px;"
-            f"border-radius:4px;font-weight:bold;font-size:.88rem;"
-            f"margin:8px 0 4px 0'>📦 {prov}</div>",
-            unsafe_allow_html=True)
-        hdr = st.columns([4, 1.5, 1.5, 1.5])
-        hdr[0].markdown("**Producto**"); hdr[1].markdown("**Unidad**")
-        hdr[2].markdown("**Cantidad**"); hdr[3].markdown("**A Comprar**")
-        for item in items:
-            r = st.columns([4, 1.5, 1.5, 1.5])
-            r[0].write(item["producto"]); r[1].write(item["unidad"])
-            r[2].write(f"{item['cantidad']:,.1f}"); r[3].write("________")
+            datos = {**_to_list(por_prov)}
+            if sin_prov:
+                datos.update(_to_list(sin_prov))
 
-    if sin_proveedor:
-        with st.expander(f"⚠️ Sin proveedor asignado ({len(sin_proveedor)} líneas)",
-                         expanded=False):
-            for p in sin_proveedor:
-                st.write(f"• {p['producto']} — {p['cantidad']} {p['unidad']}")
-        st.caption("Asigná proveedor en Módulo Productos para incluirlos en la lista.")
+            st.session_state["prov_datos"] = datos
+            if state_key not in st.session_state:
+                st.session_state[state_key] = {}
 
-    st.divider()
+        datos = st.session_state["prov_datos"]
+        compras = st.session_state.setdefault(state_key, {})
 
-    # PDF
-    if st.button("📄 Generar PDF de Lista de Compras", type="primary",
-                 use_container_width=True):
-        with st.spinner("Generando PDF..."):
-            pdf_bytes = generar_lista_compras(por_proveedor_lista, semana, año)
-        nombre = f"ListaCompras_Sem{semana}_{año}.pdf"
-        st.download_button("📥 Descargar PDF", data=pdf_bytes,
-                            file_name=nombre, mime="application/pdf",
-                            key="prov_dl", type="primary",
-                            use_container_width=True)
+        proveedores = list(datos.keys())
+
+        # ── Multi-select de proveedores ───────────────────────────────────────
+        st.markdown(f"**{len(proveedores)} proveedor(es) · Semana {semana}/{año}**")
+        sel_prov = st.multiselect(
+            "Seleccioná proveedores para incluir en el PDF:",
+            proveedores, default=proveedores, key="prov_multisel")
+        st.divider()
+
+        # ── Sección por proveedor ─────────────────────────────────────────────
+        total_gasto_est = 0.0
+
+        for prov in proveedores:
+            items = datos[prov]
+            color = "#2D7A2D" if prov != "SIN PROVEEDOR" else "#E65100"
+
+            # Header del proveedor
+            st.markdown(
+                f"<div style='background:{color};color:white;padding:6px 12px;"
+                f"border-radius:6px;font-weight:bold;font-size:.9rem;"
+                f"margin:10px 0 4px 0'>📦 {prov}</div>",
+                unsafe_allow_html=True)
+
+            # Encabezado columnas
+            h = st.columns([3.5, 1.2, 1.3, 1.5, 2.0])
+            for col, txt in zip(h, ["Producto","Unidad","Pedido",
+                                     "A Comprar","Est. Costo"]):
+                col.markdown(f"<small><b>{txt}</b></small>",
+                             unsafe_allow_html=True)
+
+            gasto_prov = 0.0
+            for i, item in enumerate(items):
+                prod      = item["producto"]
+                unidad    = item["unidad"]
+                cant_ped  = item["cantidad"]
+                costo_cat = item["costo"]
+                ck        = f"{prov}||{prod}"
+
+                r = st.columns([3.5, 1.2, 1.3, 1.5, 2.0])
+                r[0].write(prod)
+                r[1].write(unidad)
+                r[2].write(f"{cant_ped:,.1f}")
+
+                val_prev = compras.get(ck, "")
+                val = r[3].text_input("", value=val_prev,
+                                      placeholder="cant / P",
+                                      key=f"cin_{state_key}_{prov}_{i}",
+                                      label_visibility="collapsed")
+                compras[ck] = val
+
+                valido, pendiente, n = _val_comprar(val)
+                if valido and not pendiente and costo_cat > 0:
+                    est = n * costo_cat
+                    gasto_prov   += est
+                    total_gasto_est += est
+                    r[4].markdown(
+                        f"<div style='padding-top:6px;font-size:.82rem'>"
+                        f"Q{est:,.2f}</div>", unsafe_allow_html=True)
+                elif pendiente:
+                    r[4].markdown(
+                        "<div style='padding-top:6px;font-size:.82rem;"
+                        "color:#E65100'>Pendiente</div>", unsafe_allow_html=True)
+
+            if gasto_prov > 0:
+                st.markdown(
+                    f"<div style='text-align:right;font-size:.8rem;"
+                    f"color:#2D7A2D;margin:2px 0 6px 0'>"
+                    f"<b>Estimado {prov}: Q{gasto_prov:,.2f}</b></div>",
+                    unsafe_allow_html=True)
+
+        st.session_state[state_key] = compras
+
+        # Total estimado global
+        if total_gasto_est > 0:
+            st.markdown(
+                f"<div style='background:#e8f5e9;border-radius:8px;"
+                f"padding:10px;text-align:center;margin:8px 0'>"
+                f"<b>💰 Estimado total de compras: Q{total_gasto_est:,.2f}</b>"
+                f"<br><small style='color:#888'>Solo pantalla — no se imprime</small>"
+                f"</div>", unsafe_allow_html=True)
+
+        st.divider()
+
+        # ── Generador de PDF ──────────────────────────────────────────────────
+        if not sel_prov:
+            st.info("Seleccioná al menos un proveedor para generar el PDF.")
+            return
+
+        if st.button(f"📄 Generar PDF ({len(sel_prov)} proveedor(es))",
+                     type="primary", use_container_width=True):
+            # Construir datos para PDF filtrando por selección y A Comprar
+            datos_pdf = {}
+            for prov in sel_prov:
+                items_pdf = []
+                for item in datos[prov]:
+                    prod = item["producto"]
+                    ck   = f"{prov}||{prod}"
+                    val  = compras.get(ck, "")
+                    valido, pendiente, n = _val_comprar(val)
+                    if not valido: continue
+                    items_pdf.append({
+                        "producto":   item["producto"],
+                        "unidad":     item["unidad"],
+                        "cantidad":   item["cantidad"],
+                        "a_comprar":  "P" if pendiente else f"{n:g}",
+                    })
+                if items_pdf:
+                    datos_pdf[prov] = items_pdf
+
+            if not datos_pdf:
+                st.warning("No hay líneas con cantidad ingresada. "
+                           "Completá la columna 'A Comprar'.")
+                return
+
+            with st.spinner("Generando PDF compacto..."):
+                pdf_bytes = generar_lista_compras(datos_pdf, semana, año)
+
+            nombre = f"Compras_Sem{semana}_{año}.pdf"
+            st.download_button("📥 Descargar PDF",
+                               data=pdf_bytes, file_name=nombre,
+                               mime="application/pdf",
+                               key="prov_dl", type="primary",
+                               use_container_width=True)

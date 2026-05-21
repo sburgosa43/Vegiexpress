@@ -901,115 +901,138 @@ def generar_cotizacion(lineas: list, desde: "date", hasta: "date") -> bytes:
     return buffer.getvalue()
 
 
-# ── LISTA DE COMPRAS A PROVEEDORES ────────────────────────────────────────────
+# ── LISTA DE COMPRAS A PROVEEDORES ──────────────────────────────────────────
 def generar_lista_compras(por_proveedor: dict, semana: int, año: int) -> bytes:
     """
-    PDF compacto para lista de compras a proveedores.
-    por_proveedor: {proveedor: [{producto, unidad, cantidad}]}
-    Optimizado para impresión (máximo espacio, letra pequeña).
+    PDF ultra-compacto portrait para lista de compras a proveedores.
+    por_proveedor: {prov: [{producto, unidad, cantidad, a_comprar}]}
+    Solo incluye líneas donde a_comprar != 0/vacío.
     """
-    from reportlab.lib.pagesizes import A4, landscape
+    buffer = BytesIO()
+    CW     = CONTENT_W   # 180mm en portrait
 
-    buffer  = BytesIO()
-    PW, PH  = landscape(A4)   # landscape para más espacio
-    CW      = PW - 20*mm
-
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4),
-        leftMargin=10*mm, rightMargin=10*mm,
-        topMargin=10*mm, bottomMargin=12*mm,
-        title=f"Lista Compras Semana {semana}/{año}")
-
+    doc = SimpleDocTemplate(buffer, pagesize=A4,
+        leftMargin=8*mm, rightMargin=8*mm,
+        topMargin=8*mm,  bottomMargin=10*mm,
+        title=f"Lista Compras Sem {semana}/{año}")
     story = []
 
-    # Header compacto
-    h_style = ParagraphStyle("lch", fontSize=13, fontName="Helvetica-Bold",
-                              textColor=VERDE_OSC, leading=16)
-    s_style = ParagraphStyle("lcs", fontSize=9, fontName="Helvetica",
-                              textColor=GRIS_CARB, leading=11)
-    story.append(Table([[_p(f"Lista de Compras — Semana {semana} / {año}", h_style),
-                         _p(f"VeggiExpress  ·  {__import__('datetime').date.today().strftime('%d/%m/%Y')}",
-                            ParagraphStyle("lch2", fontSize=9, fontName="Helvetica",
-                                           textColor=GRIS_CARB, alignment=TA_RIGHT, leading=11))]],
-                        colWidths=[CW*0.6, CW*0.4]))
-    story.append(HRFlowable(width="100%", thickness=2, color=VERDE_LIM, spaceAfter=3*mm))
+    # Estilos compactos
+    def ts(name, **kw):
+        base = dict(fontSize=8, fontName="Helvetica",
+                    textColor=GRIS_CARB, leading=10)
+        base.update(kw)
+        return ParagraphStyle(name, **base)
 
-    # Tabla de datos en 2 columnas de proveedores
-    th_sm = ParagraphStyle("thsm", fontSize=8, fontName="Helvetica-Bold",
-                            textColor=BLANCO, leading=10)
-    td_sm = ParagraphStyle("tdsm", fontSize=8, fontName="Helvetica",
-                            textColor=GRIS_CARB, leading=10)
-    td_r  = ParagraphStyle("tdr",  fontSize=8, fontName="Helvetica",
-                            textColor=GRIS_CARB, alignment=TA_RIGHT, leading=10)
+    th  = ts("th",  fontName="Helvetica-Bold", textColor=BLANCO)
+    th_r= ts("thr", fontName="Helvetica-Bold", textColor=BLANCO, alignment=TA_RIGHT)
+    td  = ts("td")
+    td_r= ts("tdr", alignment=TA_RIGHT)
+    td_b= ts("tdb", fontName="Helvetica-Bold")
+    td_p= ts("tdp", fontName="Helvetica-Bold", textColor=colors.HexColor("#E65100"))
 
-    proveedores = sorted(por_proveedor.keys())
-    n_cols  = 2  # dos proveedores por fila de página
-    col_w_p = CW / n_cols - 3*mm
+    # Header global
+    hdr_st = ParagraphStyle("lh", fontSize=12, fontName="Helvetica-Bold",
+                             textColor=VERDE_OSC, leading=15)
+    sub_st = ParagraphStyle("ls", fontSize=8,  fontName="Helvetica",
+                             textColor=GRIS_CARB, alignment=TA_RIGHT, leading=10)
 
-    prov_tables = []
-    for prov in proveedores:
-        items = por_proveedor[prov]
-        # Encabezado del proveedor
-        prov_hdr = Table([[
-            _p(f"📦 {_s(prov)}", ParagraphStyle("ph", fontSize=9,
-               fontName="Helvetica-Bold", textColor=BLANCO, leading=11)),
+    hdr_row = Table([[
+        _p(f"Lista de Compras — Semana {semana} / {año}", hdr_st),
+        _p(f"VeggiExpress  ·  {__import__('datetime').date.today().strftime('%d/%m/%Y')}",
+           sub_st),
+    ]], colWidths=[CW*0.6, CW*0.4])
+    hdr_row.setStyle(TableStyle([
+        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+        ("TOPPADDING",(0,0),(-1,-1),0),
+        ("BOTTOMPADDING",(0,0),(-1,-1),2),
+    ]))
+    story.append(hdr_row)
+    story.append(HRFlowable(width="100%", thickness=2,
+                             color=VERDE_LIM, spaceAfter=2*mm))
+
+    # Anchos de columna: Producto | Unidad | Pedido | A Comprar
+    cw = [CW*0.50, CW*0.14, CW*0.16, CW*0.20]
+
+    for prov, items in por_proveedor.items():
+        if not items: continue
+
+        # Header de proveedor
+        ph = Table([[
+            _p(_s(prov),
+               ParagraphStyle("ph", fontSize=9, fontName="Helvetica-Bold",
+                               textColor=BLANCO, leading=11)),
             "", "", ""
-        ]], colWidths=[col_w_p*0.45, col_w_p*0.18, col_w_p*0.18, col_w_p*0.19])
-        prov_hdr.setStyle(TableStyle([
+        ]], colWidths=cw)
+        ph.setStyle(TableStyle([
             ("BACKGROUND", (0,0),(-1,0), VERDE_OSC),
-            ("SPAN", (0,0),(-1,0)),
-            ("TOPPADDING",(0,0),(-1,-1),3),
+            ("SPAN",       (0,0),(-1,0)),
+            ("TOPPADDING", (0,0),(-1,-1), 3),
             ("BOTTOMPADDING",(0,0),(-1,-1),3),
+            ("LEFTPADDING",(0,0),(-1,-1),4),
         ]))
+        story.append(ph)
 
         # Encabezado columnas
-        col_hdrs = [_p("Producto",   th_sm), _p("Unidad", th_sm),
-                    _p("Cantidad",   th_sm), _p("A Comprar", th_sm)]
-        prod_rows = [col_hdrs]
-        for item in sorted(items, key=lambda x: x["producto"]):
-            prod_rows.append([
-                _p(_s(item["producto"]), td_sm),
-                _p(_s(item["unidad"]),   td_sm),
-                _p(f"{item['cantidad']:,.1f}", td_r),
-                _p("",                   td_sm),  # celda en blanco para lápiz
-            ])
-
-        prod_table = Table(prod_rows,
-                           colWidths=[col_w_p*0.45, col_w_p*0.18,
-                                      col_w_p*0.18, col_w_p*0.19],
-                           repeatRows=1)
-        prod_table.setStyle(TableStyle([
-            ("BACKGROUND",    (0,0),(-1,0),  colors.HexColor("#4A9E4A")),
-            ("ROWBACKGROUNDS",(0,1),(-1,-1), [BLANCO, GRIS_TAB]),
-            ("FONTSIZE",      (0,0),(-1,-1), 8),
-            ("TOPPADDING",    (0,0),(-1,-1), 2),
-            ("BOTTOMPADDING", (0,0),(-1,-1), 2),
-            ("LEFTPADDING",   (0,0),(-1,-1), 3),
-            ("RIGHTPADDING",  (0,0),(-1,-1), 3),
-            ("LINEBELOW",     (0,-1),(-1,-1),0.5, VERDE_OSC),
-            ("BOX",           (3,1),(3,-1),  0.5, colors.HexColor("#CCCCCC")),
-            ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
+        col_hdr = Table([[
+            _p("Producto",   th),
+            _p("Unidad",     th),
+            _p("Pedido",     th_r),
+            _p("A Comprar",  th_r),
+        ]], colWidths=cw)
+        col_hdr.setStyle(TableStyle([
+            ("BACKGROUND",  (0,0),(-1,0), colors.HexColor("#4A9E4A")),
+            ("TOPPADDING",  (0,0),(-1,-1), 2),
+            ("BOTTOMPADDING",(0,0),(-1,-1),2),
+            ("LEFTPADDING", (0,0),(-1,-1), 4),
+            ("RIGHTPADDING",(0,0),(-1,-1), 4),
         ]))
+        story.append(col_hdr)
 
-        from reportlab.platypus import KeepTogether
-        prov_tables.append(KeepTogether([prov_hdr, prod_table, Spacer(1,3*mm)]))
+        # Filas de productos
+        rows = []
+        for idx2, item in enumerate(items):
+            a = item.get("a_comprar","")
+            if not a or a == "0": continue  # saltar ceros
 
-    # Colocar en 2 columnas
-    for i in range(0, len(prov_tables), n_cols):
-        chunk = prov_tables[i:i+n_cols]
-        while len(chunk) < n_cols:
-            chunk.append(_p("", td_sm))
-        row = Table([chunk], colWidths=[col_w_p+3*mm]*n_cols)
-        row.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),
-                                  ("LEFTPADDING",(0,0),(-1,-1),0),
-                                  ("RIGHTPADDING",(0,0),(-1,-1),3*mm)]))
-        story.append(row)
+            es_p = (a.upper() == "P")
+            row = [
+                _p(_s(item["producto"]),  td),
+                _p(_s(item["unidad"]),    td),
+                _p(f"{item['cantidad']:,.1f}", td_r),
+                _p("PENDIENTE" if es_p else a, td_p if es_p else td_b),
+            ]
+            rows.append(row)
 
-    story.append(Spacer(1, 4*mm))
-    story.append(HRFlowable(width="100%", thickness=1, color=VERDE_LIM, spaceAfter=2))
+        if not rows:
+            story.append(_p("  (sin líneas a imprimir)",
+                            ParagraphStyle("vacio", fontSize=7,
+                                           fontName="Helvetica-Oblique",
+                                           textColor=colors.HexColor("#AAAAAA"),
+                                           leading=9)))
+        else:
+            prod_tbl = Table(rows, colWidths=cw)
+            prod_tbl.setStyle(TableStyle([
+                ("ROWBACKGROUNDS",(0,0),(-1,-1), [BLANCO, GRIS_TAB]),
+                ("FONTSIZE",     (0,0),(-1,-1), 8),
+                ("TOPPADDING",   (0,0),(-1,-1), 2),
+                ("BOTTOMPADDING",(0,0),(-1,-1), 2),
+                ("LEFTPADDING",  (0,0),(-1,-1), 4),
+                ("RIGHTPADDING", (0,0),(-1,-1), 4),
+                ("LINEBELOW",    (0,-1),(-1,-1), 0.3, VERDE_OSC),
+                ("VALIGN",       (0,0),(-1,-1), "MIDDLE"),
+            ]))
+            story.append(prod_tbl)
+
+        story.append(Spacer(1, 2*mm))
+
+    story.append(Spacer(1, 3*mm))
+    story.append(HRFlowable(width="100%", thickness=1,
+                             color=VERDE_LIM, spaceAfter=1))
     story.append(_p(_s("VeggiExpress  ·  Más fresco, imposible."),
-                    ParagraphStyle("lf", fontSize=7, fontName="Helvetica-Oblique",
-                                   textColor=GRIS_CARB, alignment=TA_CENTER, leading=9)))
-
+                    ParagraphStyle("lf", fontSize=7,
+                                   fontName="Helvetica-Oblique",
+                                   textColor=GRIS_CARB,
+                                   alignment=TA_CENTER, leading=9)))
     doc.build(story)
     return buffer.getvalue()
-
