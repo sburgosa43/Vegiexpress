@@ -388,12 +388,14 @@ def mostrar():
 
     st.caption("IVA 12% · ISR 5% · Fórmulas según Listado de Productos")
 
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "💡 Calcular Precio",
         "🔍 Verificar Margen",
         "📊 Comparar Escenarios",
+        "📋 Cotización de Precios",
     ])
 
     with tab1: _tab_calcular()
     with tab2: _tab_verificar()
     with tab3: _tab_escenarios()
+    with tab4: _cotizacion()
