@@ -11,7 +11,6 @@ from pdf_helper   import (generar_facturacion_mensual,
                            nombre_archivo_factura, MESES_ES)
 
 # Excluir mismos clientes que el dashboard
-EXCLUIR = ["veggi", "chimalt", "wilson"]
 
 ZONAS_MAP = {
     "🔖 Antigua & Chimal":      ["L03", "L04"],
@@ -24,7 +23,7 @@ COLORES_ZONA = {
     "🌊 Rio":                   "#4A4A4A",
 }
 
-def _excluido(nombre): return any(x in nombre.lower() for x in EXCLUIR)
+def _excluido(nombre): return False  # Todos los clientes aparecen en facturación
 
 def _zona_cliente(c: dict) -> str:
     for zona, cods in ZONAS_MAP.items():

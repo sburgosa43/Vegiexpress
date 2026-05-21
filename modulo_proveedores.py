@@ -12,7 +12,7 @@ from excel_helper import leer_pedidos
 from data_helper  import cargar_productos
 from pdf_helper   import generar_lista_compras
 
-EXCLUIR_CLIENTES = ["veggi", "chimalt", "wilson"]
+EXCLUIR_CLIENTES = ["wilson"]  # Wilson no se compra; Veggi y Chimalt sí
 
 
 def _excluido(n):
