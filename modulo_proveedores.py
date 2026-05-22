@@ -183,57 +183,62 @@ def mostrar():
             f"margin:10px 0 4px 0'>📦 {prov}</div>",
             unsafe_allow_html=True)
 
-        # Añadir columna Est. Q = A Comprar × Costo (solo pantalla)
-        display_df = base_df[["Producto", "Unidad", "Pedido", "A Comprar"]].copy()
+        # Calcular Costo Est. desde valores almacenados del render anterior
+        prev_key  = f"prev_{prov}_{semana}_{año}_{reset_n}"
+        prev_vals = st.session_state.get(prev_key, {})
+
+        display_df = base_df[["Producto", "Unidad", "Pedido",
+                               "A Comprar"]].copy()
+        est_col = []
+        for i, row in base_df.iterrows():
+            val     = str(prev_vals.get(i, ""))
+            ok, pend, n = _val_comprar(val)
+            costo_u = float(row["_costo"])
+            if ok and not pend and n > 0 and costo_u > 0:
+                est_col.append(f"Q{n*costo_u:,.2f}")
+            else:
+                est_col.append("")
+        display_df["Costo Est."] = est_col
 
         edited = st.data_editor(
             display_df,
             column_config={
-                "Producto":  st.column_config.TextColumn(
+                "Producto":   st.column_config.TextColumn(
                     "Producto",   disabled=True, width="large"),
-                "Unidad":    st.column_config.TextColumn(
+                "Unidad":     st.column_config.TextColumn(
                     "Unidad",    disabled=True, width="small"),
-                "Pedido":    st.column_config.NumberColumn(
+                "Pedido":     st.column_config.NumberColumn(
                     "Pedido",    disabled=True, width="small", format="%.1f"),
-                "A Comprar": st.column_config.TextColumn(
+                "A Comprar":  st.column_config.TextColumn(
                     "A Comprar", width="small",
                     help="Cantidad a comprar, P = Pendiente, vacío = no imprimir"),
+                "Costo Est.": st.column_config.TextColumn(
+                    "Costo Est.", disabled=True, width="small"),
             },
             hide_index=True,
             use_container_width=True,
             num_rows="fixed",
-            key=f"de_{prov}_{semana}_{año}_{reset_n}",  # reset_n cambia solo con Limpiar
+            key=f"de_{prov}_{semana}_{año}_{reset_n}",
         )
+
+        # Guardar A Comprar actuales para próximo render (para Costo Est.)
+        st.session_state[prev_key] = {
+            i: str(edited.loc[i, "A Comprar"] or "")
+            for i in edited.index
+        }
 
         edited_results[prov] = edited   # Guardar resultado actual
 
-        # Costo estimado por línea + total proveedor (solo pantalla)
-        est_prov   = 0.0
-        lineas_est = []   # [(producto, cant, costo_u, est_linea)]
-
+        # Total estimado del proveedor
+        est_prov = 0.0
         for i, row in base_df.iterrows():
             val     = str(edited.loc[i, "A Comprar"] or "")
             ok, pend, n = _val_comprar(val)
             costo_u = float(row["_costo"])
             if ok and not pend and costo_u > 0:
-                est_l = round(n * costo_u, 2)
-                est_prov += est_l
-                lineas_est.append((row["Producto"], n, costo_u, est_l))
+                est_prov += round(n * costo_u, 2)
 
-        if lineas_est:
-            st.markdown(
-                "<div style='font-size:.72rem;color:#888;margin:3px 0 2px 0'>"
-                "💰 Costo estimado por producto <i>(solo pantalla)</i></div>",
-                unsafe_allow_html=True)
-            for prod_n, cant, costo_u, est_l in sorted(lineas_est,
-                                                         key=lambda x: x[0].lower()):
-                st.markdown(
-                    f"<div style='font-size:.78rem;display:flex;"
-                    f"justify-content:space-between;padding:1px 4px'>"
-                    f"<span style='color:#444'>{prod_n}</span>"
-                    f"<span style='font-weight:bold'>Q{est_l:,.2f}</span>"
-                    f"</div>",
-                    unsafe_allow_html=True)
+
 
         if est_prov > 0:
             st.markdown(
