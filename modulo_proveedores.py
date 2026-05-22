@@ -11,7 +11,7 @@ import pandas as pd
 from datetime import date
 from excel_helper import leer_pedidos
 from data_helper  import cargar_productos
-from pdf_helper   import generar_lista_compras
+from pdf_helper   import generar_lista_compras_proveedor
 
 EXCLUIR_CLIENTES = ["wilson"]
 
