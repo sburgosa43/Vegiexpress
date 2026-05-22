@@ -977,12 +977,12 @@ def generar_lista_compras_proveedor(prov: str, items: list,
             return _p("PEND.", s_td_b)
         return _p(str(a), s_td_b)
 
-    # Fila de encabezados de columna (una sola vez arriba)
+    # Fila de encabezados de columna
     col_hdr = [
-        _p("Producto",  s_col),  _p("Unidad", s_col_c),
+        _p("Producto",  s_col),  _p("Unidad",  s_col_c),
         _p("Pedido",    s_col_c), _p("A Comprar", s_col_c),
         "",
-        _p("Producto",  s_col),  _p("Unidad", s_col_c),
+        _p("Producto",  s_col),  _p("Unidad",  s_col_c),
         _p("Pedido",    s_col_c), _p("A Comprar", s_col_c),
     ]
 
@@ -1009,35 +1009,27 @@ def generar_lista_compras_proveedor(prov: str, items: list,
     # ── Tabla plana B&W ───────────────────────────────────────────────────────
     tbl = Table(rows, colWidths=cw, repeatRows=1, splitByRow=True)
     tbl.setStyle(TableStyle([
-        # Encabezado
         ("FONTNAME",     (0,0), (3,0), "Helvetica-Bold"),
         ("FONTNAME",     (5,0), (8,0), "Helvetica-Bold"),
         ("FONTSIZE",     (0,0), (-1,-1), 7),
         ("LINEBELOW",    (0,0), (3,0), 0.7, NEGRO),
         ("LINEBELOW",    (5,0), (8,0), 0.7, NEGRO),
-        # Grid bloques izquierdo y derecho
         ("BOX",          (0,0), (3,-1), 0.6, NEGRO),
         ("INNERGRID",    (0,0), (3,-1), 0.25, NEGRO),
         ("BOX",          (5,0), (8,-1), 0.6, NEGRO),
         ("INNERGRID",    (5,0), (8,-1), 0.25, NEGRO),
-        # Separador sin bordes ni fondo
         ("LEFTPADDING",  (4,0), (4,-1), 0),
         ("RIGHTPADDING", (4,0), (4,-1), 0),
         ("BOX",          (4,0), (4,-1), 0, rc.white),
         ("INNERGRID",    (4,0), (4,-1), 0, rc.white),
-        # Padding general
         ("TOPPADDING",   (0,0), (-1,-1), 1.5),
         ("BOTTOMPADDING",(0,0), (-1,-1), 1.5),
         ("LEFTPADDING",  (0,0), (-1,-1), 3),
         ("RIGHTPADDING", (0,0), (-1,-1), 3),
         ("VALIGN",       (0,0), (-1,-1), "MIDDLE"),
-        # Alineación centrada en columnas numéricas
-        ("ALIGN",        (1,0), (1,-1), "CENTER"),
-        ("ALIGN",        (2,0), (2,-1), "CENTER"),
-        ("ALIGN",        (3,0), (3,-1), "CENTER"),
-        ("ALIGN",        (6,0), (6,-1), "CENTER"),
-        ("ALIGN",        (7,0), (7,-1), "CENTER"),
-        ("ALIGN",        (8,0), (8,-1), "CENTER"),
+        ("ALIGN", (1,0),(1,-1),"CENTER"), ("ALIGN", (2,0),(2,-1),"CENTER"),
+        ("ALIGN", (3,0),(3,-1),"CENTER"), ("ALIGN", (6,0),(6,-1),"CENTER"),
+        ("ALIGN", (7,0),(7,-1),"CENTER"), ("ALIGN", (8,0),(8,-1),"CENTER"),
     ]))
     story.append(tbl)
 
