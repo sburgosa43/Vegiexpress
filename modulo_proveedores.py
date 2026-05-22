@@ -221,26 +221,18 @@ def mostrar():
                 lineas_est.append((row["Producto"], n, costo_u, est_l))
 
         if lineas_est:
-            # Tabla compacta de costos por línea
             st.markdown(
-                "<div style='font-size:.72rem;color:#888;margin:3px 0 1px 0'>"
+                "<div style='font-size:.72rem;color:#888;margin:3px 0 2px 0'>"
                 "💰 Costo estimado por producto <i>(solo pantalla)</i></div>",
                 unsafe_allow_html=True)
-            hcol = st.columns([3.5, 1.0, 1.0, 1.2])
-            for h, t in zip(hcol, ["Producto","A Comprar","Costo/u","Est. Q"]):
-                h.markdown(f"<small><b style='color:#555'>{t}</b></small>",
-                           unsafe_allow_html=True)
             for prod_n, cant, costo_u, est_l in sorted(lineas_est,
                                                          key=lambda x: x[0].lower()):
-                r2 = st.columns([3.5, 1.0, 1.0, 1.2])
-                r2[0].markdown(f"<small>{prod_n}</small>",
-                               unsafe_allow_html=True)
-                r2[1].markdown(f"<small>{cant:g}</small>",
-                               unsafe_allow_html=True)
-                r2[2].markdown(f"<small>Q{costo_u:,.2f}</small>",
-                               unsafe_allow_html=True)
-                r2[3].markdown(
-                    f"<small><b>Q{est_l:,.2f}</b></small>",
+                st.markdown(
+                    f"<div style='font-size:.78rem;display:flex;"
+                    f"justify-content:space-between;padding:1px 4px'>"
+                    f"<span style='color:#444'>{prod_n}</span>"
+                    f"<span style='font-weight:bold'>Q{est_l:,.2f}</span>"
+                    f"</div>",
                     unsafe_allow_html=True)
 
         if est_prov > 0:
@@ -289,6 +281,7 @@ def mostrar():
                 "unidad":    row["Unidad"],
                 "cantidad":  float(row["Pedido"]),
                 "a_comprar": "P" if pend else f"{n:g}",
+                "costo_u":   float(base_dfs[prov].loc[i, "_costo"]),
             })
 
         col_lbl, col_btn = st.columns([3, 1])
