@@ -232,47 +232,58 @@ def mostrar():
 
     st.divider()
 
-    # ── Acciones ──────────────────────────────────────────────────────────────
-    bl, bp = st.columns(2)
+    # ── Botón limpiar ─────────────────────────────────────────────────────────
+    if st.button("🗑 Limpiar todo lo ingresado", type="secondary",
+                 key="limpiar_abajo"):
+        st.session_state[reset_key] = reset_n + 1
+        st.rerun()
 
-    with bl:
-        if st.button("🗑 Limpiar todo", type="secondary",
-                     use_container_width=True, key="limpiar_abajo"):
-            st.session_state[reset_key] = reset_n + 1
-            st.rerun()
+    st.divider()
 
-    with bp:
-        if st.button(f"📄 Generar PDF ({len(sel_prov)} prov.)",
-                     type="primary", use_container_width=True):
-            datos_pdf = {}
-            for prov in sel_prov:
-                edited = edited_results.get(prov)
-                if edited is None: continue
-                items_pdf = []
-                for i, row in base_dfs[prov].iterrows():
-                    val = str(edited.loc[i, "A Comprar"] or "")
-                    ok, pend, n = _val_comprar(val)
-                    if not ok: continue
-                    items_pdf.append({
-                        "producto":  row["Producto"],
-                        "unidad":    row["Unidad"],
-                        "cantidad":  float(row["Pedido"]),
-                        "a_comprar": "P" if pend else f"{n:g}",
-                    })
-                if items_pdf:
-                    datos_pdf[prov] = items_pdf
+    # ── PDF individual por proveedor ──────────────────────────────────────────
+    st.markdown("**📄 Descargar PDF por proveedor:**")
+    st.caption("Solo se incluyen las líneas con valor en 'A Comprar'.")
 
-            if not datos_pdf:
-                st.warning("No hay líneas con valor ingresado. "
-                           "Completá la columna 'A Comprar'.")
-            else:
-                with st.spinner("Generando PDF..."):
-                    pdf_bytes = generar_lista_compras(datos_pdf, semana, año)
-                st.download_button(
-                    "📥 Descargar PDF",
+    for prov in sel_prov:
+        edited = edited_results.get(prov)
+        if edited is None: continue
+
+        items_pdf = []
+        for i, row in base_dfs[prov].iterrows():
+            val = str(edited.loc[i, "A Comprar"] or "")
+            ok, pend, n = _val_comprar(val)
+            if not ok: continue
+            items_pdf.append({
+                "producto":  row["Producto"],
+                "unidad":    row["Unidad"],
+                "cantidad":  float(row["Pedido"]),
+                "a_comprar": "P" if pend else f"{n:g}",
+            })
+
+        col_lbl, col_btn = st.columns([3, 1])
+        col_lbl.markdown(
+            f"<div style='padding-top:6px'>📦 <b>{prov}</b> "
+            f"— {len(items_pdf)} línea(s)</div>",
+            unsafe_allow_html=True)
+
+        if items_pdf:
+            try:
+                pdf_bytes = generar_lista_compras_proveedor(
+                    prov, items_pdf, semana, año)
+                nombre_prov = "".join(
+                    ch for ch in prov if ch.isalnum() or ch == "_")
+                col_btn.download_button(
+                    "📥 PDF",
                     data=pdf_bytes,
-                    file_name=f"Compras_Sem{semana}_{año}.pdf",
+                    file_name=f"Compras_{nombre_prov}_Sem{semana}_{año}.pdf",
                     mime="application/pdf",
-                    key="prov_dl",
+                    key=f"dl_{prov}_{semana}_{año}",
                     type="primary",
                     use_container_width=True)
+            except Exception as e:
+                col_btn.error(f"Error: {e}")
+        else:
+            col_btn.button("📥 PDF", disabled=True,
+                           key=f"dl_dis_{prov}_{semana}_{año}",
+                           help="Ingresá cantidades primero",
+                           use_container_width=True)
