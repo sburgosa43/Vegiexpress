@@ -1,10 +1,8 @@
 """
 modulo_proveedores.py — Lista de Compras a Proveedores
 - Proveedor desde catálogo GENERAL únicamente
-- data_editor con baseline FIJO (no se sincroniza) — persiste valores correctamente
-- Alerta de productos sin proveedor
-- Costo estimado solo en pantalla
-- Multi-select + PDF por selección
+- data_editor con baseline FIJO — persiste valores correctamente
+- Multi-select por proveedor + PDF individual por proveedor
 """
 import streamlit as st
 import pandas as pd
@@ -22,7 +20,7 @@ def _excluido(n):
 
 def _val_comprar(v):
     v = str(v or "").strip()
-    if not v:           return False, False, 0.0
+    if not v:            return False, False, 0.0
     if v.upper() == "P": return True,  True,  0.0
     try:
         n = float(v.replace(",", "."))
@@ -53,8 +51,8 @@ def mostrar():
         cargar = st.button("🔍 Cargar semana", type="primary",
                            use_container_width=True)
 
-    base_key  = f"prov_base_{semana}_{año}"   # DataFrames FIJOS, nunca cambian
-    reset_key = f"prov_reset_{semana}_{año}"  # Contador para limpiar editors
+    base_key  = f"prov_base_{semana}_{año}"
+    reset_key = f"prov_reset_{semana}_{año}"
 
     if cargar:
         st.session_state.pop(base_key, None)
@@ -85,9 +83,8 @@ def mostrar():
             st.warning(f"No hay pedidos activos para semana {semana}/{año}.")
             return
 
-        # Agregar por proveedor → producto
         por_prov    = {}
-        sin_detalle = []   # Para la alerta
+        sin_detalle = []
 
         for p in pedidos_sem:
             info   = prod_map.get(p["producto"].lower(), {})
@@ -99,31 +96,24 @@ def mostrar():
 
             if not prov:
                 prov = "⚠️ SIN PROVEEDOR"
-                sin_detalle.append({
-                    "producto": prod,
-                    "cliente":  p["cliente"],
-                    "cantidad": cant,
-                    "unidad":   unidad,
-                })
+                sin_detalle.append({"producto": prod, "cliente": p["cliente"],
+                                    "cantidad": cant, "unidad": unidad})
 
             if prov not in por_prov:
                 por_prov[prov] = {}
             key = (prod, unidad, costo)
             por_prov[prov][key] = por_prov[prov].get(key, 0) + cant
 
-        # Construir DataFrames FIJOS con A Comprar siempre vacío
+        # DataFrames FIJOS — A Comprar siempre vacío, nunca cambia
         base_dfs = {}
         for prov in sorted(por_prov.keys()):
-            rows = [{"Producto":   k[0],
-                     "Unidad":     k[1],
-                     "Pedido":     round(v, 1),
-                     "A Comprar":  "",
-                     "Costo Est.": "",   # siempre presente, se calcula en render
-                     "_costo":     k[2]}
+            rows = [{"Producto":  k[0], "Unidad": k[1],
+                     "Pedido":    round(v, 1), "A Comprar": "",
+                     "_costo":    k[2]}
                     for k, v in sorted(por_prov[prov].items())]
             base_dfs[prov] = pd.DataFrame(rows)
 
-        st.session_state[base_key]              = base_dfs
+        st.session_state[base_key]                       = base_dfs
         st.session_state[f"prov_alerta_{semana}_{año}"] = sin_detalle
 
     base_dfs    = st.session_state[base_key]
@@ -134,8 +124,8 @@ def mostrar():
     # ── Alerta sin proveedor ──────────────────────────────────────────────────
     if sin_detalle:
         with st.expander(
-            f"⚠️ {len(sin_detalle)} producto(s) sin proveedor asignado — "
-            f"revisá el catálogo", expanded=False):
+            f"⚠️ {len(sin_detalle)} producto(s) sin proveedor — revisá el catálogo",
+            expanded=False):
             h = st.columns([3, 2, 1.5, 1])
             h[0].markdown("**Producto**"); h[1].markdown("**Cliente**")
             h[2].markdown("**Cantidad**"); h[3].markdown("**Unidad**")
@@ -143,8 +133,7 @@ def mostrar():
                 r = st.columns([3, 2, 1.5, 1])
                 r[0].write(d["producto"]); r[1].write(d["cliente"])
                 r[2].write(f"{d['cantidad']:,.1f}"); r[3].write(d["unidad"])
-        st.caption("Actualizá el proveedor en 📦 Productos para que aparezcan "
-                   "en la lista correcta.")
+        st.caption("Actualizá el proveedor en 📦 Productos.")
 
     # ── Multi-select ──────────────────────────────────────────────────────────
     n_ok = sum(1 for p in provs if "SIN PROVEEDOR" not in p)
@@ -166,16 +155,12 @@ def mostrar():
         st.session_state[reset_key] = reset_n + 1
         st.rerun()
 
-    # ── data_editors por proveedor ────────────────────────────────────────────
-    # CLAVE: pasamos siempre el DataFrame BASE (A Comprar vacío).
-    # El data_editor mantiene todos los valores editados via su key interna.
-    # NO sincronizamos de vuelta — eso era el bug.
-
-    edited_results = {}   # Recolectamos los resultados de cada editor
+    # ── data_editors por proveedor (baseline FIJO) ────────────────────────────
+    edited_results   = {}
     total_est_global = 0.0
 
     for prov in sel_prov:
-        base_df = base_dfs[prov]   # Siempre el mismo, nunca cambia
+        base_df = base_dfs[prov]
         color   = "#E65100" if "SIN PROVEEDOR" in prov else "#2D7A2D"
 
         st.markdown(
@@ -184,35 +169,18 @@ def mostrar():
             f"margin:10px 0 4px 0'>📦 {prov}</div>",
             unsafe_allow_html=True)
 
-        # Calcular Costo Est. desde valores almacenados del render anterior
-        prev_key  = f"prev_{prov}_{semana}_{año}_{reset_n}"
-        prev_vals = st.session_state.get(prev_key, {})
-
-        display_df = base_df[["Producto", "Unidad", "Pedido",
-                               "A Comprar", "Costo Est."]].copy()
-        for i, row in base_df.iterrows():
-            val     = str(prev_vals.get(i, ""))
-            ok, pend, n = _val_comprar(val)
-            costo_u = float(row["_costo"])
-            if ok and not pend and n > 0 and costo_u > 0:
-                display_df.loc[i, "Costo Est."] = f"Q{n*costo_u:,.2f}"
-            else:
-                display_df.loc[i, "Costo Est."] = ""
-
         edited = st.data_editor(
-            display_df,
+            base_df[["Producto", "Unidad", "Pedido", "A Comprar"]],
             column_config={
-                "Producto":   st.column_config.TextColumn(
+                "Producto":  st.column_config.TextColumn(
                     "Producto",   disabled=True, width="large"),
-                "Unidad":     st.column_config.TextColumn(
+                "Unidad":    st.column_config.TextColumn(
                     "Unidad",    disabled=True, width="small"),
-                "Pedido":     st.column_config.NumberColumn(
+                "Pedido":    st.column_config.NumberColumn(
                     "Pedido",    disabled=True, width="small", format="%.1f"),
-                "A Comprar":  st.column_config.TextColumn(
+                "A Comprar": st.column_config.TextColumn(
                     "A Comprar", width="small",
                     help="Cantidad a comprar, P = Pendiente, vacío = no imprimir"),
-                "Costo Est.": st.column_config.TextColumn(
-                    "Costo Est.", disabled=True, width="small"),
             },
             hide_index=True,
             use_container_width=True,
@@ -220,35 +188,26 @@ def mostrar():
             key=f"de_{prov}_{semana}_{año}_{reset_n}",
         )
 
-        # Guardar A Comprar actuales para próximo render (para Costo Est.)
-        st.session_state[prev_key] = {
-            i: str(edited.loc[i, "A Comprar"] or "")
-            for i in edited.index
-        }
+        edited_results[prov] = edited
 
-        edited_results[prov] = edited   # Guardar resultado actual
-
-        # Total estimado del proveedor
+        # Total estimado del proveedor (solo pantalla)
         est_prov = 0.0
         for i, row in base_df.iterrows():
-            val     = str(edited.loc[i, "A Comprar"] or "")
+            val = str(edited.loc[i, "A Comprar"] or "")
             ok, pend, n = _val_comprar(val)
-            costo_u = float(row["_costo"])
-            if ok and not pend and costo_u > 0:
-                est_prov += round(n * costo_u, 2)
-
-
+            if ok and not pend and float(row["_costo"]) > 0:
+                est_prov += n * float(row["_costo"])
 
         if est_prov > 0:
             st.markdown(
                 f"<div style='text-align:right;font-size:.8rem;color:{color};"
-                f"margin:4px 0 6px 0'><b>Total estimado {prov}: "
+                f"margin:2px 0 6px 0'><b>Estimado {prov}: "
                 f"Q{est_prov:,.2f}</b> "
                 f"<span style='color:#aaa;font-size:.7rem'>(solo pantalla)</span>"
                 f"</div>", unsafe_allow_html=True)
             total_est_global += est_prov
 
-    # Total global estimado
+    # Total global
     if total_est_global > 0:
         st.markdown(
             f"<div style='background:#e8f5e9;border-radius:8px;"
@@ -259,8 +218,8 @@ def mostrar():
 
     st.divider()
 
-    # ── Botón limpiar ─────────────────────────────────────────────────────────
-    if st.button("🗑 Limpiar todo lo ingresado", type="secondary",
+    # ── Botón limpiar (abajo) ─────────────────────────────────────────────────
+    if st.button("🗑 Limpiar todo", type="secondary",
                  key="limpiar_abajo"):
         st.session_state[reset_key] = reset_n + 1
         st.rerun()
@@ -285,7 +244,6 @@ def mostrar():
                 "unidad":    row["Unidad"],
                 "cantidad":  float(row["Pedido"]),
                 "a_comprar": "P" if pend else f"{n:g}",
-                "costo_u":   float(base_dfs[prov].loc[i, "_costo"]),
             })
 
         col_lbl, col_btn = st.columns([3, 1])
