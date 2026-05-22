@@ -183,8 +183,11 @@ def mostrar():
             f"margin:10px 0 4px 0'>📦 {prov}</div>",
             unsafe_allow_html=True)
 
+        # Añadir columna Est. Q = A Comprar × Costo (solo pantalla)
+        display_df = base_df[["Producto", "Unidad", "Pedido", "A Comprar"]].copy()
+
         edited = st.data_editor(
-            base_df[["Producto", "Unidad", "Pedido", "A Comprar"]],
+            display_df,
             column_config={
                 "Producto":  st.column_config.TextColumn(
                     "Producto",   disabled=True, width="large"),
@@ -204,18 +207,46 @@ def mostrar():
 
         edited_results[prov] = edited   # Guardar resultado actual
 
-        # Costo estimado en pantalla (no en PDF)
-        est_prov = 0.0
+        # Costo estimado por línea + total proveedor (solo pantalla)
+        est_prov   = 0.0
+        lineas_est = []   # [(producto, cant, costo_u, est_linea)]
+
         for i, row in base_df.iterrows():
-            val = str(edited.loc[i, "A Comprar"] or "")
+            val     = str(edited.loc[i, "A Comprar"] or "")
             ok, pend, n = _val_comprar(val)
-            if ok and not pend and float(row["_costo"]) > 0:
-                est_prov += n * float(row["_costo"])
+            costo_u = float(row["_costo"])
+            if ok and not pend and costo_u > 0:
+                est_l = round(n * costo_u, 2)
+                est_prov += est_l
+                lineas_est.append((row["Producto"], n, costo_u, est_l))
+
+        if lineas_est:
+            # Tabla compacta de costos por línea
+            st.markdown(
+                "<div style='font-size:.72rem;color:#888;margin:3px 0 1px 0'>"
+                "💰 Costo estimado por producto <i>(solo pantalla)</i></div>",
+                unsafe_allow_html=True)
+            hcol = st.columns([3.5, 1.0, 1.0, 1.2])
+            for h, t in zip(hcol, ["Producto","A Comprar","Costo/u","Est. Q"]):
+                h.markdown(f"<small><b style='color:#555'>{t}</b></small>",
+                           unsafe_allow_html=True)
+            for prod_n, cant, costo_u, est_l in sorted(lineas_est,
+                                                         key=lambda x: x[0].lower()):
+                r2 = st.columns([3.5, 1.0, 1.0, 1.2])
+                r2[0].markdown(f"<small>{prod_n}</small>",
+                               unsafe_allow_html=True)
+                r2[1].markdown(f"<small>{cant:g}</small>",
+                               unsafe_allow_html=True)
+                r2[2].markdown(f"<small>Q{costo_u:,.2f}</small>",
+                               unsafe_allow_html=True)
+                r2[3].markdown(
+                    f"<small><b>Q{est_l:,.2f}</b></small>",
+                    unsafe_allow_html=True)
 
         if est_prov > 0:
             st.markdown(
                 f"<div style='text-align:right;font-size:.8rem;color:{color};"
-                f"margin:2px 0 6px 0'><b>Estimado {prov}: "
+                f"margin:4px 0 6px 0'><b>Total estimado {prov}: "
                 f"Q{est_prov:,.2f}</b> "
                 f"<span style='color:#aaa;font-size:.7rem'>(solo pantalla)</span>"
                 f"</div>", unsafe_allow_html=True)
