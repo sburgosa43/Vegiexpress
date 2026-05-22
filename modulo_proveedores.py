@@ -114,11 +114,12 @@ def mostrar():
         # Construir DataFrames FIJOS con A Comprar siempre vacío
         base_dfs = {}
         for prov in sorted(por_prov.keys()):
-            rows = [{"Producto":  k[0],
-                     "Unidad":    k[1],
-                     "Pedido":    round(v, 1),
-                     "A Comprar": "",
-                     "_costo":    k[2]}
+            rows = [{"Producto":   k[0],
+                     "Unidad":     k[1],
+                     "Pedido":     round(v, 1),
+                     "A Comprar":  "",
+                     "Costo Est.": "",   # siempre presente, se calcula en render
+                     "_costo":     k[2]}
                     for k, v in sorted(por_prov[prov].items())]
             base_dfs[prov] = pd.DataFrame(rows)
 
@@ -188,17 +189,15 @@ def mostrar():
         prev_vals = st.session_state.get(prev_key, {})
 
         display_df = base_df[["Producto", "Unidad", "Pedido",
-                               "A Comprar"]].copy()
-        est_col = []
+                               "A Comprar", "Costo Est."]].copy()
         for i, row in base_df.iterrows():
             val     = str(prev_vals.get(i, ""))
             ok, pend, n = _val_comprar(val)
             costo_u = float(row["_costo"])
             if ok and not pend and n > 0 and costo_u > 0:
-                est_col.append(f"Q{n*costo_u:,.2f}")
+                display_df.loc[i, "Costo Est."] = f"Q{n*costo_u:,.2f}"
             else:
-                est_col.append("")
-        display_df["Costo Est."] = est_col
+                display_df.loc[i, "Costo Est."] = ""
 
         edited = st.data_editor(
             display_df,
