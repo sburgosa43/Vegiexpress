@@ -1039,7 +1039,7 @@ def generar_lista_compras(por_proveedor: dict, semana: int, año: int) -> bytes:
 
         left_blk  = _supplier_block(left_prov, por_proveedor[left_prov])
         right_blk = (_supplier_block(right_prov, por_proveedor[right_prov])
-                     if right_prov else _p(""))
+                     if right_prov else Spacer(HW, 1))
 
         # Fila par: dos proveedores lado a lado
         pair = Table([[left_blk, right_blk]],
