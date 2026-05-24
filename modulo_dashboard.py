@@ -332,34 +332,17 @@ def _tab_top_productos(todos, cli_map, periodos, campo, label_campo):
 
 
 # ── TAB 4: CRÉDITOS ───────────────────────────────────────────────────────────
-def _tab_creditos(todos, clientes):
-    hoy = date.today()
-    cli_map2 = {c["nombre"].lower(): c for c in clientes}
-    vencidos: dict = {}
-    for p in todos:
-        if p["status"]=="Cancelado" or _excluido(p["cliente"]): continue
-        fv = p.get("fecha_venc")
-        if not fv or fv >= hoy: continue
-        cli = p["cliente"]
-        if cli not in vencidos: vencidos[cli] = {"monto": 0, "fecha_venc": fv}
-        vencidos[cli]["monto"] += p["total"] or 0
-        if fv < vencidos[cli]["fecha_venc"]: vencidos[cli]["fecha_venc"] = fv
-
-    if not vencidos:
-        st.success("✅ No hay créditos vencidos."); return
-    st.warning(f"⚠️ {len(vencidos)} cliente(s) con crédito vencido")
-    rows = []
-    for cli, info in sorted(vencidos.items(), key=lambda x: x[1]["fecha_venc"]):
-        ci = cli_map2.get(cli.lower(), {})
-        rows.append({"Cliente": cli, "NIT": ci.get("nit","—"),
-                     "Venc.": info["fecha_venc"].strftime("%d/%m/%Y"),
-                     "Días": (hoy - info["fecha_venc"]).days,
-                     "Monto (Q)": f"Q{info['monto']:,.2f}"})
-    df = pd.DataFrame(rows).sort_values("Días", ascending=False)
-    st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
+def _tab_creditos():
+    st.markdown("### 💰 Flujo de Caja Semanal")
+    st.info(
+        "Este módulo fue movido a su propio espacio para mayor comodidad. "
+        "Accedé desde el menú lateral o desde el botón de abajo."
+    )
+    if st.button("💰 Ir a Flujo de Caja", type="primary"):
+        st.session_state["_nav_target"] = "💰 Flujo de Caja"
+        st.rerun()
 
 
-# ── TAB 5: CRM ────────────────────────────────────────────────────────────────
 def _tab_crm(todos, clientes, sem_act, año_act):
     hist: dict = {}
     for p in todos:
@@ -482,7 +465,7 @@ def mostrar():
         "📈 Desempeño Actual",
         "🏆 Top Clientes",
         "📦 Top Productos",
-        "💳 Créditos Pendientes",
+        "💰 Flujo de Caja",
         "👤 CRM Clientes",
     ])
     with t1: _tab_desempeno(todos, cli_map, periodos, campo, metric)

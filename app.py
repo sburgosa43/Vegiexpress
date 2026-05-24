@@ -29,6 +29,7 @@ MENU = [
     "🚚 Envíos y Facturación Semana",
     "📊 Dashboard",
     "🧾 Facturación Mensual",
+    "💰 Flujo de Caja",
     "📦 Pedidos a Proveedores",
     "🔧 Mantenimiento",
     "🧮 Cotizador",
@@ -61,6 +62,10 @@ with st.sidebar:
 if pagina.startswith("🏠"):
     import modulo_inicio
     modulo_inicio.mostrar()
+
+elif pagina.startswith("💰"):
+    import modulo_flujo_caja
+    modulo_flujo_caja.mostrar()
 
 elif pagina == "📦 Pedidos a Proveedores":
     import modulo_proveedores

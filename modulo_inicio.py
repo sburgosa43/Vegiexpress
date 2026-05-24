@@ -33,6 +33,8 @@ MODULOS = {
         ("🔧", "Mantenimiento", "Corrección de datos y migraciones", "🔧 Mantenimiento"),
     ],
     "📈 Análisis": [
+        ("💰", "Flujo de Caja", "Liquidez semanal y proyecciones", "💰 Flujo de Caja"),
+
         ("📊", "Dashboard",           "KPIs y análisis de negocio",     "📊 Dashboard"),
         ("🧮", "Cotizador",           "Calcular precios y márgenes",    "🧮 Cotizador"),
     ],
