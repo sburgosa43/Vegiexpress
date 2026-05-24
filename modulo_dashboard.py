@@ -471,5 +471,5 @@ def mostrar():
     with t1: _tab_desempeno(todos, cli_map, periodos, campo, metric)
     with t2: _tab_top_clientes(todos, cli_map, periodos, campo, metric)
     with t3: _tab_top_productos(todos, cli_map, periodos, campo, metric)
-    with t4: _tab_creditos(todos, clientes)
+    with t4: _tab_creditos()
     with t5: _tab_crm(todos, clientes, sem_act, año_act)

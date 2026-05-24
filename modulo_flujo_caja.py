@@ -160,24 +160,84 @@ def mostrar():
 
     tabla = _construir_tabla(todos, clientes, ventana)
 
-    # ── Warnings semana actual ────────────────────────────────────────────────
-    pagos_esta_semana = []
+    # ── Tabla resumen semana actual ──────────────────────────────────────────
+    cli_zona_map = {c["nombre"].lower(): c["codigo_lugar"] for c in clientes}
+
+    # Recopilar pagos de esta semana con zona y lag
+    pagos_sem = {}   # {cli_nombre: (liquido, lag, zona)}
     for cli, semanas_pago in tabla.items():
         if (sem_act, año_act) in semanas_pago:
-            liq, es_proy = semanas_pago[(sem_act, año_act)]
-            reglas = _reglas(cli)
-            lag    = reglas["lag"]
-            sem_ent, año_ent = _add_weeks(sem_act, año_act, -lag)
-            pagos_esta_semana.append((cli, liq, sem_ent, año_ent, es_proy))
+            liq, _ = semanas_pago[(sem_act, año_act)]
+            reg     = _reglas(cli)
+            zona    = cli_zona_map.get(cli.lower(), "")
+            pagos_sem[cli] = (liq, reg["lag"], zona)
 
-    if pagos_esta_semana:
-        txt = "  ·  ".join(
-            f"**{c}** paga Sem {se} — Q{liq:,.0f}"
-            + ("~" if ep else "")
-            for c, liq, se, ae, ep in sorted(
-                pagos_esta_semana, key=lambda x: x[1], reverse=True)
-        )
-        st.warning(f"💸 **Esta semana (Sem {sem_act}):** {txt}")
+    if pagos_sem:
+        # Ordenar: Campo (L05/L06) primero, luego Hoteles (L01)
+        def _orden(cli):
+            z = pagos_sem[cli][2]
+            return (0 if z in ["L05","L06"] else 1, cli)
+
+        clis_ord = sorted(pagos_sem.keys(), key=_orden)
+
+        def fmtQ(v): return f"Q{v:,.0f}" if v > 0 else ""
+
+        def _sum_zona(filtro_lag, filtro_zona):
+            return sum(
+                v for cli, (v, lag, z) in pagos_sem.items()
+                if filtro_lag(lag) and filtro_zona(z)
+            )
+
+        # Totales rápidos para mostrar arriba
+        tot_campo   = sum(v for cli,(v,lag,z) in pagos_sem.items() if z in ["L05","L06"])
+        tot_hoteles = sum(v for cli,(v,lag,z) in pagos_sem.items() if z == "L01")
+        tot_gral    = tot_campo + tot_hoteles
+
+        # Mini resumen al inicio
+        mc, mh, mg = st.columns(3)
+        mc.metric("🌾 Total Campo",   f"Q{tot_campo:,.0f}")
+        mh.metric("🏨 Total Hoteles", f"Q{tot_hoteles:,.0f}")
+        mg.metric("💰 Total Semana",  f"Q{tot_gral:,.0f}")
+        st.divider()
+
+        # Construir tabla con Total Campo y Total Hoteles como columnas
+        cols_display = clis_ord + ["Total Campo", "Total Hoteles", "TOTAL"]
+
+        def build_row(filtro_lag_fn):
+            row = {}
+            t_campo = t_hotel = 0.0
+            for cli in clis_ord:
+                liq, lag, zona = pagos_sem[cli]
+                if filtro_lag_fn(lag):
+                    row[cli] = fmtQ(liq)
+                    if zona in ["L05","L06"]: t_campo += liq
+                    elif zona == "L01":       t_hotel += liq
+                else:
+                    row[cli] = ""
+            row["Total Campo"]   = fmtQ(t_campo)
+            row["Total Hoteles"] = fmtQ(t_hotel)
+            row["TOTAL"]         = fmtQ(t_campo + t_hotel)
+            return row
+
+        filas = {}
+        filas["Contado"] = build_row(lambda lag: lag == 0)
+        filas["Crédito"] = build_row(lambda lag: lag > 0)
+
+        # Fila TOTAL (suma de contado + crédito por columna)
+        fila_tot = {}
+        for cli in clis_ord:
+            liq, lag, zona = pagos_sem[cli]
+            fila_tot[cli] = fmtQ(liq)
+        fila_tot["Total Campo"]   = fmtQ(tot_campo)
+        fila_tot["Total Hoteles"] = fmtQ(tot_hoteles)
+        fila_tot["TOTAL"]         = fmtQ(tot_gral)
+        filas["TOTAL"] = fila_tot
+
+        df_sem = pd.DataFrame(filas, index=cols_display).T
+        df_sem.index.name = f"Semana {sem_act}/{año_act}"
+        st.markdown(f"#### 💸 Pagos esperados — Semana {sem_act}/{año_act}")
+        st.dataframe(df_sem, use_container_width=True)
+        st.divider()
 
     # ── Tabla ─────────────────────────────────────────────────────────────────
     col_labels = []
