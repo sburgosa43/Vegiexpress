@@ -27,10 +27,10 @@ MENU = [
     "🛒 Nuevo Pedido",
     "📋 Gestión Pedidos (Revisar y Editar)",
     "🚚 Envíos y Facturación Semana",
-    "📊 Dashboard",
     "🧾 Facturación Mensual",
-    "💰 Flujo de Caja",
     "📦 Pedidos a Proveedores",
+    "💰 Flujo de Caja",
+    "📊 Dashboard",
     "🔧 Mantenimiento",
     "🧮 Cotizador",
 ]

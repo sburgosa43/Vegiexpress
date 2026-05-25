@@ -18,25 +18,24 @@ COLORES_ZONA = {
 EXCLUIR = ["veggi", "chimalt", "wilson"]
 
 MODULOS = {
-    "⚡ Operación Diaria": [
-        ("🛒", "Nuevo Pedido",        "Ingresar pedidos de clientes",   "🛒 Nuevo Pedido"),
-        ("🚚", "Envíos Semana",       "Gestionar envíos de la semana",  "🚚 Envíos y Facturación Semana"),
-        ("📋", "Gestión Pedidos",     "Revisar y editar pedidos",       "📋 Gestión Pedidos (Revisar y Editar)"),
-        ("🧾", "Facturación",         "Resumen mensual por cliente",    "🧾 Facturación Mensual"),
+    "⚡ Operación": [
+        ("🛒", "Nuevo Pedido",    "Ingresar pedidos de clientes",    "🛒 Nuevo Pedido"),
+        ("📋", "Gestión Pedidos", "Revisar y editar pedidos",        "📋 Gestión Pedidos (Revisar y Editar)"),
+        ("🚚", "Envíos Semana",   "Gestionar envíos de la semana",   "🚚 Envíos y Facturación Semana"),
+        ("🧾", "Facturación",     "Resumen mensual por cliente",     "🧾 Facturación Mensual"),
     ],
     "📁 Catálogo": [
-        ("📦", "Productos",           "Gestionar catálogo y precios",   "📦 Productos (Nuevos y Mantenimiento)"),
-        ("👥", "Clientes",            "Gestionar cartera de clientes",  "👥 Clientes (Nuevos y Mantenimiento)"),
+        ("📦", "Productos",       "Gestionar catálogo y precios",    "📦 Productos (Nuevos y Mantenimiento)"),
+        ("👥", "Clientes",        "Gestionar cartera de clientes",   "👥 Clientes (Nuevos y Mantenimiento)"),
+    ],
+    "💰 Finanzas": [
+        ("📦", "Proveedores",     "Lista de compras semanal",        "📦 Pedidos a Proveedores"),
+        ("💰", "Flujo de Caja",   "Liquidez semanal y proyecciones", "💰 Flujo de Caja"),
+        ("📊", "Dashboard",       "KPIs y análisis de negocio",      "📊 Dashboard"),
     ],
     "🔧 Herramientas": [
-        ("📦", "Proveedores", "Lista de compras semanal", "📦 Pedidos a Proveedores"),
-        ("🔧", "Mantenimiento", "Corrección de datos y migraciones", "🔧 Mantenimiento"),
-    ],
-    "📈 Análisis": [
-        ("💰", "Flujo de Caja", "Liquidez semanal y proyecciones", "💰 Flujo de Caja"),
-
-        ("📊", "Dashboard",           "KPIs y análisis de negocio",     "📊 Dashboard"),
-        ("🧮", "Cotizador",           "Calcular precios y márgenes",    "🧮 Cotizador"),
+        ("🔧", "Mantenimiento",   "Corrección de datos y migraciones","🔧 Mantenimiento"),
+        ("🧮", "Cotizador",       "Calcular precios y márgenes",     "🧮 Cotizador"),
     ],
 }
 
