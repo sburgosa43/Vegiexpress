@@ -485,7 +485,7 @@ ZONAS_DASH = {
     "Río":             ["L01"],
     "Antigua + Chimal":["L03", "L04"],
 }
-COLORES_ZONA = {
+COLORES_ZONA_RUTAS = {
     "GT + Santiago":    "#2D7A2D",
     "Río":              "#8DC63F",
     "Antigua + Chimal": "#F5A623",
@@ -577,7 +577,7 @@ def _tab_evolucion(todos, clientes):
         y_vals = [zona_data[zona].get((s, a), 0) for s, a in semanas]
         fig.add_trace(go.Scatter(
             x=labels, y=y_vals, name=zona, mode="lines+markers",
-            line=dict(color=COLORES_ZONA.get(zona, "#888"), width=2),
+            line=dict(color=COLORES_ZONA_RUTAS.get(zona, "#888"), width=2),
             marker=dict(size=5),
         ))
 
