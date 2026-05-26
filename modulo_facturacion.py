@@ -210,6 +210,34 @@ def mostrar():
         todos    = leer_pedidos()
         cli_list = cargar_clientes()
 
+    # ── Alerta Rodrigo ────────────────────────────────────────────────────────
+    hoy      = date.today()
+    sem_act  = hoy.isocalendar()[1]
+    año_act  = hoy.year
+    # Rodrigo paga N+3, por lo tanto esta semana se factura N-3
+    from datetime import timedelta
+    d_ent    = date.fromisocalendar(año_act, sem_act, 1) - timedelta(weeks=3)
+    iso_ent  = d_ent.isocalendar()
+    sem_rod  = iso_ent[1]; año_rod = iso_ent[0]
+    rod_total = sum(
+        float(p["total"] or 0) for p in todos
+        if "rodrigo" in p["cliente"].lower()
+        and p["semana"] == sem_rod and p["año"] == año_rod
+        and p["status"] != "Cancelado"
+    )
+    if rod_total > 0:
+        st.info(
+            f"📅 **Rodrigo** — Esta semana (Sem {sem_act}) "
+            f"facturá los pedidos de la **Semana {sem_rod}/{año_rod}** · "
+            f"Total: Q{rod_total:,.2f}"
+        )
+    elif sem_rod > 0:
+        st.info(
+            f"📅 **Rodrigo** — Esta semana (Sem {sem_act}) "
+            f"corresponde facturar **Semana {sem_rod}/{año_rod}** "
+            f"(sin pedidos registrados en esa semana)"
+        )
+
     cli_map       = {c["nombre"]: c for c in cli_list}
     cli_map_lower = {c["nombre"].lower(): c for c in cli_list}
 

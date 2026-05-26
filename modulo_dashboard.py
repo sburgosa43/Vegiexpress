@@ -462,14 +462,411 @@ def mostrar():
     st.divider()
 
     t1, t2, t3, t4, t5 = st.tabs([
-        "📈 Desempeño Actual",
-        "🏆 Top Clientes",
-        "📦 Top Productos",
-        "💰 Flujo de Caja",
-        "👤 CRM Clientes",
+        "📈 Desempeño",
+        "📊 Evolución Semanal",
+        "🥧 Shares",
+        "📅 Comparativo",
+        "👤 CRM",
     ])
     with t1: _tab_desempeno(todos, cli_map, periodos, campo, metric)
-    with t2: _tab_top_clientes(todos, cli_map, periodos, campo, metric)
-    with t3: _tab_top_productos(todos, cli_map, periodos, campo, metric)
-    with t4: _tab_creditos()
+    with t2: _tab_evolucion(todos, clientes)
+    with t3: _tab_shares(todos, clientes)
+    with t4: _tab_comparativo(todos, clientes)
     with t5: _tab_crm(todos, clientes, sem_act, año_act)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NUEVAS TABS: EVOLUCIÓN SEMANAL | SHARES | COMPARATIVO ANUAL
+# ══════════════════════════════════════════════════════════════════════════════
+
+ZONAS_DASH = {
+    "Todas":           ["L01", "L03", "L04", "L05", "L06"],
+    "GT + Santiago":   ["L05", "L06"],
+    "Río":             ["L01"],
+    "Antigua + Chimal":["L03", "L04"],
+}
+COLORES_ZONA = {
+    "GT + Santiago":    "#2D7A2D",
+    "Río":              "#8DC63F",
+    "Antigua + Chimal": "#F5A623",
+}
+
+
+def _cli_zona_map(clientes):
+    return {c["nombre"].lower(): c["codigo_lugar"] for c in clientes}
+
+
+def _get_zona_nombre(cod):
+    for z, cs in ZONAS_DASH.items():
+        if z == "Todas": continue
+        if cod in cs: return z
+    return None
+
+
+def _filtrar_pedidos(todos, zona_sel, czmap):
+    codigos = ZONAS_DASH.get(zona_sel, [])
+    return [
+        p for p in todos
+        if not _excluido(p["cliente"])
+        and p["status"] != "Cancelado"
+        and czmap.get(p["cliente"].lower(), "") in codigos
+        and float(p["total"] or 0) > 0
+    ]
+
+
+def _val(p, var):
+    return float(p["total"] or 0) if var == "Ventas" else float(p["margen_q"] or 0)
+
+
+def _quarter_num(mes):
+    return (mes - 1) // 3 + 1
+
+
+def _quarter_label(q, año):
+    return f"Q{q}-{str(año)[2:]}"
+
+
+def _top10_resto(items_dict, n=10):
+    """Retorna {nombre: valor} con top N + 'Otros'."""
+    sorted_items = sorted(items_dict.items(), key=lambda x: x[1], reverse=True)
+    top    = dict(sorted_items[:n])
+    otros  = sum(v for _, v in sorted_items[n:])
+    if otros > 0:
+        top["Otros"] = otros
+    return top
+
+
+# ── TAB EVOLUCIÓN SEMANAL ─────────────────────────────────────────────────────
+def _tab_evolucion(todos, clientes):
+    import plotly.graph_objects as go
+    from datetime import date, timedelta
+
+    czmap = _cli_zona_map(clientes)
+    hoy   = date.today()
+
+    c1, c2, c3 = st.columns(3)
+    var      = c1.selectbox("Variable", ["Ventas", "Margen Neto"],
+                             key="ev_var")
+    rutas_op = list(ZONAS_DASH.keys())[1:]   # excluir "Todas"
+    rutas_sel= c2.multiselect("Rutas", rutas_op,
+                               default=rutas_op, key="ev_rutas")
+    semanas_n= c3.slider("Últimas N semanas", 8, 52, 26, key="ev_sem")
+
+    # Construir series por zona y semana
+    zona_data = {z: {} for z in rutas_op}
+    for p in todos:
+        if _excluido(p["cliente"]) or p["status"] == "Cancelado": continue
+        cod  = czmap.get(p["cliente"].lower(), "")
+        zona = _get_zona_nombre(cod)
+        if not zona: continue
+        key  = (p["semana"], p["año"])
+        zona_data[zona][key] = zona_data[zona].get(key, 0) + _val(p, var)
+
+    # Últimas N semanas
+    sem_act = hoy.isocalendar()[1]; año_act = hoy.year
+    semanas = []
+    for i in range(semanas_n - 1, -1, -1):
+        d   = date.fromisocalendar(año_act, sem_act, 1) - timedelta(weeks=i)
+        iso = d.isocalendar()
+        semanas.append((iso[1], iso[0]))
+
+    labels = [f"Sem {s}\n{a}" for s, a in semanas]
+
+    fig = go.Figure()
+    for zona in rutas_sel:
+        y_vals = [zona_data[zona].get((s, a), 0) for s, a in semanas]
+        fig.add_trace(go.Scatter(
+            x=labels, y=y_vals, name=zona, mode="lines+markers",
+            line=dict(color=COLORES_ZONA.get(zona, "#888"), width=2),
+            marker=dict(size=5),
+        ))
+
+    var_lbl = "Q" if var == "Ventas" else "Q Margen"
+    fig.update_layout(
+        title=f"Evolución Semanal — {var}",
+        xaxis_title="Semana", yaxis_title=var_lbl,
+        hovermode="x unified", height=420,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ── TAB SHARES ────────────────────────────────────────────────────────────────
+def _tab_shares(todos, clientes):
+    import plotly.express as px
+    import plotly.graph_objects as go
+    from datetime import date
+
+    czmap = _cli_zona_map(clientes)
+    hoy   = date.today()
+    sem_act = hoy.isocalendar()[1]; año_act = hoy.year
+    q_act   = _quarter_num(hoy.month)
+
+    c1, c2, c3, c4 = st.columns(4)
+    var      = c1.selectbox("Variable", ["Ventas", "Margen Neto"], key="sh_var")
+    zona_sel = c2.selectbox("Zona", list(ZONAS_DASH.keys()), key="sh_zona")
+    dim      = c3.selectbox("Ver por", ["Clientes", "Productos"], key="sh_dim")
+    periodo  = c4.selectbox("Período",
+                             ["YTD", "Trimestre Actual", "Último Mes"],
+                             key="sh_per")
+
+    # Filtrar por período
+    def en_periodo(p):
+        if not p["fecha"]: return False
+        f = p["fecha"]
+        if periodo == "YTD":
+            return f.year == año_act
+        if periodo == "Trimestre Actual":
+            return f.year == año_act and _quarter_num(f.month) == q_act
+        if periodo == "Último Mes":
+            return f.year == año_act and f.month == hoy.month
+        return False
+
+    pedidos = [p for p in _filtrar_pedidos(todos, zona_sel, czmap)
+               if en_periodo(p)]
+
+    # Agregación
+    agg = {}
+    for p in pedidos:
+        key = p["cliente"] if dim == "Clientes" else p["producto"]
+        agg[key] = agg.get(key, 0) + _val(p, var)
+
+    top = _top10_resto(agg)
+
+    # ── Pie chart ─────────────────────────────────────────────────────────────
+    if top:
+        col_pie, col_tabla = st.columns([1.4, 1])
+        with col_pie:
+            fig_pie = px.pie(
+                values=list(top.values()),
+                names=list(top.keys()),
+                title=f"Share de {dim} — {periodo} · {zona_sel}",
+                hole=0.35,
+            )
+            fig_pie.update_traces(textposition="inside", textinfo="percent+label")
+            fig_pie.update_layout(height=380, showlegend=True)
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        # ── Tabla crecimiento vs año anterior ─────────────────────────────────
+        with col_tabla:
+            st.markdown(f"**Variación vs año anterior ({dim})**")
+
+            # Mismo período año anterior
+            def en_periodo_ant(p):
+                if not p["fecha"]: return False
+                f = p["fecha"]
+                if periodo == "YTD":
+                    return f.year == año_act - 1
+                if periodo == "Trimestre Actual":
+                    return f.year == año_act - 1 and _quarter_num(f.month) == q_act
+                if periodo == "Último Mes":
+                    return f.year == año_act - 1 and f.month == hoy.month
+                return False
+
+            ped_ant = [p for p in _filtrar_pedidos(todos, zona_sel, czmap)
+                       if en_periodo_ant(p)]
+            agg_ant = {}
+            for p in ped_ant:
+                key = p["cliente"] if dim == "Clientes" else p["producto"]
+                agg_ant[key] = agg_ant.get(key, 0) + _val(p, var)
+
+            rows_tabla = []
+            for nombre in list(top.keys())[:10]:
+                act = agg.get(nombre, 0)
+                ant = agg_ant.get(nombre, 0)
+                if ant > 0:
+                    var_pct = (act - ant) / ant * 100
+                    icono   = "🟢" if var_pct >= 0 else "🔴"
+                    var_txt = f"{icono} {var_pct:+.1f}%"
+                else:
+                    var_txt = "✨ Nuevo"
+                rows_tabla.append({
+                    dim[:-1]:  nombre[:22],
+                    "Actual":  f"Q{act:,.0f}",
+                    "Ant.":    f"Q{ant:,.0f}" if ant else "—",
+                    "Var.":    var_txt,
+                })
+            if rows_tabla:
+                import pandas as pd
+                st.dataframe(pd.DataFrame(rows_tabla), hide_index=True,
+                             use_container_width=True)
+    else:
+        st.info("Sin datos para el período y zona seleccionados.")
+
+
+# ── TAB COMPARATIVO ANUAL ─────────────────────────────────────────────────────
+def _tab_comparativo(todos, clientes):
+    import plotly.graph_objects as go
+    import plotly.express as px
+    from datetime import date
+    import pandas as pd
+
+    czmap   = _cli_zona_map(clientes)
+    hoy     = date.today()
+    año_act = hoy.year
+    sem_act = hoy.isocalendar()[1]
+    mes_act = hoy.month
+    q_act   = _quarter_num(mes_act)
+
+    c1, c2, c3 = st.columns(3)
+    var      = c1.selectbox("Variable", ["Ventas", "Margen Neto"], key="cp_var")
+    zona_sel = c2.selectbox("Zona", list(ZONAS_DASH.keys()), key="cp_zona")
+    dim      = c3.selectbox("Ver por", ["Clientes", "Productos"], key="cp_dim")
+
+    pedidos = _filtrar_pedidos(todos, zona_sel, czmap)
+
+    st.divider()
+
+    # ── Gráfico 1: Años — YTD vs PYTD vs PY ──────────────────────────────────
+    st.markdown("#### 📅 Comparativo por Año")
+
+    def ytd_filter(p, año):
+        if not p["fecha"]: return False
+        f = p["fecha"]
+        return f.year == año and (
+            f < hoy.replace(year=año) if año < año_act else f <= hoy)
+
+    def full_year(p, año):
+        return p["fecha"] and p["fecha"].year == año
+
+    # Agregar por nombre para top10
+    def agg_pedidos(ped_list):
+        agg = {}
+        for p in ped_list:
+            key = p["cliente"] if dim == "Clientes" else p["producto"]
+            agg[key] = agg.get(key, 0) + _val(p, var)
+        return agg
+
+    ytd_data  = agg_pedidos([p for p in pedidos if ytd_filter(p, año_act)])
+    pytd_data = agg_pedidos([p for p in pedidos if ytd_filter(p, año_act-1)])
+    py_data   = agg_pedidos([p for p in pedidos if full_year(p, año_act-1)])
+
+    top_names = list(_top10_resto(ytd_data).keys())
+
+    fig_años = go.Figure()
+    for lbl, data, color in [
+        (f"YTD {año_act}",   ytd_data,  "#2D7A2D"),
+        (f"PYTD {año_act-1}",pytd_data, "#8DC63F"),
+        (f"PY {año_act-1}",  py_data,   "#CCCCCC"),
+    ]:
+        fig_años.add_trace(go.Bar(
+            name=lbl,
+            x=top_names,
+            y=[data.get(n, 0) for n in top_names],
+            marker_color=color,
+        ))
+    fig_años.update_layout(
+        barmode="group", height=380,
+        title=f"YTD vs PYTD vs Año Anterior — {dim}",
+        xaxis_tickangle=-30,
+    )
+    st.plotly_chart(fig_años, use_container_width=True)
+
+    st.divider()
+
+    # ── Gráfico 2: Últimos 5 trimestres (apilado por cliente/producto) ────────
+    st.markdown("#### 📊 Últimos 5 Trimestres")
+
+    def _5_quarters():
+        qs = []
+        q, a = q_act, año_act
+        for _ in range(5):
+            qs.append((q, a))
+            q -= 1
+            if q < 1: q = 4; a -= 1
+        return list(reversed(qs))
+
+    quarters = _5_quarters()
+    q_labels = [_quarter_label(q, a) for q, a in quarters]
+
+    def agg_quarter(p):
+        if not p["fecha"]: return None
+        return (_quarter_num(p["fecha"].month), p["fecha"].year)
+
+    # Agregar por (nombre, quarter)
+    q_data = {}  # {nombre: {qlabel: valor}}
+    for p in pedidos:
+        qk = agg_quarter(p)
+        if not qk or qk not in quarters: continue
+        ql  = _quarter_label(*qk)
+        key = p["cliente"] if dim == "Clientes" else p["producto"]
+        if key not in q_data: q_data[key] = {}
+        q_data[key][ql] = q_data[key].get(ql, 0) + _val(p, var)
+
+    # Top 10 por total
+    totales = {k: sum(v.values()) for k, v in q_data.items()}
+    top_q   = list(_top10_resto(totales, 9).keys())
+    # Agregar "Otros"
+    otros_q = {}
+    for ql in q_labels:
+        otros_q[ql] = sum(v.get(ql, 0) for k, v in q_data.items() if k not in top_q[:-1])
+    q_data["Otros"] = otros_q
+
+    fig_q = go.Figure()
+    colores_q = px.colors.qualitative.Set2
+    for i, nombre in enumerate(top_q):
+        if nombre not in q_data: continue
+        fig_q.add_trace(go.Bar(
+            name=nombre[:20],
+            x=q_labels,
+            y=[q_data[nombre].get(ql, 0) for ql in q_labels],
+            marker_color=colores_q[i % len(colores_q)],
+        ))
+    fig_q.update_layout(
+        barmode="stack", height=400,
+        title=f"Últimos 5 Trimestres — {dim} · {zona_sel}",
+    )
+    st.plotly_chart(fig_q, use_container_width=True)
+
+    st.divider()
+
+    # ── Gráfico 3: Últimos 12 meses (apilado) ────────────────────────────────
+    st.markdown("#### 📆 Últimos 12 Meses")
+
+    from datetime import date as dt_
+    def _12_months():
+        meses = []
+        m, a = mes_act, año_act
+        for _ in range(12):
+            meses.append((m, a))
+            m -= 1
+            if m < 1: m = 12; a -= 1
+        return list(reversed(meses))
+
+    meses12 = _12_months()
+    MESES_N = ["","Ene","Feb","Mar","Abr","May","Jun",
+               "Jul","Ago","Sep","Oct","Nov","Dic"]
+    m_labels = [f"{MESES_N[m]}-{str(a)[2:]}" for m, a in meses12]
+
+    # Agregar por (nombre, mes)
+    m_data = {}
+    for p in pedidos:
+        if not p["fecha"]: continue
+        mk  = (p["fecha"].month, p["fecha"].year)
+        if mk not in meses12: continue
+        ml  = f"{MESES_N[mk[0]]}-{str(mk[1])[2:]}"
+        key = p["cliente"] if dim == "Clientes" else p["producto"]
+        if key not in m_data: m_data[key] = {}
+        m_data[key][ml] = m_data[key].get(ml, 0) + _val(p, var)
+
+    totales_m = {k: sum(v.values()) for k, v in m_data.items()}
+    top_m     = list(_top10_resto(totales_m, 9).keys())
+    otros_m   = {ml: sum(v.get(ml, 0) for k, v in m_data.items()
+                         if k not in top_m[:-1])
+                 for ml in m_labels}
+    m_data["Otros"] = otros_m
+
+    fig_m = go.Figure()
+    for i, nombre in enumerate(top_m):
+        if nombre not in m_data: continue
+        fig_m.add_trace(go.Bar(
+            name=nombre[:20],
+            x=m_labels,
+            y=[m_data[nombre].get(ml, 0) for ml in m_labels],
+            marker_color=colores_q[i % len(colores_q)],
+        ))
+    fig_m.update_layout(
+        barmode="stack", height=400,
+        title=f"Últimos 12 Meses — {dim} · {zona_sel}",
+    )
+    st.plotly_chart(fig_m, use_container_width=True)
