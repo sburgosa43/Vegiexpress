@@ -62,7 +62,7 @@ def mostrar():
         cargar = st.button("🔍 Cargar semana", type="primary",
                            use_container_width=True)
 
-    base_key  = f"prov_base_{semana}_{año}"
+    base_key  = f"prov_base_v3_{semana}_{año}"
     reset_key = f"prov_reset_{semana}_{año}"
 
     if cargar:
@@ -159,15 +159,15 @@ def mostrar():
             base_dfs[prov] = pd.DataFrame(rows)
 
         st.session_state[base_key]                        = base_dfs
-        st.session_state[f"prov_areas_{semana}_{año}"]   = todas_areas
-        st.session_state[f"prov_resumen_{semana}_{año}"] = resumen_tp
-        st.session_state[f"prov_alerta_{semana}_{año}"]  = sin_detalle
+        st.session_state[f"prov_areas_v3_{semana}_{año}"]   = todas_areas
+        st.session_state[f"prov_resumen_v3_{semana}_{año}"] = resumen_tp
+        st.session_state[f"prov_alerta_v3_{semana}_{año}"]  = sin_detalle
 
     # ── Recuperar del estado ──────────────────────────────────────────────────
     base_dfs    = st.session_state[base_key]
-    todas_areas = st.session_state.get(f"prov_areas_{semana}_{año}", [])
-    resumen_tp  = st.session_state.get(f"prov_resumen_{semana}_{año}", {})
-    sin_detalle = st.session_state.get(f"prov_alerta_{semana}_{año}", [])
+    todas_areas = st.session_state.get(f"prov_areas_v3_{semana}_{año}", [])
+    resumen_tp  = st.session_state.get(f"prov_resumen_v3_{semana}_{año}", {})
+    sin_detalle = st.session_state.get(f"prov_alerta_v3_{semana}_{año}", [])
     reset_n     = st.session_state.get(reset_key, 0)
     provs       = list(base_dfs.keys())
 
@@ -253,18 +253,18 @@ def mostrar():
                     f"font-size:.9rem;margin:10px 0 4px 0'>📦 {prov}</div>",
                     unsafe_allow_html=True)
 
-                # Columnas visibles: areas + Total + A Comprar
-                vis_cols = ["Producto","Unidad"] + \
-                           [a for a in todas_areas if a in base_df.columns] + \
-                           ["Total","A Comprar"]
+                # Columnas visibles: areas + Total/Pedido + A Comprar
+                total_col = "Total" if "Total" in base_df.columns else "Pedido"
+                vis_cols  = ["Producto","Unidad"] +                             [a for a in todas_areas if a in base_df.columns] +                             [c2 for c2 in [total_col,"A Comprar"]
+                             if c2 in base_df.columns]
 
                 col_cfg = {
                     "Producto":  st.column_config.TextColumn(
                         "Producto",  disabled=True, width="large"),
                     "Unidad":    st.column_config.TextColumn(
                         "Unidad",   disabled=True, width="small"),
-                    "Total":     st.column_config.NumberColumn(
-                        "Total",    disabled=True, width="small", format="%.1f"),
+                    total_col:   st.column_config.NumberColumn(
+                        total_col,  disabled=True, width="small", format="%.1f"),
                     "A Comprar": st.column_config.TextColumn(
                         "A Comprar", width="small",
                         help="Cantidad, P=Pendiente, vacío=no imprimir"),
