@@ -166,7 +166,7 @@ elif paso == 2:
             if t not in tipos: tipos[t] = []
             tipos[t].append(p)
 
-        n_en_carrito = sum(1 for v in carrito.values() if v > 0)
+        n_en_carrito = sum(1 for v in carrito.values() if v[0] > 0)
         if n_en_carrito:
             st.success(f"🛒 {n_en_carrito} producto(s) en tu pedido")
 
@@ -193,8 +193,8 @@ elif paso == 2:
         st.session_state["carrito"] = carrito
 
         st.divider()
-        n_items = sum(1 for v in carrito.values())
-        total   = sum(v[0]*v[2] for v in carrito.values())
+        n_items = sum(1 for v in carrito.values() if isinstance(v, tuple) and v[0] > 0)
+        total   = sum(v[0]*v[2] for v in carrito.values() if isinstance(v, tuple))
 
         if n_items:
             st.markdown(
