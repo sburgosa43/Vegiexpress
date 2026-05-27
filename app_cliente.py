@@ -67,6 +67,7 @@ def _cargar_catalogo(es_antigua: bool):
             "nombre":   str(row[0]).strip(),
             "unidad":   str(row[1] or "").strip(),
             "tipo":     str(row[16] if es_antigua else row[18] or "").strip(),
+            "segmento": str(row[2] or "").strip(),
             "precio":   float(row[col_precio] or 0),
         })
     wb.close()
@@ -162,7 +163,7 @@ elif paso == 2:
         # Agrupar por tipo dinámicamente
         tipos_dict = {}
         for p in catalogo:
-            t = p["tipo"].strip() if p["tipo"] else "Otros"
+            t = p["segmento"].strip() if p.get("segmento") else "Otros"
             if t not in tipos_dict: tipos_dict[t] = []
             tipos_dict[t].append(p)
         categorias = sorted(tipos_dict.keys())

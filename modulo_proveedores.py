@@ -8,10 +8,24 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 from excel_helper import leer_pedidos
-from data_helper  import cargar_productos
+from data_helper  import cargar_productos, cargar_clientes
 from pdf_helper   import generar_lista_compras_proveedor
 
 EXCLUIR_CLIENTES = ["wilson"]
+
+AREAS_PROV = [
+    ("Ant-Chim", lambda cli, z: z in ["L03","L04"] and "chimalt" not in cli.lower()),
+    ("Chimalt",  lambda cli, z: "chimalt" in cli.lower()),
+    ("GT-Stgo",  lambda cli, z: z in ["L05","L06"]),
+    ("Río",      lambda cli, z: z == "L01"),
+]
+
+
+def _get_area(cliente: str, zona: str) -> str:
+    for nombre, filtro in AREAS_PROV:
+        if filtro(cliente, zona):
+            return nombre
+    return "Otro"
 
 
 def _excluido(n):
@@ -69,9 +83,14 @@ def mostrar():
             catalog = cargar_productos(False)   # Solo catálogo GENERAL
 
         prod_map = {p["nombre"].lower(): {
-            "proveedor": p.get("proveedor", "").strip(),
-            "costo":     float(p.get("costo", 0)),
+            "proveedor":    p.get("proveedor", "").strip(),
+            "costo":        float(p.get("costo", 0)),
+            "tipo_producto": p.get("tipo_producto", ""),
         } for p in catalog}
+
+        # Mapa cliente → zona
+        cli_list = cargar_clientes()
+        cli_zona = {c["nombre"].lower(): c["codigo_lugar"] for c in cli_list}
 
         pedidos_sem = [p for p in todos
                        if p["semana"] == semana and p["año"] == año
@@ -85,6 +104,8 @@ def mostrar():
 
         por_prov    = {}
         sin_detalle = []
+        # Para tab Proceso
+        proceso_data = {}
 
         for p in pedidos_sem:
             info   = prod_map.get(p["producto"].lower(), {})
@@ -93,6 +114,9 @@ def mostrar():
             cant   = float(p["cantidad"])
             unidad = p.get("unidad", "")
             costo  = info.get("costo", 0.0)
+            tipo_p = info.get("tipo_producto", "")
+            zona_c = cli_zona.get(p["cliente"].lower(), "")
+            area   = _get_area(p["cliente"], zona_c)
 
             if not prov:
                 prov = "⚠️ SIN PROVEEDOR"
@@ -102,24 +126,58 @@ def mostrar():
             if prov not in por_prov:
                 por_prov[prov] = {}
             key = (prod, unidad, costo)
-            por_prov[prov][key] = por_prov[prov].get(key, 0) + cant
+            if key not in por_prov[prov]:
+                por_prov[prov][key] = {"total": 0.0}
+            por_prov[prov][key]["total"] += cant
+            por_prov[prov][key][area] = por_prov[prov][key].get(area, 0) + cant
 
-        # DataFrames FIJOS — A Comprar siempre vacío, nunca cambia
+            # Acumular para Proceso
+            if tipo_p.lower() == "proceso":
+                pkey = (prod, unidad)
+                if pkey not in proceso_data:
+                    proceso_data[pkey] = {"total": 0.0}
+                proceso_data[pkey]["total"] += cant
+                proceso_data[pkey][area] = proceso_data[pkey].get(area, 0) + cant
+
+        # Detectar áreas con datos
+        todas_areas = []
+        for a_name, _ in AREAS_PROV:
+            for prov_d in por_prov.values():
+                for kd in prov_d.values():
+                    if kd.get(a_name, 0) > 0:
+                        if a_name not in todas_areas:
+                            todas_areas.append(a_name)
+                        break
+
+        # DataFrames FIJOS con columnas de área
         base_dfs = {}
         for prov in sorted(por_prov.keys()):
-            rows = [{"Producto":  k[0], "Unidad": k[1],
-                     "Pedido":    round(v, 1), "A Comprar": "",
-                     "_costo":    k[2]}
-                    for k, v in sorted(por_prov[prov].items())]
+            rows = []
+            for k, v in sorted(por_prov[prov].items()):
+                row = {
+                    "Producto":  k[0],
+                    "Unidad":    k[1],
+                }
+                for area_n in todas_areas:
+                    val_a = v.get(area_n, 0)
+                    row[area_n] = round(val_a, 2) if val_a else 0
+                row["Pedido"]    = round(v["total"], 1)
+                row["A Comprar"] = ""
+                row["_costo"]    = k[2]
+                rows.append(row)
             base_dfs[prov] = pd.DataFrame(rows)
 
         st.session_state[base_key]                       = base_dfs
         st.session_state[f"prov_alerta_{semana}_{año}"] = sin_detalle
+        st.session_state[f"prov_areas_{semana}_{año}"]  = todas_areas
+        st.session_state[f"prov_proceso_{semana}_{año}"]= proceso_data
 
-    base_dfs    = st.session_state[base_key]
-    sin_detalle = st.session_state.get(f"prov_alerta_{semana}_{año}", [])
-    reset_n     = st.session_state.get(reset_key, 0)
-    provs       = list(base_dfs.keys())
+    base_dfs     = st.session_state[base_key]
+    sin_detalle  = st.session_state.get(f"prov_alerta_{semana}_{año}", [])
+    todas_areas  = st.session_state.get(f"prov_areas_{semana}_{año}", [])
+    proceso_data = st.session_state.get(f"prov_proceso_{semana}_{año}", {})
+    reset_n      = st.session_state.get(reset_key, 0)
+    provs        = list(base_dfs.keys())
 
     # ── Alerta sin proveedor ──────────────────────────────────────────────────
     if sin_detalle:
@@ -273,3 +331,30 @@ def mostrar():
                            key=f"dl_dis_{prov}_{semana}_{año}",
                            help="Ingresá cantidades primero",
                            use_container_width=True)
+
+
+    # ══ TAB PROCESO (por área) ════════════════════════════════════════════════
+    st.divider()
+    with st.expander("⚙️ **Resumen Proceso (por área)**", expanded=False):
+        if proceso_data:
+            proc_rows = []
+            proc_areas = []
+            for a_n, _ in AREAS_PROV:
+                for pk_data in proceso_data.values():
+                    if pk_data.get(a_n, 0) > 0:
+                        if a_n not in proc_areas: proc_areas.append(a_n)
+                        break
+            for (prod, unidad), vals in sorted(proceso_data.items()):
+                row = {"Producto": prod, "Unidad": unidad}
+                for a_n in proc_areas:
+                    row[a_n] = round(vals.get(a_n, 0), 2) if vals.get(a_n, 0) else 0
+                row["Total"] = round(vals["total"], 1)
+                proc_rows.append(row)
+            if proc_rows:
+                st.markdown(f"**Productos Tipo Proceso — Semana {semana}/{año}**")
+                df_proc = pd.DataFrame(proc_rows)
+                st.dataframe(df_proc, hide_index=True, use_container_width=True)
+            else:
+                st.info("Sin productos tipo Proceso en esta semana.")
+        else:
+            st.info("Sin datos de Proceso. Verificá Tipo Producto en el catálogo.")
