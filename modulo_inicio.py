@@ -19,6 +19,8 @@ EXCLUIR = ["veggi", "chimalt", "wilson"]
 
 MODULOS = {
     "⚡ Operación": [
+        ("📥", "Pedidos Entrantes", "Pedidos recibidos de clientes", "📥 Pedidos Entrantes"),
+
         ("🛒", "Nuevo Pedido",    "Ingresar pedidos de clientes",    "🛒 Nuevo Pedido"),
         ("📋", "Gestión Pedidos", "Revisar y editar pedidos",        "📋 Gestión Pedidos (Revisar y Editar)"),
         ("🚚", "Envíos Semana",   "Gestionar envíos de la semana",   "🚚 Envíos y Facturación Semana"),

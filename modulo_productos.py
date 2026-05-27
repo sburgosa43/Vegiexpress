@@ -110,6 +110,7 @@ def _form_producto(prefill: dict = None, key_prefix: str = "new",
 
 
 def _mostrar_lista(es_antigua: bool):
+    import pandas as pd
     lbl = "Antigua" if es_antigua else "General"
     productos = leer_productos_con_fila(es_antigua=es_antigua)
 
@@ -121,6 +122,56 @@ def _mostrar_lista(es_antigua: bool):
                  or busqueda.lower() in p["segmento"].lower()] \
                 if busqueda else productos
 
+    # ── Tabla con checkbox Para Cotizar ──────────────────────────────────────
+    st.markdown(f"**{len(filtrados)} productos** · "
+                f"Activá el ✅ para que aparezca en el catálogo de clientes:")
+
+    df = pd.DataFrame([{
+        "row_num":       p["row_num"],
+        "Producto":      p["nombre"],
+        "Unidad":        p["unidad"],
+        "Tipo":          p["tipo_producto"],
+        "Costo":         p["costo"],
+        "Precio":        p["precio"],
+        "En Catálogo":   p["para_cotizar"].strip().lower() in ["si","sí","yes","1","true"],
+    } for p in filtrados])
+
+    reset_key = f"reset_lista_{lbl}"
+    edited = st.data_editor(
+        df.drop(columns=["row_num"]),
+        column_config={
+            "Producto":    st.column_config.TextColumn("Producto",    disabled=True, width="large"),
+            "Unidad":      st.column_config.TextColumn("Unidad",      disabled=True, width="small"),
+            "Tipo":        st.column_config.TextColumn("Tipo",        disabled=True, width="medium"),
+            "Costo":       st.column_config.NumberColumn("Costo",     disabled=True, format="Q%.2f", width="small"),
+            "Precio":      st.column_config.NumberColumn("Precio",    disabled=True, format="Q%.2f", width="small"),
+            "En Catálogo": st.column_config.CheckboxColumn("En Catálogo ✅", width="small"),
+        },
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        key=f"ed_lista_{lbl}_{st.session_state.get(reset_key, 0)}",
+    )
+
+    if st.button(f"💾 Guardar cambios de catálogo ({lbl})",
+                 type="primary", key=f"save_cotizar_{lbl}"):
+        cambios = {}
+        for i, (_, row_ed) in enumerate(edited.iterrows()):
+            if i < len(df):
+                rn  = int(df.iloc[i]["row_num"])
+                val = bool(row_ed["En Catálogo"])
+                if val != df.iloc[i]["En Catálogo"]:
+                    cambios[rn] = val
+        if cambios:
+            with st.spinner(f"Guardando {len(cambios)} cambio(s)..."):
+                guardar_para_cotizar_batch(cambios, es_antigua)
+            st.session_state[reset_key] = st.session_state.get(reset_key, 0) + 1
+            st.success(f"✅ {len(cambios)} producto(s) actualizados en catálogo.")
+            st.rerun()
+        else:
+            st.info("Sin cambios detectados.")
+
+    st.divider()
     st.markdown(f"**{len(filtrados)} productos**")
 
     # Mostrar en tabla compacta con acciones

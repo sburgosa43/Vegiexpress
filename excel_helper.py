@@ -741,9 +741,73 @@ def leer_productos_con_fila(es_antigua: bool = False) -> list[dict]:
             "tipo_producto": str(row[16] if es_antigua else row[18] or ""),
             "tipo_producto2": str(row[16] if es_antigua else row[20] or ""),
             "parent":        str(row[19] or row[0] or "") if not es_antigua else str(row[0] or ""),
-            "para_cotizar":  str(row[21] or "") if not es_antigua else "",
+            "para_cotizar":  str(row[21] or "") if not es_antigua else str(row[17] if len(row) > 17 else ""),
             "comentario":    str(row[22] or "") if not es_antigua else "",
             "pesos":         float(row[13] or 0) if es_antigua else float(row[15] or 0),
         })
     wb.close()
     return productos
+
+
+# ── PARA COTIZAR ──────────────────────────────────────────────────────────────
+_PARA_COTIZAR_COL = {
+    False: 22,   # Listado Productos: columna V (1-indexed = 22)
+    True:  18,   # Listado Antigua: columna R (1-indexed = 18) — se agrega si no existe
+}
+
+
+def guardar_para_cotizar_batch(cambios: dict, es_antigua: bool):
+    """
+    Guarda el campo Para Cotizar para múltiples productos.
+    cambios: {row_num: valor_bool_o_str}
+    """
+    col = _PARA_COTIZAR_COL[es_antigua]
+    cfg = _PROD_CFG[es_antigua]
+    wb  = cargar_para_escritura(FILE_ID)
+    ws  = wb[cfg["hoja"]]
+    for row_num, val in cambios.items():
+        cell_val = "Si" if val else ""
+        ws.cell(row=row_num, column=col).value = cell_val
+    guardar_en_drive(wb, FILE_ID)
+    wb.close()
+
+
+def agregar_col_para_cotizar_antigua():
+    """
+    Agrega la columna 'Para Cotizar' a Listado Productos Antigua si no existe.
+    La agrega como columna 18 (R) con encabezado en fila 1.
+    Retorna: (True, n_filas) o (False, mensaje)
+    """
+    wb  = cargar_para_escritura(FILE_ID)
+    ws  = wb["Listado Productos Antigua"]
+    # Verificar si ya existe
+    if ws.cell(row=1, column=18).value == "Para Cotizar":
+        wb.close()
+        return False, "La columna ya existe"
+    # Agregar encabezado
+    ws.cell(row=1, column=18).value = "Para Cotizar"
+    # Inicializar filas de datos en vacío
+    n = 0
+    for row in ws.iter_rows(min_row=2):
+        if row[0].value:
+            ws.cell(row=row[0].row, column=18).value = ""
+            n += 1
+    guardar_en_drive(wb, FILE_ID)
+    wb.close()
+    return True, n
+
+
+def limpiar_para_cotizar(es_antigua: bool):
+    """Borra todos los valores Para Cotizar (para reiniciar)."""
+    col = _PARA_COTIZAR_COL[es_antigua]
+    cfg = _PROD_CFG[es_antigua]
+    wb  = cargar_para_escritura(FILE_ID)
+    ws  = wb[cfg["hoja"]]
+    n   = 0
+    for row in ws.iter_rows(min_row=2):
+        if row[0].value:
+            ws.cell(row=row[0].row, column=col).value = ""
+            n += 1
+    guardar_en_drive(wb, FILE_ID)
+    wb.close()
+    return n

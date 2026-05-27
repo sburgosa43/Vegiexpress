@@ -22,6 +22,7 @@ st.markdown("""
 # ── NAVEGACIÓN ────────────────────────────────────────────────────────────────
 MENU = [
     "🏠 Inicio",
+    "📥 Pedidos Entrantes",
     "📦 Productos (Nuevos y Mantenimiento)",
     "👥 Clientes (Nuevos y Mantenimiento)",
     "🛒 Nuevo Pedido",
@@ -59,7 +60,11 @@ with st.sidebar:
     st.caption("VeggiExpress · Más fresco, imposible.")
 
 # ── ROUTER ────────────────────────────────────────────────────────────────────
-if pagina.startswith("🏠"):
+if pagina.startswith("📥"):
+    import modulo_pedidos_entrantes
+    modulo_pedidos_entrantes.mostrar()
+
+elif pagina.startswith("🏠"):
     import modulo_inicio
     modulo_inicio.mostrar()
 

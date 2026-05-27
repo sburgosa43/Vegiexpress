@@ -6,7 +6,8 @@ modulo_mantenimiento.py — Herramientas de mantenimiento de datos
 import streamlit as st
 from datetime import date
 from excel_helper import (leer_pedidos, preview_correccion_masiva,
-                           aplicar_correccion_masiva, migrar_pedidos_a_valores)
+                           aplicar_correccion_masiva, migrar_pedidos_a_valores,
+                           agregar_col_para_cotizar_antigua, limpiar_para_cotizar)
 from data_helper import cargar_clientes, cargar_productos
 
 MESES_ES = {
@@ -223,14 +224,16 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    t1, t2, t3 = st.tabs([
+    t1, t2, t3, t4 = st.tabs([
         "🔧 Corrección Masiva de Precios / Costos",
         "⚙️ Migración de Datos",
         "📋 Estructura del Excel",
+        "🛒 Catálogo Cliente",
     ])
     with t1: _tab_correccion()
     with t2: _tab_migracion()
     with t3: _tab_estructura()
+    with t4: _tab_catalogo()
 
 
 # ── TAB 3: ESTRUCTURA DEL EXCEL ──────────────────────────────────────────────
@@ -311,3 +314,52 @@ def _tab_estructura():
 
         wb.close()
 
+
+
+def _tab_catalogo():
+    """Utilidades para el catálogo de la app del cliente."""
+    st.markdown("""
+    Herramientas para preparar el catálogo que ven los clientes en la app pública.
+    Antes de activar productos individualmente (desde 📦 Productos), preparar la base.
+    """)
+    st.divider()
+
+    st.markdown("#### 1️⃣ Preparar columna 'Para Cotizar' en Listado Antigua")
+    st.caption("Solo necesario si aún no existe esa columna en tu Excel.")
+    if st.button("➕ Agregar columna a Listado Antigua", key="add_col_ant"):
+        with st.spinner("Modificando Excel..."):
+            ok, res = agregar_col_para_cotizar_antigua()
+        if ok:
+            st.success(f"✅ Columna agregada — {res} filas preparadas.")
+        else:
+            st.info(f"ℹ️ {res}")
+
+    st.divider()
+
+    st.markdown("#### 2️⃣ Limpiar 'En Catálogo' para empezar desde cero")
+    st.caption("Borra todos los checkmarks actuales. Luego los llenás manualmente en 📦 Productos.")
+
+    confirm_key = "confirm_limpiar_cat"
+    which = st.radio("¿Cuál lista limpiar?",
+                     ["Listado General", "Listado Antigua", "Ambos"],
+                     key="which_limpiar", horizontal=True)
+
+    if not st.session_state.get(confirm_key):
+        if st.button("🗑 Limpiar 'En Catálogo'", type="secondary", key="btn_limpiar_cat"):
+            st.session_state[confirm_key] = True; st.rerun()
+    else:
+        st.warning(f"⚠️ ¿Confirmás limpiar '{which}'? No se puede deshacer.")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("✅ Sí, limpiar", type="primary", key="ok_limpiar_cat"):
+                with st.spinner("Limpiando..."):
+                    n = 0
+                    if which in ["Listado General", "Ambos"]:
+                        n += limpiar_para_cotizar(False)
+                    if which in ["Listado Antigua", "Ambos"]:
+                        n += limpiar_para_cotizar(True)
+                st.session_state.pop(confirm_key, None)
+                st.success(f"✅ {n} productos limpiados.")
+        with c2:
+            if st.button("❌ Cancelar", key="cancel_limpiar_cat"):
+                st.session_state.pop(confirm_key, None); st.rerun()
