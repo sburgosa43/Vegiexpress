@@ -545,53 +545,67 @@ def _tab_evolucion(todos, clientes):
     hoy   = date.today()
 
     c1, c2, c3 = st.columns(3)
-    var      = c1.selectbox("Variable", ["Ventas", "Margen Neto"],
-                             key="ev_var")
-    rutas_op = list(ZONAS_DASH.keys())[1:]   # excluir "Todas"
-    rutas_sel= c2.multiselect("Rutas", rutas_op,
-                               default=rutas_op, key="ev_rutas")
-    semanas_n= c3.slider("Últimas N semanas", 8, 52, 26, key="ev_sem")
+    var       = c1.selectbox("Variable", ["Ventas", "Margen Neto"], key="ev_var")
+    rutas_op  = list(ZONAS_DASH.keys())[1:]
+    rutas_sel = c2.multiselect("Rutas", rutas_op, default=rutas_op, key="ev_rutas")
+    semanas_n = c3.slider("Últimas N semanas", 8, 52, 26, key="ev_sem")
 
-    # Construir series por zona y semana
-    zona_data = {z: {} for z in rutas_op}
+    # Pre-generar lista ordenada de fechas (lunes de cada semana)
+    sem_act = hoy.isocalendar()[1]
+    año_act = hoy.year
+    lunes_act = date.fromisocalendar(año_act, sem_act, 1)
+    fechas = [lunes_act - timedelta(weeks=i) for i in range(semanas_n-1, -1, -1)]
+    fecha_a_idx = {f: i for i, f in enumerate(fechas)}
+
+    # Acumular valores en arrays indexados por posición
+    zona_vals = {z: [0.0]*len(fechas) for z in rutas_op}
     for p in todos:
         if _excluido(p["cliente"]) or p["status"] == "Cancelado": continue
+        try:
+            sem = int(float(p["semana"])); año = int(float(p["año"]))
+            if not (1 <= sem <= 53): continue
+            lunes_p = date.fromisocalendar(año, sem, 1)
+        except Exception: continue
+        if lunes_p not in fecha_a_idx: continue
         cod  = czmap.get(p["cliente"].lower(), "")
         zona = _get_zona_nombre(cod)
-        if not zona: continue
-        key  = (p["semana"], p["año"])
-        zona_data[zona][key] = zona_data[zona].get(key, 0) + _val(p, var)
+        if zona not in zona_vals: continue
+        val = float(p.get("total") or 0) if var == "Ventas"               else float(p.get("margen_q") or 0)
+        zona_vals[zona][fecha_a_idx[lunes_p]] += val
 
-    # Últimas N semanas
-    sem_act = hoy.isocalendar()[1]; año_act = hoy.year
-    semanas = []
-    for i in range(semanas_n - 1, -1, -1):
-        d   = date.fromisocalendar(año_act, sem_act, 1) - timedelta(weeks=i)
-        iso = d.isocalendar()
-        semanas.append((iso[1], iso[0]))
-
-    labels = [f"Sem {s}\n{a}" for s, a in semanas]
+    # Fechas en formato ISO para Plotly
+    x_iso = [f.isoformat() for f in fechas]
 
     fig = go.Figure()
     for zona in rutas_sel:
-        y_vals = [zona_data[zona].get((s, a), 0) for s, a in semanas]
+        vals = zona_vals.get(zona, [])
+        if not any(v > 0 for v in vals): continue
         fig.add_trace(go.Scatter(
-            x=labels, y=y_vals, name=zona, mode="lines+markers",
+            x=x_iso, y=vals, name=zona,
+            mode="lines+markers",
             line=dict(color=COLORES_ZONA_RUTAS.get(zona, "#888"), width=2),
-            marker=dict(size=5),
+            marker=dict(size=4),
         ))
 
-    var_lbl = "Q" if var == "Ventas" else "Q Margen"
+    if not fig.data:
+        st.info("Sin datos para el período y rutas seleccionadas.")
+        return
+
     fig.update_layout(
         title=f"Evolución Semanal — {var}",
-        xaxis_title="Semana", yaxis_title=var_lbl,
-        hovermode="x unified", height=420,
+        xaxis=dict(
+            title="", type="date",
+            dtick=7*24*3600*1000,       # 1 semana en ms
+            tickformat="%d-%b-%y",
+            tickangle=-40,
+        ),
+        yaxis_title="Q",
+        hovermode="x unified", height=430,
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
     st.plotly_chart(fig, use_container_width=True)
 
 
-# ── TAB SHARES ────────────────────────────────────────────────────────────────
 def _tab_shares(todos, clientes):
     import plotly.express as px
     import plotly.graph_objects as go

@@ -183,8 +183,19 @@ elif paso == 2:
                        f"Q{total_carrito:,.2f}")
 
         # ── Botones de categoría (simula pestañas) ────────────────────────────
-        ICONOS = {"Verduras":"🥬","Frutas":"🍎","Hierbas":"🌿",
-                  "Especias":"🧂","Flores":"🌸","Otros":"📦"}
+        # Orden fijo de segmentos; los que no estén en la lista van al final
+        ORDEN_SEG = ["Vegetales","Hierbas","Frutas","Congelados","Especias"]
+        ICONOS    = {
+            "Vegetales":  "🥕",
+            "Hierbas":    "🌿",
+            "Frutas":     "🍎",
+            "Congelados": "🧊",
+            "Especias":   "🧂",
+        }
+        categorias = sorted(
+            categorias,
+            key=lambda x: ORDEN_SEG.index(x) if x in ORDEN_SEG else len(ORDEN_SEG)
+        )
         cat_cols = st.columns(len(categorias))
         for col, cat in zip(cat_cols, categorias):
             icono = ICONOS.get(cat, "📦")
