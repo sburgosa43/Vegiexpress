@@ -144,14 +144,14 @@ if paso == 1:
             st.session_state["paso"]        = 2
             st.rerun()
 
-# ── PASO 2: Catálogo ──────────────────────────────────────────────────────────
+# ── PASO 2: Catálogo con navegación por categorías ───────────────────────────
 elif paso == 2:
     nombre_rest = st.session_state["restaurante"]
     antigua     = st.session_state["es_antigua"]
     carrito     = st.session_state["carrito"]
 
     st.markdown(f"### 🛒 Catálogo para **{nombre_rest}**")
-    if st.button("← Cambiar restaurante"):
+    if st.button("← Cambiar restaurante", key="btn_cambiar_rest"):
         st.session_state["paso"] = 1; st.rerun()
 
     catalogo = _cargar_catalogo(antigua)
@@ -159,55 +159,139 @@ elif paso == 2:
     if not catalogo:
         st.warning("No hay productos disponibles en el catálogo en este momento.")
     else:
-        # Agrupar por tipo
-        tipos = {}
+        # Agrupar por tipo dinámicamente
+        tipos_dict = {}
         for p in catalogo:
-            t = p["tipo"] or "Otros"
-            if t not in tipos: tipos[t] = []
-            tipos[t].append(p)
+            t = p["tipo"].strip() if p["tipo"] else "Otros"
+            if t not in tipos_dict: tipos_dict[t] = []
+            tipos_dict[t].append(p)
+        categorias = sorted(tipos_dict.keys())
 
-        n_en_carrito = sum(1 for v in carrito.values() if v[0] > 0)
+        # Inicializar categoría activa
+        if "cat_activa" not in st.session_state or            st.session_state["cat_activa"] not in categorias:
+            st.session_state["cat_activa"] = categorias[0]
+        cat_actual = st.session_state["cat_activa"]
+
+        # Resumen del carrito
+        n_en_carrito = sum(1 for v in carrito.values()
+                           if isinstance(v, tuple) and v[0] > 0)
+        total_carrito = sum(v[0]*v[2] for v in carrito.values()
+                            if isinstance(v, tuple))
         if n_en_carrito:
-            st.success(f"🛒 {n_en_carrito} producto(s) en tu pedido")
+            st.success(f"🛒 **{n_en_carrito} producto(s) en tu pedido** — "
+                       f"Q{total_carrito:,.2f}")
 
-        for tipo, prods in sorted(tipos.items()):
-            st.markdown(f"**{tipo}**")
-            for p in prods:
-                c1, c2, c3 = st.columns([4, 1.5, 1.5])
-                c1.markdown(f"{p['nombre']}  \n"
-                            f"<small style='color:#888'>{p['unidad']} · "
-                            f"Q{p['precio']:,.2f}</small>",
-                            unsafe_allow_html=True)
-                c2.markdown(f"<div style='padding-top:8px;font-size:.9rem;"
-                            f"font-weight:bold'>Q{p['precio']:,.2f}</div>",
-                            unsafe_allow_html=True)
-                key = f"cant_{p['nombre']}"
-                cant_actual = carrito[p["nombre"]][0] if p["nombre"] in carrito else 0
-                val = c3.number_input("", min_value=0, step=1,
-                                       value=int(cant_actual),
-                                       key=key, label_visibility="collapsed")
-                if val > 0:
-                    carrito[p["nombre"]] = (val, p["unidad"], p["precio"])
-                elif p["nombre"] in carrito:
-                    del carrito[p["nombre"]]
+        # ── Botones de categoría (simula pestañas) ────────────────────────────
+        ICONOS = {"Verduras":"🥬","Frutas":"🍎","Hierbas":"🌿",
+                  "Especias":"🧂","Flores":"🌸","Otros":"📦"}
+        cat_cols = st.columns(len(categorias))
+        for col, cat in zip(cat_cols, categorias):
+            icono = ICONOS.get(cat, "📦")
+            estilo = "primary" if cat == cat_actual else "secondary"
+            if col.button(f"{icono} {cat}", key=f"cat_{cat}",
+                          type=estilo, use_container_width=True):
+                st.session_state["cat_activa"] = cat; st.rerun()
+
+        st.divider()
+
+        # ── Productos de la categoría activa ─────────────────────────────────
+        prods_cat = tipos_dict[cat_actual]
+        st.markdown(f"**{ICONOS.get(cat_actual,'📦')} {cat_actual}** "
+                    f"— {len(prods_cat)} producto(s)")
+
+        for p in prods_cat:
+            c1, c2, c3 = st.columns([4, 1.5, 1.5])
+            c1.markdown(
+                f"**{p['nombre']}**  \n"
+                f"<small style='color:#888'>{p['unidad']} · "
+                f"Q{p['precio']:,.2f}</small>",
+                unsafe_allow_html=True)
+            c2.markdown(
+                f"<div style='padding-top:8px;font-size:.9rem;"
+                f"font-weight:bold'>Q{p['precio']:,.2f}</div>",
+                unsafe_allow_html=True)
+            cant_actual = carrito[p["nombre"]][0]                           if p["nombre"] in carrito else 0.0
+            val = c3.number_input("", min_value=0.0, step=0.25,
+                                   value=float(cant_actual), format="%.2f",
+                                   key=f"cant_{p['nombre']}",
+                                   label_visibility="collapsed")
+            if val > 0:
+                carrito[p["nombre"]] = (val, p["unidad"], p["precio"])
+            elif p["nombre"] in carrito:
+                del carrito[p["nombre"]]
 
         st.session_state["carrito"] = carrito
 
+        # ── Botones de navegación + confirmar ─────────────────────────────────
         st.divider()
-        n_items = sum(1 for v in carrito.values() if isinstance(v, tuple) and v[0] > 0)
-        total   = sum(v[0]*v[2] for v in carrito.values() if isinstance(v, tuple))
+        idx_actual = categorias.index(cat_actual)
+        hay_prev   = idx_actual > 0
+        hay_next   = idx_actual < len(categorias) - 1
+        es_ultima  = not hay_next
 
-        if n_items:
-            st.markdown(
-                f"<div style='background:#e8f5e9;border-radius:8px;"
-                f"padding:10px;text-align:center'>"
-                f"<b>{n_items} producto(s) · Total estimado: Q{total:,.2f}</b>"
-                f"</div>", unsafe_allow_html=True)
-            if st.button("Continuar a fecha de entrega →", type="primary",
-                          use_container_width=True):
-                st.session_state["paso"] = 3; st.rerun()
+        n_items = sum(1 for v in carrito.values()
+                      if isinstance(v, tuple) and v[0] > 0)
+
+        # Fila de navegación
+        if hay_prev and hay_next:
+            bn1, bn2, bn3 = st.columns(3)
+            cat_prev = categorias[idx_actual - 1]
+            cat_next = categorias[idx_actual + 1]
+            if bn1.button(f"← {cat_prev}", key="btn_prev",
+                           use_container_width=True):
+                st.session_state["cat_activa"] = cat_prev; st.rerun()
+            if bn2.button(f"→ {cat_next}", key="btn_next", type="secondary",
+                           use_container_width=True):
+                st.session_state["cat_activa"] = cat_next; st.rerun()
+            with bn3:
+                if n_items:
+                    if st.button(f"✅ Confirmar ({n_items})", type="primary",
+                                  use_container_width=True, key="btn_conf_mid"):
+                        st.session_state["paso"] = 3; st.rerun()
+                else:
+                    st.button("✅ Confirmar", disabled=True,
+                               key="btn_conf_mid_dis", use_container_width=True)
+
+        elif hay_prev and not hay_next:
+            bn1, bn2 = st.columns(2)
+            cat_prev = categorias[idx_actual - 1]
+            if bn1.button(f"← {cat_prev}", key="btn_prev2",
+                           use_container_width=True):
+                st.session_state["cat_activa"] = cat_prev; st.rerun()
+            with bn2:
+                if n_items:
+                    if st.button(f"✅ Confirmar pedido ({n_items})",
+                                  type="primary", use_container_width=True,
+                                  key="btn_conf_last"):
+                        st.session_state["paso"] = 3; st.rerun()
+                else:
+                    st.button("✅ Confirmar pedido", disabled=True,
+                               key="btn_conf_last_dis", use_container_width=True)
+
+        elif not hay_prev and hay_next:
+            bn1, bn2 = st.columns(2)
+            cat_next = categorias[idx_actual + 1]
+            if bn2.button(f"→ {cat_next}", key="btn_next2", type="secondary",
+                           use_container_width=True):
+                st.session_state["cat_activa"] = cat_next; st.rerun()
+            with bn1:
+                if n_items:
+                    if st.button(f"✅ Confirmar ({n_items})", type="primary",
+                                  use_container_width=True, key="btn_conf_first"):
+                        st.session_state["paso"] = 3; st.rerun()
+                else:
+                    st.button("✅ Confirmar", disabled=True,
+                               key="btn_conf_first_dis", use_container_width=True)
+
         else:
-            st.info("Agregá al menos un producto para continuar.")
+            # Solo una categoría
+            if n_items:
+                if st.button(f"✅ Confirmar pedido ({n_items})",
+                              type="primary", use_container_width=True,
+                              key="btn_conf_solo"):
+                    st.session_state["paso"] = 3; st.rerun()
+            else:
+                st.info("Agregá al menos un producto para continuar.")
 
 # ── PASO 3: Fecha ─────────────────────────────────────────────────────────────
 elif paso == 3:
