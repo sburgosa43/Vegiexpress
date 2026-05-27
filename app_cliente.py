@@ -182,8 +182,9 @@ elif paso == 2:
                             f"font-weight:bold'>Q{p['precio']:,.2f}</div>",
                             unsafe_allow_html=True)
                 key = f"cant_{p['nombre']}"
+                cant_actual = carrito[p["nombre"]][0] if p["nombre"] in carrito else 0
                 val = c3.number_input("", min_value=0, step=1,
-                                       value=carrito.get(p["nombre"], 0),
+                                       value=int(cant_actual),
                                        key=key, label_visibility="collapsed")
                 if val > 0:
                     carrito[p["nombre"]] = (val, p["unidad"], p["precio"])
