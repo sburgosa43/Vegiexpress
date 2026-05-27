@@ -288,7 +288,9 @@ elif paso == 4:
                 st.session_state["paso"] = 5
                 st.rerun()
             except Exception as e:
-                st.error(f"Error al enviar: {e}. Por favor intentá de nuevo.")
+                import traceback
+                st.error(f"Error al enviar: {type(e).__name__}: {e}")
+                st.code(traceback.format_exc())
 
 # ── PASO 5: Éxito ─────────────────────────────────────────────────────────────
 elif paso == 5:
