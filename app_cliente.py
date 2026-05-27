@@ -25,21 +25,27 @@ MESES_ES = {1:"Enero",2:"Febrero",3:"Marzo",4:"Abril",5:"Mayo",6:"Junio",
 
 @st.cache_data(ttl=600)
 def _cargar_clientes():
-    from excel_helper import leer_pedidos  # noqa — just for Drive creds
-    from drive_helper import cargar_para_lectura
-    FILE_ID = st.secrets["EXCEL_FILE_ID"]
-    wb  = cargar_para_lectura(FILE_ID)
-    ws  = wb["Clientes"]
-    clis = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if row[0] and str(row[6] or "").strip().lower() == "activo":
+    try:
+        from drive_helper import cargar_para_lectura
+        FILE_ID = st.secrets["EXCEL_FILE_ID"]
+        wb  = cargar_para_lectura(FILE_ID)
+        ws  = wb["Clientes"]
+        clis = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if not row[0]: continue
+            nombre = str(row[0]).strip()
+            if not nombre: continue
+            # Incluir todos los clientes con nombre — sin filtro de estatus
             clis.append({
-                "nombre":    str(row[0]).strip(),
-                "ubicacion": str(row[2] or "").strip(),
+                "nombre":       nombre,
+                "ubicacion":    str(row[2] or "").strip(),
                 "codigo_lugar": str(row[10] or "").strip(),
             })
-    wb.close()
-    return sorted(clis, key=lambda x: x["nombre"])
+        wb.close()
+        return sorted(clis, key=lambda x: x["nombre"])
+    except Exception as e:
+        st.error(f"Error cargando clientes: {e}")
+        return []
 
 
 @st.cache_data(ttl=600)
