@@ -2,7 +2,9 @@
 modulo_productos.py — CRUD de productos (lista normal y lista Antigua)
 """
 import streamlit as st
-from excel_helper import leer_productos_con_fila, agregar_producto, editar_producto, eliminar_producto
+from excel_helper import (leer_productos_con_fila, agregar_producto,
+                          editar_producto, eliminar_producto,
+                          guardar_para_cotizar_batch)
 
 UNIDADES    = ["Libra","Unidad","Manojo","Caja","Kilo","Onza","Docena","Bandeja",
                "Galon","Paquete","Penca","Red","lbs","libra","1 Onza","4 Onzas",
