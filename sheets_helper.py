@@ -13,13 +13,17 @@ HEADERS = [
 
 
 def _get_client():
-    import gspread
+    import gspread, json
     from google.oauth2.service_account import Credentials
     scopes = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
     ]
-    info = dict(st.secrets["gcp_service_account"])
+    # Soporta GOOGLE_CREDENTIALS (JSON string) o gcp_service_account (TOML dict)
+    if "GOOGLE_CREDENTIALS" in st.secrets:
+        info = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+    else:
+        info = dict(st.secrets["gcp_service_account"])
     creds = Credentials.from_service_account_info(info, scopes=scopes)
     return gspread.authorize(creds)
 
