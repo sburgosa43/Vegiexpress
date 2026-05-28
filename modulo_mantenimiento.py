@@ -8,6 +8,7 @@ from datetime import date
 from excel_helper import (leer_pedidos, preview_correccion_masiva,
                            aplicar_correccion_masiva, migrar_pedidos_a_valores,
                            agregar_col_para_cotizar_antigua, limpiar_para_cotizar)
+from data_helper  import cargar_clientes, cargar_productos
 from data_helper import cargar_clientes, cargar_productos
 
 MESES_ES = {
@@ -224,16 +225,18 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    t1, t2, t3, t4 = st.tabs([
+    t1, t2, t3, t4, t5 = st.tabs([
         "🔧 Corrección Masiva de Precios / Costos",
         "⚙️ Migración de Datos",
         "📋 Estructura del Excel",
         "🛒 Catálogo Cliente",
+        "🔄 Caché",
     ])
     with t1: _tab_correccion()
     with t2: _tab_migracion()
     with t3: _tab_estructura()
     with t4: _tab_catalogo()
+    with t5: _tab_cache()
 
 
 # ── TAB 3: ESTRUCTURA DEL EXCEL ──────────────────────────────────────────────
@@ -363,3 +366,49 @@ def _tab_catalogo():
         with c2:
             if st.button("❌ Cancelar", key="cancel_limpiar_cat"):
                 st.session_state.pop(confirm_key, None); st.rerun()
+
+
+def _tab_cache():
+    """Limpieza manual de caché para forzar recarga desde Drive."""
+    st.markdown("### 🔄 Caché de datos")
+    st.markdown("""
+    La app guarda los datos en memoria para ser más rápida.
+    Si acabás de hacer cambios directo en el Excel o necesitás forzar
+    una recarga, usá estos botones.
+    """)
+    st.divider()
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.markdown("**📦 Pedidos**")
+        st.caption("15,000+ filas — la más pesada")
+        if st.button("🔄 Limpiar caché pedidos",
+                     use_container_width=True, key="clr_ped"):
+            leer_pedidos.clear()
+            st.success("✅ Caché de pedidos limpiado.")
+
+    with c2:
+        st.markdown("**👥 Clientes**")
+        st.caption("Tabla de clientes")
+        if st.button("🔄 Limpiar caché clientes",
+                     use_container_width=True, key="clr_cli"):
+            cargar_clientes.clear()
+            st.success("✅ Caché de clientes limpiado.")
+
+    with c3:
+        st.markdown("**📋 Productos**")
+        st.caption("Listado de precios")
+        if st.button("🔄 Limpiar caché productos",
+                     use_container_width=True, key="clr_prod"):
+            cargar_productos.clear()
+            st.success("✅ Caché de productos limpiado.")
+
+    st.divider()
+    if st.button("🔄 Limpiar TODO el caché", type="primary",
+                 use_container_width=True, key="clr_all"):
+        leer_pedidos.clear()
+        cargar_clientes.clear()
+        cargar_productos.clear()
+        st.success("✅ Todo el caché limpiado. "
+                   "La próxima acción descargará datos frescos de Drive.")

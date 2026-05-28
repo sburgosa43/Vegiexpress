@@ -7,7 +7,7 @@ from drive_helper import cargar_para_lectura
 FILE_ID = st.secrets["EXCEL_FILE_ID"]
 
 
-@st.cache_data(ttl=600, show_spinner="Cargando clientes...")
+@st.cache_resource
 def cargar_clientes() -> list[dict]:
     wb = cargar_para_lectura(FILE_ID)
     ws = wb["Clientes"]
@@ -36,7 +36,7 @@ def cargar_clientes() -> list[dict]:
     return sorted(clientes, key=lambda c: c["nombre"])
 
 
-@st.cache_data(ttl=600, show_spinner="Cargando productos...")
+@st.cache_resource
 def cargar_productos(es_antigua: bool = False) -> list[dict]:
     """
     Lista normal : Precio en col 8 (índice 7)

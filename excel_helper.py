@@ -26,7 +26,7 @@ def _actualizar_tabla(ws, nombre_tabla: str):
 # PEDIDOS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=600, show_spinner="Cargando pedidos...")
+@st.cache_resource
 def leer_pedidos() -> list[dict]:
     """
     Lee pedidos. Fuente unica de precio: col E (precio_excel).
