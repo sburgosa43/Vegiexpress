@@ -110,7 +110,7 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
                 f"border-radius:4px;font-size:.82rem;font-weight:bold;"
                 f"margin:8px 0 4px 0'>"
                 f"Semana {sem_num} · {fecha_sem.strftime('%d/%m/%Y')} · "
-                f"NIT: {cli_info(nombre).get('nit') or 'CF'} · "
+                f"NIT: {(cliente_info or {}).get('nit') or 'CF'} · "
                 f"Subtotal: Q{sub_sem:,.2f}"
                 f"<br><span style='font-weight:normal;font-size:.75rem;opacity:.9'>"
                 f"Base IVA: Q{base_sem:,.2f}  ·  "
