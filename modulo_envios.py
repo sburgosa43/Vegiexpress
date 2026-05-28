@@ -348,4 +348,4 @@ def mostrar():
 
     # ── TAB LISTADOS ──────────────────────────────────────────────────────────
     with tab_list:
-        _tab_listados(todos, semana_actual, año_actual)
+        _tab_listados(todos, sem_act, año_act)
