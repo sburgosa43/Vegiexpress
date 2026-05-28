@@ -253,14 +253,27 @@ def _tab_listados(todos, semana, año):
         import streamlit.components.v1 as components
         components.html(html_print, height=48)
 
-    # ── Vista previa embebida ─────────────────────────────────────────────────
+    # ── Vista previa embebida (blob URL) ────────────────────────────────────
     st.markdown("**Vista previa:**")
     import streamlit.components.v1 as components
-    components.html(
-        f'<embed src="data:application/pdf;base64,{pdf_b64}" '
-        f'type="application/pdf" width="100%" height="680px" />',
-        height=690,
-    )
+    preview_html = f"""
+    <div id="pdf-container" style="width:100%;height:700px;border:1px solid #ddd;border-radius:4px;">
+      <iframe id="pdf-frame" width="100%" height="700px"
+              style="border:none;border-radius:4px;"></iframe>
+    </div>
+    <script>
+      (function() {{
+        var b64 = '{pdf_b64}';
+        var raw = atob(b64);
+        var arr = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+        var blob = new Blob([arr], {{type: 'application/pdf'}});
+        var url  = URL.createObjectURL(blob);
+        document.getElementById('pdf-frame').src = url;
+      }})();
+    </script>
+    """
+    components.html(preview_html, height=720, scrolling=False)
 
 
 def mostrar():
