@@ -1073,3 +1073,132 @@ def generar_lista_compras(por_proveedor: dict, semana: int, año: int) -> bytes:
         break
     return pdf_bytes
 
+
+
+# ── LISTADO CHECKLIST (Envíos) ────────────────────────────────────────────────
+def generar_listado_checklist(rows_izq: list, rows_der: list,
+                               area_label: str, semana: int, año: int) -> bytes:
+    """
+    Portrait A4, 2 columnas, cuadrícula completa, sin colores.
+    rows_izq / rows_der: [{cliente, producto, unidad, cantidad}]
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib           import colors as rc
+    from datetime                import date
+
+    buffer = BytesIO()
+    ML = MR = 8*mm; MT = 8*mm; MB = 8*mm
+    PW, PH   = A4
+    CW       = PW - ML - MR          # 194mm
+    GAP      = 3*mm
+    HW       = (CW - GAP) / 2        # ~95.5mm por mitad
+
+    # Anchos de columna por mitad
+    wC = HW * 0.29   # Cliente
+    wP = HW * 0.35   # Producto
+    wU = HW * 0.13   # Unidad
+    wQ = HW * 0.12   # Cantidad
+    wX = HW * 0.11   # Check □
+
+    NEGRO  = rc.black
+    BLANCO = rc.white
+
+    doc = SimpleDocTemplate(buffer, pagesize=A4,
+        leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB)
+    story = []
+
+    # Estilos
+    def ts(name, **kw):
+        d = dict(fontSize=8, fontName="Helvetica", textColor=NEGRO, leading=9.5)
+        d.update(kw); return ParagraphStyle(name, **d)
+
+    s_hdr  = ts("hdr",  fontSize=9, fontName="Helvetica-Bold")
+    s_sub  = ts("sub",  fontSize=7, alignment=TA_RIGHT)
+    s_col  = ts("col",  fontSize=7.5, fontName="Helvetica-Bold",
+                alignment=TA_CENTER)
+    s_td   = ts("td",   fontSize=8)
+    s_td_c = ts("tdc",  fontSize=8, alignment=TA_CENTER)
+
+    today  = date.today().strftime("%d/%m/%Y")
+
+    # ── Encabezado de página ──────────────────────────────────────────────────
+    hdr = Table([[
+        _p(f"VeggiExpress — Listado de Empaque", s_hdr),
+        _p(f"Área: {area_label}  ·  Semana {semana}/{año}  ·  {today}", s_sub),
+    ]], colWidths=[CW * 0.55, CW * 0.45])
+    hdr.setStyle(TableStyle([
+        ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
+        ("TOPPADDING",    (0,0),(-1,-1), 0),
+        ("BOTTOMPADDING", (0,0),(-1,-1), 2),
+    ]))
+    story.append(hdr)
+    story.append(HRFlowable(width="100%", thickness=0.8,
+                             color=NEGRO, spaceAfter=2*mm))
+
+    # ── Construir filas balanceando columnas ──────────────────────────────────
+    def make_half_rows(rows):
+        """Convierte lista de dicts en filas de tabla."""
+        out = []
+        for r in rows:
+            out.append([
+                _p(_s(r["cliente"]),  s_td),
+                _p(_s(r["producto"]), s_td),
+                _p(_s(r["unidad"]),   s_td_c),
+                _p(f"{r['cantidad']:g}", s_td_c),
+                "",   # check □
+            ])
+        return out
+
+    COL_HDR = [
+        _p("Cliente",  s_col), _p("Producto", s_col),
+        _p("Unidad",   s_col), _p("Cant.",    s_col),
+        _p("□",        s_col),
+    ]
+
+    fi = make_half_rows(rows_izq)
+    fd = make_half_rows(rows_der)
+
+    # Emparejar filas (rellenar con celdas vacías)
+    max_r = max(len(fi), len(fd))
+    vacia = ["", "", "", "", ""]
+    combined_rows = [COL_HDR + [""] + COL_HDR]   # fila de encabezados
+    for j in range(max_r):
+        li = fi[j] if j < len(fi) else list(vacia)
+        ri = fd[j] if j < len(fd) else list(vacia)
+        combined_rows.append(li + [""] + ri)
+
+    cw_all = [wC, wP, wU, wQ, wX, GAP, wC, wP, wU, wQ, wX]
+    tbl = Table(combined_rows, colWidths=cw_all,
+                repeatRows=1, splitByRow=True)
+
+    ts_style = TableStyle([
+        # Encabezado
+        ("FONTNAME",     (0,0),(4,0), "Helvetica-Bold"),
+        ("FONTNAME",     (6,0),(10,0),"Helvetica-Bold"),
+        ("FONTSIZE",     (0,0),(-1,-1), 8),
+        ("LINEBELOW",    (0,0),(4,0),  0.8, NEGRO),
+        ("LINEBELOW",    (6,0),(10,0), 0.8, NEGRO),
+        # Grid izquierdo (cols 0-4)
+        ("BOX",          (0,0),(4,-1), 0.5, NEGRO),
+        ("INNERGRID",    (0,0),(4,-1), 0.3, NEGRO),
+        # Grid derecho (cols 6-10)
+        ("BOX",          (6,0),(10,-1),0.5, NEGRO),
+        ("INNERGRID",    (6,0),(10,-1),0.3, NEGRO),
+        # Separador central invisible
+        ("BOX",          (5,0),(5,-1), 0, BLANCO),
+        ("INNERGRID",    (5,0),(5,-1), 0, BLANCO),
+        # Padding
+        ("TOPPADDING",   (0,0),(-1,-1), 1.5),
+        ("BOTTOMPADDING",(0,0),(-1,-1), 1.5),
+        ("LEFTPADDING",  (0,0),(-1,-1), 2),
+        ("RIGHTPADDING", (0,0),(-1,-1), 2),
+        ("VALIGN",       (0,0),(-1,-1), "MIDDLE"),
+        # Check col ancho centrado
+        ("ALIGN",        (4,0),(4,-1), "CENTER"),
+        ("ALIGN",        (10,0),(10,-1),"CENTER"),
+    ])
+    tbl.setStyle(ts_style)
+    story.append(tbl)
+
+    doc.build(story)
+    return buffer.getvalue()
