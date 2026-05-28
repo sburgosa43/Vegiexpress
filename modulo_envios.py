@@ -4,12 +4,10 @@ Tres zonas: Antigua & Chimal | Guatemala & Santiago | Rio
 """
 import streamlit as st
 from datetime import date
-from excel_helper import leer_pedidos
+from excel_helper import (leer_pedidos, cancelar_pedido,
+                          restaurar_pedido, guardar_cambios_precio)
 from data_helper  import cargar_clientes
-from pdf_helper   import generar_listado_checklist
-import base64, cancelar_pedido, restaurar_pedido, guardar_cambios_precio
-from data_helper import cargar_clientes
-from pdf_helper import generar_envio, nombre_archivo
+from pdf_helper   import generar_envio, nombre_archivo
 
 ZONAS_ENVIO = {
     "🔖 Antigua & Chimal":      ["L03", "L04"],
@@ -137,6 +135,8 @@ AREAS_LIST = {
 
 def _tab_listados(todos, semana, año):
     import pandas as pd
+    import base64
+    from pdf_helper import generar_listado_checklist
 
     st.markdown("### 📋 Listado de Empaque")
     st.caption("Semana actual — imprimible como checklist de preparación")
