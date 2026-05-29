@@ -1083,7 +1083,16 @@ def _empacar_clientes(clientes_grupos, cap_col):
     clientes_grupos: [(nombre, [rows])] ordenado alfabéticamente
     Retorna: [(izq_rows, der_rows)] por página
     """
-    pendientes = list(clientes_grupos)  # [(nombre, [rows])]
+    # Pre-procesar: si un cliente tiene más filas que cap_col, dividirlo
+    expandidos = []
+    for nombre, rows in clientes_grupos:
+        if len(rows) <= cap_col:
+            expandidos.append((nombre, rows))
+        else:
+            # Dividir en chunks de cap_col
+            for i in range(0, len(rows), cap_col):
+                expandidos.append((nombre, rows[i:i+cap_col]))
+    pendientes = expandidos
     paginas    = []
 
     def _mejor_que_quepa(pendientes_list, cap, excluir_idx=None):
@@ -1167,11 +1176,12 @@ def generar_listado_checklist(clientes_grupos: list,
     BLANCO = rc.white
 
     # Altura estimada por fila (8pt font + padding) en puntos
-    ROW_H   = 12.5   # pts
-    HDR_H   = 30     # header página
-    COLHDR_H= 14     # encabezado columnas
-    AVAIL_H = PH - MT*2.8346 - MB*2.8346 - HDR_H - COLHDR_H
-    CAP_COL = max(20, int(AVAIL_H / ROW_H) - 2)  # filas por columna
+    ROW_H    = 12.5   # pts por fila
+    HDR_H    = 35     # header + HR
+    COLHDR_H = 14     # encabezado columnas
+    # MT y MB ya están en puntos (mm * 2.8346)
+    AVAIL_H  = PH - MT - MB - HDR_H - COLHDR_H
+    CAP_COL  = max(20, int(AVAIL_H / ROW_H) - 3)  # filas por columna (conservador)
 
     doc = SimpleDocTemplate(buffer, pagesize=A4,
         leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB)
@@ -1265,7 +1275,7 @@ def generar_listado_checklist(clientes_grupos: list,
             tabla_rows.append(li + [""] + ri)
 
         tbl = Table(tabla_rows, colWidths=cw_all,
-                    repeatRows=1, splitByRow=False)
+                    repeatRows=1, splitByRow=True)
         tbl.setStyle(ts_tbl)
         story.append(tbl)
 
