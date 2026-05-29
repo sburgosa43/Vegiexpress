@@ -411,17 +411,17 @@ def _ajuste_precios():
 
     if st.button("🔍 Cargar productos de esta semana",
                  type="primary", key="ajp_cargar"):
-        st.session_state["ajp_data"] = leer_productos_semana(semana, año)
-        st.session_state["ajp_sem"]  = semana
-        st.session_state["ajp_año"]  = año
+        st.session_state["ajp_data"]        = leer_productos_semana(semana, año)
+        st.session_state["ajp_sem_cargada"] = semana
+        st.session_state["ajp_año_cargado"] = año
 
     data = st.session_state.get("ajp_data")
     if not data:
         st.info("Cargá una semana para ver los productos con pedidos activos.")
         return
 
-    sem_cargada = st.session_state.get("ajp_sem")
-    año_cargado = st.session_state.get("ajp_año")
+    sem_cargada = st.session_state.get("ajp_sem_cargada")
+    año_cargado = st.session_state.get("ajp_año_cargado")
     st.markdown(f"**Semana {sem_cargada}/{año_cargado} — "
                 f"{len(data)} producto(s) con pedidos activos**")
     st.caption("Modificá el 'Precio Nuevo' y guardá. "
