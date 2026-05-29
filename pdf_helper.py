@@ -1076,209 +1076,149 @@ def generar_lista_compras(por_proveedor: dict, semana: int, año: int) -> bytes:
 
 
 # ── LISTADO CHECKLIST (Envíos) ────────────────────────────────────────────────
-def _empacar_clientes(clientes_grupos, cap_col):
-    """
-    Empaca clientes completos en columnas.
-    Cuando sobra espacio busca el cliente más grande que quepa.
-    clientes_grupos: [(nombre, [rows])] ordenado alfabéticamente
-    Retorna: [(izq_rows, der_rows)] por página
-    """
-    # Pre-procesar: si un cliente tiene más filas que cap_col, dividirlo
-    expandidos = []
-    for nombre, rows in clientes_grupos:
-        if len(rows) <= cap_col:
-            expandidos.append((nombre, rows))
-        else:
-            # Dividir en chunks de cap_col
-            for i in range(0, len(rows), cap_col):
-                expandidos.append((nombre, rows[i:i+cap_col]))
-    pendientes = expandidos
-    paginas    = []
-
-    def _mejor_que_quepa(pendientes_list, cap, excluir_idx=None):
-        """Retorna (idx, rows) del cliente más grande que quepa en cap."""
-        mejor_idx, mejor_n = None, 0
-        for i, (n, r) in enumerate(pendientes_list):
-            if i == excluir_idx: continue
-            if len(r) <= cap and len(r) > mejor_n:
-                mejor_idx, mejor_n = i, len(r)
-        return mejor_idx
-
-    while pendientes:
-        izq_rows, der_rows = [], []
-
-        for col_rows_ref in [izq_rows, der_rows]:
-            cap = cap_col
-
-            # Primer cliente disponible que quepa (en orden)
-            while pendientes:
-                # Buscar primer cliente en orden que quepa
-                primer_idx = None
-                for i, (n, r) in enumerate(pendientes):
-                    if len(r) <= cap:
-                        primer_idx = i
-                        break
-
-                if primer_idx is None:
-                    break  # Ninguno cabe — columna cerrada
-
-                nombre, rows = pendientes.pop(primer_idx)
-                col_rows_ref.extend(rows)
-                cap -= len(rows)
-
-                # Rellenar espacio sobrante con el mayor que quepa
-                while cap > 0 and pendientes:
-                    idx = _mejor_que_quepa(pendientes, cap)
-                    if idx is None:
-                        break
-                    nombre2, rows2 = pendientes.pop(idx)
-                    col_rows_ref.extend(rows2)
-                    cap -= len(rows2)
-
-                # Si se usó relleno, cerramos la columna
-                # (evitar mezclar demasiado el orden)
-                if cap < cap_col:
-                    break
-
-        paginas.append((izq_rows, der_rows))
-
-    return paginas
-
-
 def generar_listado_checklist(clientes_grupos: list,
                                area_label: str,
                                semana: int, año: int) -> bytes:
     """
-    Portrait A4, 2 columnas, cuadrícula completa, sin colores.
+    Portrait A4, 2 columnas (Frames), sin colores.
     clientes_grupos: [(nombre_cliente, [rows])]
       donde rows = [{cliente, producto, unidad, cantidad}]
-    Paginación inteligente: cada cliente queda completo en su columna.
+    - Cada cliente es una mini-tabla KeepTogether (nunca se corta)
+    - Clientes muy grandes se dividen en 2 mitades (misma página si cabe)
+    - Header dibujado por callback por página
     """
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib           import colors as rc
-    from reportlab.platypus      import PageBreak
-    from datetime                import date
+    from reportlab.lib.pagesizes   import A4
+    from reportlab.lib             import colors as rc
+    from reportlab.platypus        import KeepTogether, FrameBreak
+    from reportlab.platypus.doctemplate import (BaseDocTemplate,
+                                                 PageTemplate, Frame)
+    from reportlab.pdfbase         import pdfmetrics
+    from datetime                  import date
+    from io                        import BytesIO as _BIO
 
-    buffer = BytesIO()
-    ML = MR = 8*mm; MT = 8*mm; MB = 8*mm
-    PW, PH   = A4
-    CW       = PW - ML - MR          # 194mm
-    GAP      = 3*mm
-    HW       = (CW - GAP) / 2        # ~95.5mm
+    buf = _BIO()
+    PW, PH = A4
+    ML = MR = 8*mm
+    MB = 10*mm
+    HEADER_H = 28*mm        # espacio reservado arriba para el header
+    MT = HEADER_H + 6*mm    # margen superior = header + pequeño gap
 
-    wC = HW * 0.29
-    wP = HW * 0.35
-    wU = HW * 0.13
-    wQ = HW * 0.12
-    wX = HW * 0.11
+    GAP = 3*mm
+    HW  = (PW - ML - MR - GAP) / 2   # ancho de cada columna ~94mm
+    FH  = PH - MT - MB               # altura del frame de contenido ~680pt
 
+    # ── Estilos ───────────────────────────────────────────────────────────────
     NEGRO  = rc.black
     BLANCO = rc.white
 
-    # Altura estimada por fila (8pt font + padding) en puntos
-    ROW_H    = 12.5   # pts por fila
-    HDR_H    = 35     # header + HR
-    COLHDR_H = 14     # encabezado columnas
-    # MT y MB ya están en puntos (mm * 2.8346)
-    AVAIL_H  = PH - MT - MB - HDR_H - COLHDR_H
-    CAP_COL  = max(20, int(AVAIL_H / ROW_H) - 3)  # filas por columna (conservador)
+    def sty(name, **kw):
+        d = dict(fontSize=8, fontName="Helvetica",
+                 textColor=NEGRO, leading=10)
+        d.update(kw)
+        return ParagraphStyle(name, **d)
 
-    doc = SimpleDocTemplate(buffer, pagesize=A4,
-        leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB)
-    story = []
-
-    def ts(name, **kw):
-        d = dict(fontSize=8, fontName="Helvetica", textColor=NEGRO, leading=9.5)
-        d.update(kw); return ParagraphStyle(name, **d)
-
-    s_hdr  = ts("hdr",  fontSize=9, fontName="Helvetica-Bold")
-    s_sub  = ts("sub",  fontSize=7, alignment=TA_RIGHT)
-    s_col  = ts("col",  fontSize=7.5, fontName="Helvetica-Bold",
+    s_col = sty("col", fontSize=7.5, fontName="Helvetica-Bold",
                 alignment=TA_CENTER)
-    s_td   = ts("td",   fontSize=8)
-    s_td_c = ts("tdc",  fontSize=8, alignment=TA_CENTER)
+    s_td  = sty("td")
+    s_tdc = sty("tdc", alignment=TA_CENTER)
 
-    today = date.today().strftime("%d/%m/%Y")
+    # Anchos dentro de cada frame
+    wC = HW * 0.29; wP = HW * 0.36
+    wU = HW * 0.13; wQ = HW * 0.12; wX = HW * 0.10
+    COL_W = [wC, wP, wU, wQ, wX]
 
-    def make_page_header():
-        hdr = Table([[
-            _p("VeggiExpress — Listado de Empaque", s_hdr),
-            _p(f"Área: {area_label}  ·  Semana {semana}/{año}  ·  {today}", s_sub),
-        ]], colWidths=[CW * 0.55, CW * 0.45])
-        hdr.setStyle(TableStyle([
-            ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-            ("TOPPADDING",(0,0),(-1,-1),0),
-            ("BOTTOMPADDING",(0,0),(-1,-1),2),
-        ]))
-        return hdr
-
-    COL_HDR = [
-        _p("Cliente",s_col), _p("Producto",s_col),
-        _p("Unidad",s_col),  _p("Cant.",s_col), _p("□",s_col),
-    ]
-
-    def build_col_rows(rows):
-        out = []
-        for r in rows:
-            out.append([
-                _p(_s(r["cliente"]),  s_td),
-                _p(_s(r["producto"]), s_td),
-                _p(_s(r["unidad"]),   s_td_c),
-                _p(f"{r['cantidad']:g}", s_td_c),
-                "",
-            ])
-        return out
-
-    cw_all = [wC,wP,wU,wQ,wX, GAP, wC,wP,wU,wQ,wX]
-
-    ts_tbl = TableStyle([
-        ("FONTNAME",     (0,0),(4,0), "Helvetica-Bold"),
-        ("FONTNAME",     (6,0),(10,0),"Helvetica-Bold"),
+    BASE_STYLE = TableStyle([
+        ("FONTNAME",     (0,0),(-1,0),  "Helvetica-Bold"),
         ("FONTSIZE",     (0,0),(-1,-1), 8),
-        ("LINEBELOW",    (0,0),(4,0), 0.8, NEGRO),
-        ("LINEBELOW",    (6,0),(10,0),0.8, NEGRO),
-        ("BOX",          (0,0),(4,-1), 0.5, NEGRO),
-        ("INNERGRID",    (0,0),(4,-1), 0.3, NEGRO),
-        ("BOX",          (6,0),(10,-1),0.5, NEGRO),
-        ("INNERGRID",    (6,0),(10,-1),0.3, NEGRO),
-        ("BOX",          (5,0),(5,-1), 0, BLANCO),
-        ("INNERGRID",    (5,0),(5,-1), 0, BLANCO),
+        ("LINEBELOW",    (0,0),(-1,0),  0.8, NEGRO),
+        ("BOX",          (0,0),(-1,-1), 0.5, NEGRO),
+        ("INNERGRID",    (0,0),(-1,-1), 0.3, NEGRO),
         ("TOPPADDING",   (0,0),(-1,-1), 1.5),
         ("BOTTOMPADDING",(0,0),(-1,-1), 1.5),
         ("LEFTPADDING",  (0,0),(-1,-1), 2),
         ("RIGHTPADDING", (0,0),(-1,-1), 2),
         ("VALIGN",       (0,0),(-1,-1), "MIDDLE"),
-        ("ALIGN",        (4,0),(4,-1), "CENTER"),
-        ("ALIGN",        (10,0),(10,-1),"CENTER"),
+        ("ALIGN",        (2,0),(-1,-1), "CENTER"),
     ])
 
-    # ── Empacar y generar páginas ─────────────────────────────────────────────
-    paginas = _empacar_clientes(clientes_grupos, CAP_COL)
+    HDR_ROW = [
+        _p("Cliente",  s_col), _p("Producto", s_col),
+        _p("Unidad",   s_col), _p("Cant.",    s_col),
+        _p("□",        s_col),
+    ]
 
-    for p_idx, (izq_rows, der_rows) in enumerate(paginas):
-        if p_idx > 0:
-            story.append(PageBreak())
+    def make_mini_table(rows_subset):
+        """Mini-tabla para un bloque de filas de UN cliente."""
+        trows = [HDR_ROW]
+        for r in rows_subset:
+            trows.append([
+                _p(_s(r["cliente"]),  s_td),
+                _p(_s(r["producto"]), s_td),
+                _p(_s(r["unidad"]),   s_tdc),
+                _p(f"{r['cantidad']:g}", s_tdc),
+                "",
+            ])
+        t = Table(trows, colWidths=COL_W)
+        t.setStyle(BASE_STYLE)
+        return t
 
-        story.append(make_page_header())
-        story.append(HRFlowable(width="100%", thickness=0.8,
-                                 color=NEGRO, spaceAfter=2*mm))
+    # ── Estimar filas por frame (muy conservador — nombres largos inflan filas) ──
+    # Usar 40% del frame como máximo seguro por bloque
+    CAP = 35
 
-        fi = build_col_rows(izq_rows)
-        fd = build_col_rows(der_rows)
-        max_r = max(len(fi), len(fd), 1)
-        vacia = ["","","","",""]
+    # ── Construir story ───────────────────────────────────────────────────────
+    story = []
 
-        tabla_rows = [COL_HDR + [""] + COL_HDR]
-        for j in range(max_r):
-            li = fi[j] if j < len(fi) else list(vacia)
-            ri = fd[j] if j < len(fd) else list(vacia)
-            tabla_rows.append(li + [""] + ri)
+    for nombre, rows in clientes_grupos:
+        if len(rows) <= CAP:
+            # Cliente completo en un solo bloque
+            story.append(KeepTogether(make_mini_table(rows)))
+        else:
+            # Cliente grande: dividir en 2 mitades
+            mid    = (len(rows) + 1) // 2
+            blk1   = rows[:mid]
+            blk2   = rows[mid:]
+            t1     = make_mini_table(blk1)
+            t2     = make_mini_table(blk2)
+            # KeepTogether en cada bloque; irán a frames consecutivos
+            story.append(KeepTogether(t1))
+            story.append(KeepTogether(t2))
 
-        tbl = Table(tabla_rows, colWidths=cw_all,
-                    repeatRows=1, splitByRow=True)
-        tbl.setStyle(ts_tbl)
-        story.append(tbl)
+    # ── Callback: header por página ───────────────────────────────────────────
+    today = date.today().strftime("%d/%m/%Y")
+    from reportlab.pdfgen import canvas as cv_mod
 
+    def draw_header(canvas, doc):
+        canvas.saveState()
+        y_line = PH - HEADER_H + 2
+        # Título
+        canvas.setFont("Helvetica-Bold", 9)
+        canvas.drawString(ML, y_line + 8, "VeggiExpress — Listado de Empaque")
+        # Info derecha
+        canvas.setFont("Helvetica", 7)
+        info = (f"Área: {area_label}  ·  "
+                f"Semana {semana}/{año}  ·  {today}  ·  "
+                f"Pág. {doc.page}")
+        canvas.drawRightString(PW - MR, y_line + 8, info)
+        # Línea separadora
+        canvas.setLineWidth(0.8)
+        canvas.line(ML, y_line, PW - MR, y_line)
+        canvas.restoreState()
+
+    # ── Frames: 2 columnas por página ─────────────────────────────────────────
+    frame_l = Frame(ML,          MB, HW, FH,
+                    leftPadding=0, rightPadding=0,
+                    topPadding=0,  bottomPadding=0, id="left")
+    frame_r = Frame(ML + HW + GAP, MB, HW, FH,
+                    leftPadding=0, rightPadding=0,
+                    topPadding=0,  bottomPadding=0, id="right")
+
+    page_tpl = PageTemplate(id="TwoCol",
+                             frames=[frame_l, frame_r],
+                             onPage=draw_header)
+
+    doc = BaseDocTemplate(buf, pagesize=A4,
+                          pageTemplates=[page_tpl])
     doc.build(story)
-    return buffer.getvalue()
+    return buf.getvalue()
 
