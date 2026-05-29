@@ -392,6 +392,118 @@ def _modificar(todos):
 
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
+
+def _ajuste_precios():
+    """Actualiza precios de productos en pedidos de la semana actual + catálogo."""
+    import pandas as pd
+    from datetime import date
+    from excel_helper import leer_productos_semana, actualizar_precio_semana
+
+    hoy     = date.today()
+    sem_def = hoy.isocalendar()[1]
+    año_def = hoy.year
+
+    c1, c2 = st.columns(2)
+    semana  = c1.number_input("Semana", min_value=1, max_value=53,
+                               value=sem_def, key="ajp_sem")
+    año     = c2.number_input("Año", min_value=2020, max_value=2030,
+                               value=año_def, key="ajp_año")
+
+    if st.button("🔍 Cargar productos de esta semana",
+                 type="primary", key="ajp_cargar"):
+        st.session_state["ajp_data"] = leer_productos_semana(semana, año)
+        st.session_state["ajp_sem"]  = semana
+        st.session_state["ajp_año"]  = año
+
+    data = st.session_state.get("ajp_data")
+    if not data:
+        st.info("Cargá una semana para ver los productos con pedidos activos.")
+        return
+
+    sem_cargada = st.session_state.get("ajp_sem")
+    año_cargado = st.session_state.get("ajp_año")
+    st.markdown(f"**Semana {sem_cargada}/{año_cargado} — "
+                f"{len(data)} producto(s) con pedidos activos**")
+    st.caption("Modificá el 'Precio Nuevo' y guardá. "
+               "Se actualiza en todos los pedidos de la semana Y en el catálogo.")
+
+    df = pd.DataFrame([{
+        "Producto":     d["producto"],
+        "Costo Actual": d["costo"],
+        "Costo Nuevo":  d["costo"],
+        "Precio Actual":d["precio_actual"],
+        "Precio Nuevo": d["precio_actual"],
+        "Pedidos":      d["n_pedidos"],
+        "Clientes":     d["clientes"],
+    } for d in data])
+
+    edited = st.data_editor(
+        df,
+        column_config={
+            "Producto":     st.column_config.TextColumn(disabled=True, width="large"),
+            "Costo Actual": st.column_config.NumberColumn(disabled=True,
+                             format="Q%.2f", width="small"),
+            "Costo Nuevo":  st.column_config.NumberColumn(
+                             format="Q%.2f", width="small",
+                             help="Modificá aquí el nuevo costo"),
+            "Precio Actual":st.column_config.NumberColumn(disabled=True,
+                             format="Q%.2f", width="small"),
+            "Precio Nuevo": st.column_config.NumberColumn(
+                             format="Q%.2f", width="small",
+                             help="Modificá aquí el nuevo precio"),
+            "Pedidos":      st.column_config.NumberColumn(disabled=True,
+                             width="small"),
+            "Clientes":     st.column_config.TextColumn(disabled=True,
+                             width="medium"),
+        },
+        hide_index=True,
+        use_container_width=True,
+        key="ajp_editor",
+    )
+
+    # Detectar cambios de precio y/o costo
+    cambios = []
+    for i, row in edited.iterrows():
+        precio_nuevo = float(row["Precio Nuevo"] or 0)
+        precio_act   = float(df.iloc[i]["Precio Actual"])
+        costo_nuevo  = float(row["Costo Nuevo"]  or 0)
+        costo_act    = float(df.iloc[i]["Costo Actual"])
+        p_cambia = abs(precio_nuevo - precio_act) > 0.001 and precio_nuevo > 0
+        c_cambia = abs(costo_nuevo  - costo_act)  > 0.001 and costo_nuevo  > 0
+        if p_cambia or c_cambia:
+            cambios.append({
+                "producto":    row["Producto"],
+                "precio_nuevo":precio_nuevo if p_cambia else precio_act,
+                "precio_ant":  precio_act,
+                "costo_nuevo": costo_nuevo  if c_cambia else costo_act,
+                "costo_ant":   costo_act,
+                "p_cambia":    p_cambia,
+                "c_cambia":    c_cambia,
+            })
+
+    if cambios:
+        st.warning(f"⚠️ {len(cambios)} producto(s) con precio modificado:")
+        for ch in cambios:
+            linea = f"- **{ch['producto']}**:"
+            if ch["p_cambia"]:
+                linea += f" Precio Q{ch['precio_ant']:,.2f}→Q{ch['precio_nuevo']:,.2f}"
+            if ch["c_cambia"]:
+                linea += f" · Costo Q{ch['costo_ant']:,.2f}→Q{ch['costo_nuevo']:,.2f}"
+            st.markdown(linea)
+
+        if st.button(f"💾 Aplicar {len(cambios)} cambio(s)",
+                     type="primary", key="ajp_guardar"):
+            with st.spinner("Actualizando pedidos y catálogo..."):
+                res = actualizar_precio_semana(cambios, sem_cargada, año_cargado)
+            st.success(
+                f"✅ {res['filas_pedidos']} fila(s) de pedidos actualizadas · "
+                f"{res['prods_catalogo']} producto(s) en catálogo actualizados.")
+            st.session_state.pop("ajp_data", None)
+            st.rerun()
+    else:
+        st.info("Sin cambios de precio detectados.")
+
+
 def mostrar():
     st.markdown("## 📋 Gestión de Pedidos")
     # Botón de regreso al Inicio
@@ -405,9 +517,10 @@ def mostrar():
     if not todos:
         st.info("No hay pedidos registrados."); return
 
-    tab_rev, tab_mod = st.tabs(["🔍 Revisar Pedidos", "✏️ Editar Pedidos"])
+    tab_rev, tab_mod, tab_prec = st.tabs(["🔍 Revisar Pedidos", "✏️ Editar Pedidos", "💲 Ajuste Precio y Costo"])
     with tab_rev: _revisar(todos)
     with tab_mod: _modificar(todos)
+    with tab_prec: _ajuste_precios()
 
     # ── MIGRACIÓN (operación única) ───────────────────────────────────────────
     st.divider()

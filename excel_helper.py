@@ -811,3 +811,108 @@ def limpiar_para_cotizar(es_antigua: bool):
     guardar_en_drive(wb, FILE_ID)
     wb.close()
     return n
+
+
+# ── AJUSTE DE PRECIOS POR SEMANA ──────────────────────────────────────────────
+def leer_productos_semana(semana: int, año: int) -> list:
+    """
+    Retorna lista de productos únicos con sus precios actuales
+    para los pedidos de una semana específica.
+    [{producto, precio_actual, costo, n_pedidos, clientes}]
+    """
+    todos = leer_pedidos()
+    agg   = {}
+    for p in todos:
+        if p["semana"] != semana or p["año"] != año: continue
+        if p["status"] == "Cancelado": continue
+        prod = p["producto"]
+        if prod not in agg:
+            agg[prod] = {
+                "producto":      prod,
+                "precio_actual": float(p["precio"] or 0),
+                "costo":         float(p["costo"]  or 0),
+                "n_pedidos":     0,
+                "clientes":      set(),
+            }
+        agg[prod]["n_pedidos"] += 1
+        agg[prod]["clientes"].add(p["cliente"])
+    # Convertir sets a strings
+    for v in agg.values():
+        v["clientes"] = ", ".join(sorted(v["clientes"]))
+    return sorted(agg.values(), key=lambda x: x["producto"])
+
+
+def actualizar_precio_semana(cambios: list, semana: int, año: int) -> dict:
+    """
+    Actualiza el precio en Pedidos (semana/año) + Listado Productos.
+    cambios: [{producto, precio_nuevo}]
+    Retorna: {filas_pedidos, prods_catalogo}
+    """
+    from math import floor
+
+    # Mapas producto → precio/costo nuevo
+    precio_map = {ch["producto"]: float(ch["precio_nuevo"]) for ch in cambios}
+    costo_map  = {ch["producto"]: float(ch["costo_nuevo"])  for ch in cambios}
+
+    wb          = cargar_para_escritura(FILE_ID)
+    ws_ped      = wb["Pedidos"]
+    ws_gral     = wb["Listado Productos"]
+    ws_ant      = wb["Listado Productos Antigua"]
+
+    filas_ped    = 0
+    prods_cat    = 0
+
+    # ── Actualizar Pedidos ────────────────────────────────────────────────────
+    for row in ws_ped.iter_rows(min_row=2):
+        prod = str(row[3].value or "")  # col D (idx 3)
+        if prod not in precio_map: continue
+        sem  = row[14].value            # col O (idx 14)
+        yr   = row[15].value            # col P (idx 15)
+        try:
+            if int(sem) != semana or int(yr) != año: continue
+        except (TypeError, ValueError):
+            continue
+
+        precio_nuevo = precio_map[prod]
+        costo_nuevo  = costo_map.get(prod)
+        cant         = float(row[2].value or 0)   # col C (idx 2)
+        costo        = costo_nuevo if costo_nuevo is not None                        else float(row[5].value or 0)   # col F (idx 5)
+
+        total     = round(precio_nuevo * cant, 4)
+        t_costo   = round(costo * cant, 4)
+        margen_q  = round(0.95 * (precio_nuevo - costo * 1.12) * cant, 4)
+        margen_pct= round(0.95 * (1 - costo * 1.12 / precio_nuevo), 4)                     if precio_nuevo > 0 else 0
+        iva       = round((precio_nuevo - precio_nuevo / 1.12) * cant, 4)
+
+        row[4].value  = precio_nuevo   # col E: precio
+        if costo_nuevo is not None:
+            row[5].value = costo_nuevo     # col F: costo
+        row[6].value  = total          # col G: total
+        row[7].value  = t_costo        # col H: total_costo
+        row[8].value  = margen_q       # col I: margen_q
+        row[9].value  = margen_pct     # col J: margen_pct
+        row[10].value = iva            # col K: iva
+        filas_ped += 1
+
+    # ── Actualizar Listado Productos (general) ────────────────────────────────
+    for row in ws_gral.iter_rows(min_row=2):
+        prod = str(row[0].value or "")
+        if prod in precio_map:
+            row[7].value = precio_map[prod]   # col H (idx 7): Precio
+            if prod in costo_map:
+                row[5].value = costo_map[prod] # col F (idx 5): Costo
+            prods_cat += 1
+
+    # ── Actualizar Listado Productos Antigua ──────────────────────────────────
+    for row in ws_ant.iter_rows(min_row=2):
+        prod = str(row[0].value or "")
+        if prod in precio_map:
+            row[6].value = precio_map[prod]   # col G (idx 6): Precio Antigua
+            if prod in costo_map:
+                row[5].value = costo_map[prod] # col F (idx 5): Costo Antigua
+            prods_cat += 1
+
+    guardar_en_drive(wb, FILE_ID)
+    wb.close()
+    leer_pedidos.clear()
+    return {"filas_pedidos": filas_ped, "prods_catalogo": prods_cat}
