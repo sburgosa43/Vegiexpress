@@ -393,6 +393,134 @@ def _modificar(todos):
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 
+def _tab_remision(todos: list):
+    """Remisión por cliente — single-select, imprimir + vista previa."""
+    import base64
+    import streamlit.components.v1 as components
+    from pdf_helper import generar_remision
+    from datetime   import date
+
+    st.markdown("### 📄 Remisión")
+
+    # ── Filtros ────────────────────────────────────────────────────────────
+    hoy     = date.today()
+    sem_def = hoy.isocalendar()[1]
+    año_def = hoy.year
+
+    fc1, fc2, fc3, fc4 = st.columns(4)
+    semana   = fc1.number_input("Semana", 1, 53, sem_def, key="rem_sem")
+    año      = fc2.number_input("Año", 2020, 2030, año_def, key="rem_año")
+
+    pedidos_sem = [
+        p for p in todos
+        if p["semana"] == semana and p["año"] == año
+        and p["status"] != "Cancelado"
+        and float(p.get("cantidad") or 0) > 0
+    ]
+
+    clientes_disp = sorted({p["cliente"] for p in pedidos_sem})
+    if not clientes_disp:
+        st.info(f"Sin pedidos activos para semana {semana}/{año}.")
+        return
+
+    cli_sel  = fc3.selectbox("Cliente", clientes_disp, key="rem_cli")
+    status_f = fc4.selectbox("Status", ["Todos","Pendiente","Entregado"],
+                              key="rem_status")
+
+    # ── Pedidos del cliente seleccionado ───────────────────────────────────
+    pedidos_cli = [
+        p for p in pedidos_sem
+        if p["cliente"] == cli_sel
+        and (status_f == "Todos" or p["status"] == status_f)
+    ]
+
+    if not pedidos_cli:
+        st.info("Sin pedidos con esos filtros.")
+        return
+
+    fechas    = [p["fecha"] for p in pedidos_cli if p["fecha"]]
+    fecha_str = max(fechas).strftime("%d/%m/%Y") if fechas else f"Sem {semana}"
+
+    lineas = [{
+        "producto": p["producto"],
+        "unidad":   p.get("unidad", ""),
+        "cantidad": float(p.get("cantidad") or 0),
+        "total":    round(float(p.get("precio") or 0) *
+                          float(p.get("cantidad") or 0), 2),
+    } for p in sorted(pedidos_cli, key=lambda x: x["producto"])]
+
+    total_cli = sum(l["total"] for l in lineas)
+    st.caption(f"{cli_sel} · {len(lineas)} línea(s) · "
+               f"Total: Q{total_cli:,.2f} · Entrega: {fecha_str}")
+
+    # ── Generar PDF ────────────────────────────────────────────────────────
+    try:
+        pdf_bytes = generar_remision(cli_sel, lineas, semana, año, fecha_str)
+    except Exception as e:
+        st.error(f"Error generando PDF: {e}")
+        return
+
+    pdf_b64  = base64.b64encode(pdf_bytes).decode()
+    nom_file = "".join(ch for ch in cli_sel if ch.isalnum() or ch=="_")
+
+    # ── Botones ────────────────────────────────────────────────────────────
+    bb1, bb2 = st.columns(2)
+
+    # Botón imprimir directo (nueva pestaña, sin descarga)
+    html_print = f"""
+    <script>
+    function imprimirRemision() {{
+        var b64  = '{pdf_b64}';
+        var raw  = atob(b64);
+        var arr  = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+        var blob = new Blob([arr], {{type:'application/pdf'}});
+        var url  = URL.createObjectURL(blob);
+        var win  = window.open(url, '_blank');
+        win.onload = function() {{ win.print(); }};
+    }}
+    </script>
+    <button onclick="imprimirRemision()" style="
+        background:#2D7A2D;color:white;border:none;border-radius:6px;
+        padding:8px 16px;font-size:14px;cursor:pointer;width:100%;
+        font-family:sans-serif">🖨️ Imprimir</button>
+    """
+    with bb1:
+        components.html(html_print, height=48)
+
+    bb2.download_button(
+        "📥 Descargar PDF",
+        data=pdf_bytes,
+        file_name=f"Remision_{nom_file}_Sem{semana}_{año}.pdf",
+        mime="application/pdf",
+        key=f"rem_dl_{cli_sel}_{semana}_{año}",
+        use_container_width=True,
+    )
+
+    # ── Vista previa embebida ──────────────────────────────────────────────
+    st.markdown("**Vista previa:**")
+    components.html(
+        f"""
+        <div style="width:100%;height:680px;">
+          <iframe id="rem-frame" width="100%" height="680px"
+                  style="border:1px solid #ddd;border-radius:4px;"></iframe>
+        </div>
+        <script>
+        (function(){{
+          var b64 = '{pdf_b64}';
+          var raw = atob(b64);
+          var arr = new Uint8Array(raw.length);
+          for(var i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+          var blob = new Blob([arr],{{type:'application/pdf'}});
+          document.getElementById('rem-frame').src = URL.createObjectURL(blob);
+        }})();
+        </script>
+        """,
+        height=700,
+        scrolling=False,
+    )
+
+
 def _ajuste_precios():
     """Actualiza precios de productos en pedidos de la semana actual + catálogo."""
     import pandas as pd
@@ -517,10 +645,11 @@ def mostrar():
     if not todos:
         st.info("No hay pedidos registrados."); return
 
-    tab_rev, tab_mod, tab_prec = st.tabs(["🔍 Revisar Pedidos", "✏️ Editar Pedidos", "💲 Ajuste Precio y Costo"])
+    tab_rev, tab_mod, tab_prec, tab_rem = st.tabs(["🔍 Revisar Pedidos", "✏️ Editar Pedidos", "💲 Ajuste Precio y Costo", "📄 Remisión"])
     with tab_rev: _revisar(todos)
     with tab_mod: _modificar(todos)
     with tab_prec: _ajuste_precios()
+    with tab_rem: _tab_remision(todos)
 
     # ── MIGRACIÓN (operación única) ───────────────────────────────────────────
     st.divider()
