@@ -189,27 +189,20 @@ def _tab_listados(todos, semana, año):
     for cli in clientes_dict:
         clientes_dict[cli].sort(key=lambda x: x["producto"])
 
-    # Algoritmo de balanceo greedy
     clientes_ord = sorted(clientes_dict.keys())
-    izq_rows, der_rows = [], []
-    izq_n, der_n = 0, 0
-    for cli in clientes_ord:
-        rows = clientes_dict[cli]
-        if izq_n <= der_n:
-            izq_rows.extend(rows); izq_n += len(rows)
-        else:
-            der_rows.extend(rows); der_n += len(rows)
-
-    total = len(izq_rows) + len(der_rows)
-    st.markdown(f"**{len(clientes_ord)} cliente(s) · {total} línea(s)**  "
-                f"· Columna izq: {len(izq_rows)} · Columna der: {len(der_rows)}")
-
+    total = sum(len(v) for v in clientes_dict.values())
+    st.markdown(f"**{len(clientes_ord)} cliente(s) · {total} línea(s)**")
     area_label = ", ".join(areas_sel)
 
     # ── Generar PDF ───────────────────────────────────────────────────────────
+    # Agrupar por cliente para empaque inteligente
+    clientes_grupos = []
+    for cli in clientes_ord:
+        clientes_grupos.append((cli, clientes_dict[cli]))
+
     with st.spinner("Generando listado..."):
         pdf_bytes = generar_listado_checklist(
-            izq_rows, der_rows, area_label, semana, año)
+            clientes_grupos, area_label, semana, año)
     pdf_b64 = base64.b64encode(pdf_bytes).decode()
 
     # Botones

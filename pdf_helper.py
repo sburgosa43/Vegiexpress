@@ -1076,14 +1076,78 @@ def generar_lista_compras(por_proveedor: dict, semana: int, año: int) -> bytes:
 
 
 # ── LISTADO CHECKLIST (Envíos) ────────────────────────────────────────────────
-def generar_listado_checklist(rows_izq: list, rows_der: list,
-                               area_label: str, semana: int, año: int) -> bytes:
+def _empacar_clientes(clientes_grupos, cap_col):
+    """
+    Empaca clientes completos en columnas.
+    Cuando sobra espacio busca el cliente más grande que quepa.
+    clientes_grupos: [(nombre, [rows])] ordenado alfabéticamente
+    Retorna: [(izq_rows, der_rows)] por página
+    """
+    pendientes = list(clientes_grupos)  # [(nombre, [rows])]
+    paginas    = []
+
+    def _mejor_que_quepa(pendientes_list, cap, excluir_idx=None):
+        """Retorna (idx, rows) del cliente más grande que quepa en cap."""
+        mejor_idx, mejor_n = None, 0
+        for i, (n, r) in enumerate(pendientes_list):
+            if i == excluir_idx: continue
+            if len(r) <= cap and len(r) > mejor_n:
+                mejor_idx, mejor_n = i, len(r)
+        return mejor_idx
+
+    while pendientes:
+        izq_rows, der_rows = [], []
+
+        for col_rows_ref in [izq_rows, der_rows]:
+            cap = cap_col
+
+            # Primer cliente disponible que quepa (en orden)
+            while pendientes:
+                # Buscar primer cliente en orden que quepa
+                primer_idx = None
+                for i, (n, r) in enumerate(pendientes):
+                    if len(r) <= cap:
+                        primer_idx = i
+                        break
+
+                if primer_idx is None:
+                    break  # Ninguno cabe — columna cerrada
+
+                nombre, rows = pendientes.pop(primer_idx)
+                col_rows_ref.extend(rows)
+                cap -= len(rows)
+
+                # Rellenar espacio sobrante con el mayor que quepa
+                while cap > 0 and pendientes:
+                    idx = _mejor_que_quepa(pendientes, cap)
+                    if idx is None:
+                        break
+                    nombre2, rows2 = pendientes.pop(idx)
+                    col_rows_ref.extend(rows2)
+                    cap -= len(rows2)
+
+                # Si se usó relleno, cerramos la columna
+                # (evitar mezclar demasiado el orden)
+                if cap < cap_col:
+                    break
+
+        paginas.append((izq_rows, der_rows))
+
+    return paginas
+
+
+def generar_listado_checklist(clientes_grupos: list,
+                               area_label: str,
+                               semana: int, año: int) -> bytes:
     """
     Portrait A4, 2 columnas, cuadrícula completa, sin colores.
-    rows_izq / rows_der: [{cliente, producto, unidad, cantidad}]
+    clientes_grupos: [(nombre_cliente, [rows])]
+      donde rows = [{cliente, producto, unidad, cantidad}]
+    Paginación inteligente: cada cliente queda completo en su columna.
     """
     from reportlab.lib.pagesizes import A4
     from reportlab.lib           import colors as rc
+    from reportlab.platypus      import PageBreak
     from datetime                import date
 
     buffer = BytesIO()
@@ -1091,23 +1155,28 @@ def generar_listado_checklist(rows_izq: list, rows_der: list,
     PW, PH   = A4
     CW       = PW - ML - MR          # 194mm
     GAP      = 3*mm
-    HW       = (CW - GAP) / 2        # ~95.5mm por mitad
+    HW       = (CW - GAP) / 2        # ~95.5mm
 
-    # Anchos de columna por mitad
-    wC = HW * 0.29   # Cliente
-    wP = HW * 0.35   # Producto
-    wU = HW * 0.13   # Unidad
-    wQ = HW * 0.12   # Cantidad
-    wX = HW * 0.11   # Check □
+    wC = HW * 0.29
+    wP = HW * 0.35
+    wU = HW * 0.13
+    wQ = HW * 0.12
+    wX = HW * 0.11
 
     NEGRO  = rc.black
     BLANCO = rc.white
+
+    # Altura estimada por fila (8pt font + padding) en puntos
+    ROW_H   = 12.5   # pts
+    HDR_H   = 30     # header página
+    COLHDR_H= 14     # encabezado columnas
+    AVAIL_H = PH - MT*2.8346 - MB*2.8346 - HDR_H - COLHDR_H
+    CAP_COL = max(20, int(AVAIL_H / ROW_H) - 2)  # filas por columna
 
     doc = SimpleDocTemplate(buffer, pagesize=A4,
         leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB)
     story = []
 
-    # Estilos
     def ts(name, **kw):
         d = dict(fontSize=8, fontName="Helvetica", textColor=NEGRO, leading=9.5)
         d.update(kw); return ParagraphStyle(name, **d)
@@ -1119,25 +1188,26 @@ def generar_listado_checklist(rows_izq: list, rows_der: list,
     s_td   = ts("td",   fontSize=8)
     s_td_c = ts("tdc",  fontSize=8, alignment=TA_CENTER)
 
-    today  = date.today().strftime("%d/%m/%Y")
+    today = date.today().strftime("%d/%m/%Y")
 
-    # ── Encabezado de página ──────────────────────────────────────────────────
-    hdr = Table([[
-        _p(f"VeggiExpress — Listado de Empaque", s_hdr),
-        _p(f"Área: {area_label}  ·  Semana {semana}/{año}  ·  {today}", s_sub),
-    ]], colWidths=[CW * 0.55, CW * 0.45])
-    hdr.setStyle(TableStyle([
-        ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
-        ("TOPPADDING",    (0,0),(-1,-1), 0),
-        ("BOTTOMPADDING", (0,0),(-1,-1), 2),
-    ]))
-    story.append(hdr)
-    story.append(HRFlowable(width="100%", thickness=0.8,
-                             color=NEGRO, spaceAfter=2*mm))
+    def make_page_header():
+        hdr = Table([[
+            _p("VeggiExpress — Listado de Empaque", s_hdr),
+            _p(f"Área: {area_label}  ·  Semana {semana}/{año}  ·  {today}", s_sub),
+        ]], colWidths=[CW * 0.55, CW * 0.45])
+        hdr.setStyle(TableStyle([
+            ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+            ("TOPPADDING",(0,0),(-1,-1),0),
+            ("BOTTOMPADDING",(0,0),(-1,-1),2),
+        ]))
+        return hdr
 
-    # ── Construir filas balanceando columnas ──────────────────────────────────
-    def make_half_rows(rows):
-        """Convierte lista de dicts en filas de tabla."""
+    COL_HDR = [
+        _p("Cliente",s_col), _p("Producto",s_col),
+        _p("Unidad",s_col),  _p("Cant.",s_col), _p("□",s_col),
+    ]
+
+    def build_col_rows(rows):
         out = []
         for r in rows:
             out.append([
@@ -1145,60 +1215,60 @@ def generar_listado_checklist(rows_izq: list, rows_der: list,
                 _p(_s(r["producto"]), s_td),
                 _p(_s(r["unidad"]),   s_td_c),
                 _p(f"{r['cantidad']:g}", s_td_c),
-                "",   # check □
+                "",
             ])
         return out
 
-    COL_HDR = [
-        _p("Cliente",  s_col), _p("Producto", s_col),
-        _p("Unidad",   s_col), _p("Cant.",    s_col),
-        _p("□",        s_col),
-    ]
+    cw_all = [wC,wP,wU,wQ,wX, GAP, wC,wP,wU,wQ,wX]
 
-    fi = make_half_rows(rows_izq)
-    fd = make_half_rows(rows_der)
-
-    # Emparejar filas (rellenar con celdas vacías)
-    max_r = max(len(fi), len(fd))
-    vacia = ["", "", "", "", ""]
-    combined_rows = [COL_HDR + [""] + COL_HDR]   # fila de encabezados
-    for j in range(max_r):
-        li = fi[j] if j < len(fi) else list(vacia)
-        ri = fd[j] if j < len(fd) else list(vacia)
-        combined_rows.append(li + [""] + ri)
-
-    cw_all = [wC, wP, wU, wQ, wX, GAP, wC, wP, wU, wQ, wX]
-    tbl = Table(combined_rows, colWidths=cw_all,
-                repeatRows=1, splitByRow=True)
-
-    ts_style = TableStyle([
-        # Encabezado
+    ts_tbl = TableStyle([
         ("FONTNAME",     (0,0),(4,0), "Helvetica-Bold"),
         ("FONTNAME",     (6,0),(10,0),"Helvetica-Bold"),
         ("FONTSIZE",     (0,0),(-1,-1), 8),
-        ("LINEBELOW",    (0,0),(4,0),  0.8, NEGRO),
-        ("LINEBELOW",    (6,0),(10,0), 0.8, NEGRO),
-        # Grid izquierdo (cols 0-4)
+        ("LINEBELOW",    (0,0),(4,0), 0.8, NEGRO),
+        ("LINEBELOW",    (6,0),(10,0),0.8, NEGRO),
         ("BOX",          (0,0),(4,-1), 0.5, NEGRO),
         ("INNERGRID",    (0,0),(4,-1), 0.3, NEGRO),
-        # Grid derecho (cols 6-10)
         ("BOX",          (6,0),(10,-1),0.5, NEGRO),
         ("INNERGRID",    (6,0),(10,-1),0.3, NEGRO),
-        # Separador central invisible
         ("BOX",          (5,0),(5,-1), 0, BLANCO),
         ("INNERGRID",    (5,0),(5,-1), 0, BLANCO),
-        # Padding
         ("TOPPADDING",   (0,0),(-1,-1), 1.5),
         ("BOTTOMPADDING",(0,0),(-1,-1), 1.5),
         ("LEFTPADDING",  (0,0),(-1,-1), 2),
         ("RIGHTPADDING", (0,0),(-1,-1), 2),
         ("VALIGN",       (0,0),(-1,-1), "MIDDLE"),
-        # Check col ancho centrado
         ("ALIGN",        (4,0),(4,-1), "CENTER"),
         ("ALIGN",        (10,0),(10,-1),"CENTER"),
     ])
-    tbl.setStyle(ts_style)
-    story.append(tbl)
+
+    # ── Empacar y generar páginas ─────────────────────────────────────────────
+    paginas = _empacar_clientes(clientes_grupos, CAP_COL)
+
+    for p_idx, (izq_rows, der_rows) in enumerate(paginas):
+        if p_idx > 0:
+            story.append(PageBreak())
+
+        story.append(make_page_header())
+        story.append(HRFlowable(width="100%", thickness=0.8,
+                                 color=NEGRO, spaceAfter=2*mm))
+
+        fi = build_col_rows(izq_rows)
+        fd = build_col_rows(der_rows)
+        max_r = max(len(fi), len(fd), 1)
+        vacia = ["","","","",""]
+
+        tabla_rows = [COL_HDR + [""] + COL_HDR]
+        for j in range(max_r):
+            li = fi[j] if j < len(fi) else list(vacia)
+            ri = fd[j] if j < len(fd) else list(vacia)
+            tabla_rows.append(li + [""] + ri)
+
+        tbl = Table(tabla_rows, colWidths=cw_all,
+                    repeatRows=1, splitByRow=False)
+        tbl.setStyle(ts_tbl)
+        story.append(tbl)
 
     doc.build(story)
     return buffer.getvalue()
+
