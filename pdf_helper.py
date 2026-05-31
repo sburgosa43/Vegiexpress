@@ -1,4 +1,7 @@
 """
+pdf_helper.py — Generación de PDFs para VeggiExpress
+Organizado en secciones: Helpers | Envíos | Facturación | Cotización | Proveedores | Checklist | Remisión
+
 pdf_helper.py — Generación de PDF de Envío con branding VeggiExpress
 Usa reportlab para diseño preciso con logo, colores de marca y tabla de productos.
 """

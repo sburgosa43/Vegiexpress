@@ -508,7 +508,7 @@ _HIST_HEADERS   = [
 ]
 
 
-def guardar_cambios_precio(cambios: list) -> int:
+def guardar_cambios_precio(cambios: list, actualizar_catalogo: bool = False) -> int:
     """
     Para cada línea con precio modificado:
       1. Actualiza el precio en la hoja Pedidos (col E)

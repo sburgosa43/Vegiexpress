@@ -222,10 +222,17 @@ def _modificar(todos):
                 st.divider()
 
                 # Líneas — sin botón individual, detecta cambios para la cola
-                hdr = st.columns([3.5, 1.5, 1.5])
+                # Checkbox actualizar catálogo (por pedido)
+                upd_cat = st.checkbox("También actualizar precio en catálogo",
+                                       key=f"upd_cat_mod_{unico}",
+                                       help="Actualiza Listado de Productos")
+
+                hdr = st.columns([3.5, 1.2, 1.5, 1.8, 1.8])
                 hdr[0].markdown("**Producto**")
                 hdr[1].markdown("**Cantidad**")
                 hdr[2].markdown("**Precio (Q)**")
+                hdr[3].markdown("**Costo · P.Eq.**")
+                hdr[4].markdown("**Margen**")
 
                 cambios_pedido = 0
                 for linea in lineas:
@@ -233,7 +240,7 @@ def _modificar(todos):
                     uid = f"mod_{rn}"
                     lineas_originales[rn] = linea
 
-                    ec1, ec2, ec3 = st.columns([3.5, 1.5, 1.5])
+                    ec1, ec2, ec3 = st.columns([3.5, 1.2, 1.5])
                     prod_nuevo = ec1.selectbox("",  prods_lista,
                         index=(prods_lista.index(linea["producto"])
                                if linea["producto"] in prods_lista else 0),
@@ -267,7 +274,7 @@ def _modificar(todos):
                         f"</div>", unsafe_allow_html=True)
 
                 # ── Agregar nuevas líneas ─────────────────────────────────────
-                st.markdown("---")
+                st.divider()
                 st.markdown("**➕ Agregar productos a este pedido:**")
                 key_nv = f"mod_nuevas_{unico}"
                 if key_nv not in st.session_state:

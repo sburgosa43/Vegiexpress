@@ -9,21 +9,13 @@ from excel_helper import leer_pedidos
 from data_helper  import cargar_clientes
 from pdf_helper   import (generar_facturacion_mensual,
                            nombre_archivo_factura, MESES_ES)
+from config       import (ZONAS_MAP, COLORES_ZONA, ISR_UMBRAL,
+                           calcular_liquido, excluido_dashboard)
 
 # Excluir mismos clientes que el dashboard
 
-ZONAS_MAP = {
-    "🔖 Antigua & Chimal":      ["L03", "L04"],
-    "🏙️ Guatemala & Santiago":  ["L05", "L06"],
-    "🌊 Rio":                   ["L01"],
-}
-COLORES_ZONA = {
-    "🔖 Antigua & Chimal":      "#2D7A2D",
-    "🏙️ Guatemala & Santiago":  "#8DC63F",
-    "🌊 Rio":                   "#4A4A4A",
-}
-
-def _excluido(nombre): return False  # Todos los clientes aparecen en facturación
+# ZONAS_MAP y COLORES_ZONA vienen de config.py
+# _excluido eliminado — todos los clientes aparecen en facturación
 
 def _zona_cliente(c: dict) -> str:
     for zona, cods in ZONAS_MAP.items():
@@ -44,7 +36,6 @@ def _construir_datos(pedidos: list, mes: int, año: int) -> dict:
         if not p["fecha"]:             continue
         if p["fecha"].month != mes:    continue
         if p["fecha"].year  != año:    continue
-        if _excluido(p["cliente"]):    continue
         if not p["producto"]:          continue
 
         cli  = p["cliente"]
@@ -101,10 +92,14 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
             lineas_sem = bloque["lineas"]
             sub_sem    = sum(l["total"] for l in lineas_sem)
 
+            liq_sem, isr_sem, desc_sem = calcular_liquido(cli_nombre, sub_sem)
             base_sem = round(sub_sem / 1.12, 2)
-            isr_sem  = round(base_sem * 0.05, 2) if sub_sem >= 2500 else 0.0
-            liq_sem  = round(sub_sem - isr_sem, 2)
-            isr_txt  = f"ISR: Q{isr_sem:,.2f}  ·  " if isr_sem > 0 else ""
+            if desc_sem > 0:
+                isr_txt = f"Desc.15%: Q{desc_sem:,.2f}  ·  "
+            elif isr_sem > 0:
+                isr_txt = f"ISR: Q{isr_sem:,.2f}  ·  "
+            else:
+                isr_txt = ""
             st.markdown(
                 f"<div style='background:#2D7A2D;color:white;padding:6px 10px;"
                 f"border-radius:4px;font-size:.82rem;font-weight:bold;"
@@ -157,7 +152,8 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
 
         # Totales con fórmulas fiscales correctas
         base_iva  = round(total / 1.12, 2)                          # Base sin IVA
-        isr_ret   = round(base_iva * 0.05, 2) if total >= 2500 else 0.0   # ISR solo si >= Q2,500
+        liq_total, isr_ret, desc_ret = calcular_liquido(cli_nombre, total)
+        isr_ret   = isr_ret  # ya calculado con exenciones
         liquido   = round(total - isr_ret, 2)                       # Líquido a recibir
 
         tc1, tc2, tc3, tc4 = st.columns(4)

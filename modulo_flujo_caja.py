@@ -4,31 +4,20 @@ Tabla de 8 semanas (4 pasadas, actual, 3 futuras) con liquidez neta por cliente.
 Fase 1: clientes semanales GT/Río.
 """
 import streamlit as st
+from config import (REGLAS_PAGO as REGLAS, ISR_UMBRAL,
+                     ZONA_GT_RIO, excluido_dashboard as _excluido_fc)
 import pandas as pd
 from datetime import date, timedelta
 from excel_helper import leer_pedidos
 from data_helper  import cargar_clientes
 
-# ── Configuración de clientes especiales ─────────────────────────────────────
-# lag: semanas entre entrega y pago
-# isr: aplica ISR si factura ≥ Q2,800
-# desc: descuento % sobre factura (en lugar de ISR)
-REGLAS = {
-    "rodrigo":   {"lag": 3, "isr": True,  "desc": 0},
-    "4 pinos":   {"lag": 1, "isr": False, "desc": 0},
-    "nanajuana": {"lag": 1, "isr": True,  "desc": 0},
-    "tijax":     {"lag": 1, "isr": True,  "desc": 0},
-    "amis":      {"lag": 1, "isr": False, "desc": 15},
-    "hotelito":  {"lag": 0, "isr": False, "desc": 15},
-    "sundog":    {"lag": 0, "isr": False, "desc": 0},
-}
-ISR_UMBRAL   = 2800.0
+# Reglas vienen de config.py
 ZONA_GT_RIO  = ["L01", "L05", "L06"]
 ZONA_VEGGI   = ["L03", "L04"]
-EXCLUIR      = ["veggi", "chimalt", "wilson"]
 
 
-def _excluido(n): return any(x in n.lower() for x in EXCLUIR)
+
+def _excluido(n): return _excluido_fc(n)
 
 
 def _reglas(cliente_nombre: str) -> dict:

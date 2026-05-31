@@ -8,12 +8,9 @@ from excel_helper import (leer_pedidos, cancelar_pedido,
                           restaurar_pedido, guardar_cambios_precio)
 from data_helper  import cargar_clientes
 from pdf_helper   import generar_envio, nombre_archivo
+from config       import ZONAS_MAP as _ZONAS_CFG, excluido_dashboard
 
-ZONAS_ENVIO = {
-    "🔖 Antigua & Chimal":      ["L03", "L04"],
-    "🏙️ Guatemala & Santiago":  ["L05", "L06"],
-    "🌊 Rio":                   ["L01"],
-}
+ZONAS_ENVIO = _ZONAS_CFG   # Fuente única: config.py
 
 def _zona_de(codigo: str) -> str | None:
     for zona, codigos in ZONAS_ENVIO.items():
@@ -28,12 +25,7 @@ def _detectar_zona(l0: dict, mapa_exact: dict, mapa_lower: dict) -> str | None:
     cli   = _get_cli(l0["cliente"], mapa_exact, mapa_lower)
     zona  = _zona_de(cli.get("codigo_lugar", ""))
     if zona: return zona
-    # Fallback por texto de dirección
-    dir_l = str(l0.get("direccion", "")).lower()
-    if "antigua" in dir_l:   return "🔖 Antigua & Chimal"
-    if "chimal"  in dir_l:   return "🔖 Antigua & Chimal"
-    if "rio"     in dir_l:   return "🌊 Rio"
-    return None
+    return None  # Sin zona definida — revisar código_lugar del cliente
 
 def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
     l0        = lineas[0]

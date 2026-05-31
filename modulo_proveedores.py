@@ -4,13 +4,14 @@ Tab 1: A Pedir  — tablas por proveedor con columnas por área
 Tab 2: Resumen  — productos por Tipo Producto (Proceso/Fresco) con desglose por área
 """
 import streamlit as st
+from config import excluido_proveedores as _excluido_cfg
 import pandas as pd
 from datetime import date
 from excel_helper import leer_pedidos
 from data_helper  import cargar_productos, cargar_clientes
 from pdf_helper   import generar_lista_compras_proveedor
 
-EXCLUIR_CLIENTES = ["wilson"]
+# EXCLUIR_CLIENTES viene de config.py
 
 AREAS_PROV = [
     ("Ant-Chim", lambda cli, z: z in ["L03","L04"] and "chimalt" not in cli.lower()),
@@ -20,7 +21,7 @@ AREAS_PROV = [
 ]
 
 
-def _excluido(n): return any(x in n.lower() for x in EXCLUIR_CLIENTES)
+def _excluido(n): return _excluido_cfg(n)
 
 
 def _get_area(cliente, zona):

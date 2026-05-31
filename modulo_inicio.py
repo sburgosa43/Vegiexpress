@@ -3,6 +3,7 @@ modulo_inicio.py — Hub Principal / Página de Inicio VeggiExpress
 """
 import os
 import streamlit as st
+from config import excluido_dashboard as _excluido
 from datetime import date
 
 ZONAS_MAP = {
@@ -15,8 +16,7 @@ COLORES_ZONA = {
     "Guatemala & Santiago": "#8DC63F",
     "Rio":                  "#4A4A4A",
 }
-EXCLUIR = ["veggi", "chimalt", "wilson"]
-
+# EXCLUIR viene de config.py
 MODULOS = {
     "⚡ Operación": [
         ("📥", "Pedidos Entrantes", "Pedidos recibidos de clientes", "📥 Pedidos Entrantes"),

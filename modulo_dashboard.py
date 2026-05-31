@@ -3,6 +3,8 @@ modulo_dashboard.py — Dashboard VeggiExpress
 Períodos: Sem Actual | Sem Ant. | MTD | YTD | PYTD
 """
 import streamlit as st
+from config import (ZONAS_DASH, COLORES_ZONA_RUTAS, excluido_dashboard,
+                     EXCLUIR_DASHBOARD)
 import pandas as pd
 import plotly.express as px
 from datetime import date
@@ -479,17 +481,7 @@ def mostrar():
 # NUEVAS TABS: EVOLUCIÓN SEMANAL | SHARES | COMPARATIVO ANUAL
 # ══════════════════════════════════════════════════════════════════════════════
 
-ZONAS_DASH = {
-    "Todas":           ["L01", "L03", "L04", "L05", "L06"],
-    "GT + Santiago":   ["L05", "L06"],
-    "Río":             ["L01"],
-    "Antigua + Chimal":["L03", "L04"],
-}
-COLORES_ZONA_RUTAS = {
-    "GT + Santiago":    "#2D7A2D",
-    "Río":              "#8DC63F",
-    "Antigua + Chimal": "#F5A623",
-}
+# ZONAS_DASH y COLORES_ZONA_RUTAS vienen de config.py
 
 
 def _cli_zona_map(clientes):
