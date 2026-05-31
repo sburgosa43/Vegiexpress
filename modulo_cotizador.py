@@ -236,7 +236,16 @@ def _tab_escenarios():
 
     if filas:
         df = pd.DataFrame(filas)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, use_container_width=True, hide_index=True,
+                     column_config={
+                         "Margen %":         st.column_config.TextColumn(width="small"),
+                         "Precio venta (Q)": st.column_config.TextColumn(width="medium"),
+                         "Precio s/IVA":     st.column_config.TextColumn(width="medium"),
+                         "IVA (Q)":          st.column_config.TextColumn(width="medium"),
+                         "ISR ret. (Q)":     st.column_config.TextColumn(width="medium"),
+                         "Margen neto (Q)":  st.column_config.TextColumn(width="medium"),
+                         "Pto. Equilibrio":  st.column_config.TextColumn(width="medium"),
+                     })
         st.caption(
             f"Costo base: Q{costo:.2f} · "
             f"Punto de equilibrio: Q{costo * 1.12:.4f} · "

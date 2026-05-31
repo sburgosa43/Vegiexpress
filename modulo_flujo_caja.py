@@ -225,7 +225,10 @@ def mostrar():
         df_sem = pd.DataFrame(filas, index=cols_display).T
         df_sem.index.name = f"Semana {sem_act}/{año_act}"
         st.markdown(f"#### 💸 Pagos esperados — Semana {sem_act}/{año_act}")
-        st.dataframe(df_sem, use_container_width=True)
+        st.dataframe(df_sem, use_container_width=True,
+                     column_config={"": st.column_config.TextColumn(width="medium"),
+                                    **{c: st.column_config.TextColumn(width="small")
+                                       for c in df_sem.columns if c != ""}})
         st.divider()
 
     # ── Tabla ─────────────────────────────────────────────────────────────────
@@ -268,7 +271,10 @@ def mostrar():
         st.markdown(f"#### 🇬🇹 GT / Río — Sergio  ·  "
                     f"Total ventana: **Q{total_global:,.0f}**")
         st.caption("★ semana actual  · ~ proyección basada en historial")
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, use_container_width=True,
+                     column_config={c: st.column_config.TextColumn(width="small")
+                                    for c in df.columns if c != "Cliente"}
+                     | {"Cliente": st.column_config.TextColumn(width="large")})
     else:
         st.info("Sin datos para el período seleccionado.")
 

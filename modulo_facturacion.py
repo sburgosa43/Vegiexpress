@@ -262,8 +262,7 @@ def mostrar():
             if p["fecha"] and p["fecha"].month == mes_sel
             and p["fecha"].year == año_sel
             and p["status"] != "Cancelado"
-            and not _excluido(p["cliente"])
-        })
+            })
         cli_filtro = st.selectbox(
             "Cliente", ["Todos"] + clientes_disp, key="fact_cli")
 

@@ -695,7 +695,13 @@ def _tab_shares(todos, clientes):
             if rows_tabla:
                 import pandas as pd
                 st.dataframe(pd.DataFrame(rows_tabla), hide_index=True,
-                             use_container_width=True)
+                             use_container_width=True,
+                             column_config={
+                                 dim[:-1]:  st.column_config.TextColumn(width="large"),
+                                 "Actual":  st.column_config.TextColumn(width="small"),
+                                 "Ant.":    st.column_config.TextColumn(width="small"),
+                                 "Var.":    st.column_config.TextColumn(width="small"),
+                             })
     else:
         st.info("Sin datos para el período y zona seleccionados.")
 
