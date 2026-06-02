@@ -274,7 +274,7 @@ def mostrar():
         st.dataframe(df, use_container_width=True,
                      column_config={c: st.column_config.TextColumn(width="small")
                                     for c in df.columns if c != "Cliente"}
-                     | {"Cliente": st.column_config.TextColumn(width="large")})
+                     | {"Cliente": st.column_config.TextColumn(width="medium")})
     else:
         st.info("Sin datos para el período seleccionado.")
 

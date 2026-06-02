@@ -73,7 +73,7 @@ def mostrar():
             df_show["Precio"]= df_show["Precio"].apply(lambda x: f"Q{x:,.2f}")
             st.dataframe(df_show, hide_index=True, use_container_width=True,
                          column_config={
-                             "Producto":  st.column_config.TextColumn(width="large"),
+                             "Producto":  st.column_config.TextColumn(width="medium"),
                              "Cantidad":  st.column_config.NumberColumn(width="small"),
                              "Unidad":    st.column_config.TextColumn(width="small"),
                              "Precio":    st.column_config.TextColumn(width="small"),

@@ -254,6 +254,26 @@ def _modificar(todos):
                         step=0.25, key=f"{uid}_prec",
                         label_visibility="collapsed")
 
+                    # ── Contexto financiero ───────────────────────────────
+                    prod_info = prods_cat.get(prod_nuevo, {})
+                    costo_p   = float(prod_info.get("costo", linea.get("costo", 0)) or 0)
+                    pto_eq    = round(costo_p * 1.12, 2) if costo_p > 0 else 0
+                    margen_p  = round(0.95 * (1 - costo_p * 1.12 / prec_nuevo), 4)                                 if (costo_p > 0 and prec_nuevo > 0) else 0
+                    if costo_p > 0:
+                        bajo_eq = prec_nuevo > 0 and prec_nuevo < pto_eq
+                        c_eq    = "#c62828" if bajo_eq else "#555"
+                        c_mg    = "#c62828" if margen_p < 0 else                                   "#e65100" if margen_p < 0.15 else "#2D7A2D"
+                        fi1, fi2 = st.columns([3.5, 3.2])
+                        fi1.markdown(
+                            f"<small style='color:#888'>Costo Q{costo_p:.2f} · "
+                            f"<span style='color:{c_eq}'>Eq:Q{pto_eq:.2f}"
+                            f"{'  ⚠️ bajo equilibrio' if bajo_eq else ''}</span></small>",
+                            unsafe_allow_html=True)
+                        fi2.markdown(
+                            f"<small style='color:{c_mg}'>"
+                            f"Margen: {margen_p*100:.1f}%</small>",
+                            unsafe_allow_html=True)
+
                     # Indicadores de cambio
                     hay_diff = []
                     if prod_nuevo and prod_nuevo != linea["producto"]:
@@ -504,27 +524,48 @@ def _tab_remision(todos: list):
         use_container_width=True,
     )
 
-    # ── Vista previa embebida ──────────────────────────────────────────────
+    # ── Vista previa con PDF.js (evita bloqueo de Chrome) ───────────────
     st.markdown("**Vista previa:**")
     components.html(
         f"""
-        <div style="width:100%;height:680px;">
-          <iframe id="rem-frame" width="100%" height="680px"
-                  style="border:1px solid #ddd;border-radius:4px;"></iframe>
+        <div id="pdf-container" style="width:100%;height:700px;
+             border:1px solid #ddd;border-radius:4px;overflow:hidden;">
+          <canvas id="pdf-canvas" style="width:100%;"></canvas>
         </div>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
         <script>
-        (function(){{
-          var b64 = '{pdf_b64}';
-          var raw = atob(b64);
-          var arr = new Uint8Array(raw.length);
-          for(var i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
-          var blob = new Blob([arr],{{type:'application/pdf'}});
-          document.getElementById('rem-frame').src = URL.createObjectURL(blob);
-        }})();
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        var b64 = '{pdf_b64}';
+        var raw = atob(b64);
+        var arr = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+
+        var loadTask = pdfjsLib.getDocument({{data: arr}});
+        loadTask.promise.then(function(pdf) {{
+          var container = document.getElementById('pdf-container');
+          container.innerHTML = '';
+          for (var p = 1; p <= pdf.numPages; p++) {{
+            (function(pageNum) {{
+              pdf.getPage(pageNum).then(function(page) {{
+                var vp  = page.getViewport({{scale: 1.5}});
+                var cvs = document.createElement('canvas');
+                cvs.width  = vp.width;
+                cvs.height = vp.height;
+                cvs.style.width  = '100%';
+                cvs.style.display= 'block';
+                cvs.style.marginBottom = '4px';
+                container.appendChild(cvs);
+                page.render({{canvasContext: cvs.getContext('2d'), viewport: vp}});
+              }});
+            }})(p);
+          }}
+        }});
         </script>
         """,
-        height=700,
-        scrolling=False,
+        height=720,
+        scrolling=True,
     )
 
 
@@ -575,7 +616,7 @@ def _ajuste_precios():
     edited = st.data_editor(
         df,
         column_config={
-            "Producto":     st.column_config.TextColumn(disabled=True, width="large"),
+            "Producto":     st.column_config.TextColumn(disabled=True, width="medium"),
             "Costo Actual": st.column_config.NumberColumn(disabled=True,
                              format="Q%.2f", width="small"),
             "Costo Nuevo":  st.column_config.NumberColumn(

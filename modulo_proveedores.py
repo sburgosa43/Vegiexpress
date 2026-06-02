@@ -261,7 +261,7 @@ def mostrar():
 
                 col_cfg = {
                     "Producto":  st.column_config.TextColumn(
-                        "Producto",  disabled=True, width="large"),
+                        "Producto",  disabled=True, width="medium"),
                     "Unidad":    st.column_config.TextColumn(
                         "Unidad",   disabled=True, width="small"),
                     total_col:   st.column_config.NumberColumn(

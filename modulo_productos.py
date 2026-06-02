@@ -26,7 +26,7 @@ SEGS_PCT   = {"Premium":50,"Alto":40,"Media Alta":35,"Media":30,
 
 # ── Columnas fijas para todas las tablas ──────────────────────────────────────
 COL_CFG_LISTA = {
-    "Producto":    st.column_config.TextColumn("Producto",   disabled=True, width="large"),
+    "Producto":    st.column_config.TextColumn("Producto",   disabled=True, width="medium"),
     "Unidad":      st.column_config.TextColumn("Unidad",     disabled=True, width="small"),
     "Segmento":    st.column_config.TextColumn("Segmento",   disabled=True, width="medium"),
     "Tipo":        st.column_config.TextColumn("Tipo",       disabled=True, width="medium"),

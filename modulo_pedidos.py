@@ -156,7 +156,7 @@ def _paso2():
         st.session_state.ped_grid,
         column_config={
             "Producto": st.column_config.SelectboxColumn(
-                "Producto", options=nombres, required=False, width="large"),
+                "Producto", options=nombres, required=False, width="medium"),
             "Cantidad": st.column_config.NumberColumn(
                 "Cantidad", min_value=0.0, step=0.5, format="%.1f", width="small"),
         },
