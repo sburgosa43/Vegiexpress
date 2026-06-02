@@ -58,6 +58,7 @@ def _construir_datos(pedidos: list, mes: int, año: int) -> dict:
                             float(p["precio"] or 0) * float(p["cantidad"] or 0))
         resultado[cli]["por_semana"][sem]["lineas"].append({
             "producto": p["producto"],
+            "fecha":    p["fecha"],
             "cantidad": p["cantidad"],
             "unidad":   p["unidad"],
             "precio":   p["precio"],
@@ -65,11 +66,11 @@ def _construir_datos(pedidos: list, mes: int, año: int) -> dict:
         })
         resultado[cli]["total_mes"] += total_linea
 
-    # Ordenar líneas de cada semana por nombre de producto
+    # Ordenar semanas y líneas de forma ascendente por fecha y producto
     for cli in resultado:
         for sem in resultado[cli]["por_semana"]:
             resultado[cli]["por_semana"][sem]["lineas"].sort(
-                key=lambda x: x["producto"])
+                key=lambda x: (x.get("fecha") or date.min, x["producto"]))
 
     return resultado
 
@@ -113,16 +114,19 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
                 f"Líquido: Q{liq_sem:,.2f}</span></div>",
                 unsafe_allow_html=True)
 
-            hdr = st.columns([4, 1.2, 1.5, 1.5])
-            hdr[0].markdown("**Producto**"); hdr[1].markdown("**Cant.**")
-            hdr[2].markdown("**Precio**");   hdr[3].markdown("**Total**")
+            hdr = st.columns([3, 1.5, 1.2, 1.5, 1.5])
+            hdr[0].markdown("**Producto**"); hdr[1].markdown("**Fecha**")
+            hdr[2].markdown("**Cant.**");    hdr[3].markdown("**Precio**")
+            hdr[4].markdown("**Total**")
 
             for l in lineas_sem:
-                r = st.columns([4, 1.2, 1.5, 1.5])
+                r = st.columns([3, 1.5, 1.2, 1.5, 1.5])
                 r[0].write(l["producto"])
-                r[1].write(f"{l['cantidad']:g} {l['unidad']}")
-                r[2].write(f"Q{l['precio']:,.2f}")
-                r[3].write(f"Q{l['total']:,.2f}")
+                fecha_l = l.get("fecha")
+                r[1].write(fecha_l.strftime("%d/%m/%Y") if fecha_l else "—")
+                r[2].write(f"{l['cantidad']:g} {l['unidad']}")
+                r[3].write(f"Q{l['precio']:,.2f}")
+                r[4].write(f"Q{l['total']:,.2f}")
 
         st.divider()
 

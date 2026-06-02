@@ -633,12 +633,13 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
     story.append(Spacer(1, 5*mm))
 
     # ── DETALLE POR SEMANA ────────────────────────────────────────────────────
-    col_w = [8*mm, 70*mm, 16*mm, 22*mm, 28*mm, CW-8*mm-70*mm-16*mm-22*mm-28*mm]
+    col_w = [8*mm, 58*mm, 22*mm, 14*mm, 20*mm, 24*mm, CW-8*mm-58*mm-22*mm-14*mm-20*mm-24*mm]
 
     # Encabezado de tabla
     encab = [
         _p("#",         S2["th"]),
         _p("Producto",  S2["th"]),
+        _p("Fecha",     S2["th"]),
         _p("Cant.",     S2["th_r"]),
         _p("Unidad",    S2["th"]),
         _p("Precio",    S2["th_r"]),
@@ -683,9 +684,12 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
             prod_agg[prod]["cantidad"] += cant
             prod_agg[prod]["total"]    += subtot
 
+            fecha_l  = l.get("fecha")
+            fecha_str = fecha_l.strftime("%d/%m/%y") if fecha_l else ""
             filas_bloque.append([
                 _p(str(n_linea),           S2["td"]),
                 _p(_s(prod),               S2["td"]),
+                _p(fecha_str,              S2["td"]),
                 _p(f"{cant:g}",            S2["td_r"]),
                 _p(_s(l.get("unidad","")), S2["td"]),
                 _p(f"Q {precio:,.2f}",     S2["td_r"]),
