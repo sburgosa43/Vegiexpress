@@ -26,18 +26,15 @@ SEGS_PCT   = {"Premium":50,"Alto":40,"Media Alta":35,"Media":30,
 
 # ── Columnas fijas para todas las tablas ──────────────────────────────────────
 COL_CFG_LISTA = {
-    "Producto":    st.column_config.TextColumn("Producto",   disabled=True, width="medium"),
-    "Unidad":      st.column_config.TextColumn("Unidad",     disabled=True, width="small"),
-    "Segmento":    st.column_config.TextColumn("Segmento",   disabled=True, width="medium"),
-    "Tipo":        st.column_config.TextColumn("Tipo",       disabled=True, width="medium"),
-    "Proveedor":   st.column_config.TextColumn("Proveedor",  disabled=True, width="medium"),
-    "Costo":       st.column_config.NumberColumn("Costo",    disabled=True,
-                    format="Q%.2f", width="small"),
-    "Precio":      st.column_config.NumberColumn("Precio",   disabled=True,
-                    format="Q%.2f", width="small"),
-    "P.Equilibrio":st.column_config.NumberColumn("P.Equilibrio", disabled=True,
-                    format="Q%.2f", width="small"),
-    "En Catálogo": st.column_config.CheckboxColumn("En Catálogo ✅", width="small"),
+    "Producto":     st.column_config.TextColumn("Producto",      disabled=True, width="medium"),
+    "Unidad":       st.column_config.TextColumn("Unidad",        disabled=True, width="small"),
+    "Costo":        st.column_config.NumberColumn("Costo",       disabled=True,
+                     format="Q%.2f", width="small"),
+    "Precio":       st.column_config.NumberColumn("Precio",      disabled=True,
+                     format="Q%.2f", width="small"),
+    "P.Equilibrio": st.column_config.NumberColumn("P.Equilibrio",disabled=True,
+                     format="Q%.2f", width="small"),
+    "En Catálogo":  st.column_config.CheckboxColumn("En Catálogo ✅", width="small"),
 }
 
 
@@ -170,8 +167,6 @@ def _precios_tabla(es_antigua: bool):
         "row_num":      p["row_num"],
         "Producto":     p["nombre"],
         "Unidad":       p["unidad"],
-        "Segmento":     p.get("segmento",""),
-        "Proveedor":    p.get("proveedor",""),
         "Costo":        p["costo"],
         "Precio":       p["precio"],
         "P.Equilibrio": round(p["costo"] * 1.12, 2) if p["costo"] > 0 else 0,
