@@ -408,11 +408,22 @@ def _cotizacion():
 
     if lineas_pdf:
         st.success(f"**{len(lineas_pdf)} producto(s)** listos para el PDF.")
+
+        notas_cot = st.text_area(
+            "",
+            placeholder="Ej: Precios sin IVA · Precios sujetos a cambio · "
+                        "Disponibilidad sujeta a programa de siembra...",
+            height=90,
+            key="cot_notas",
+            label_visibility="collapsed",
+        )
+
         if st.button("📄 Generar PDF de Cotización", type="primary"):
             with st.spinner("Generando PDF..."):
                 pdf_bytes = generar_cotizacion(lineas_pdf, desde, hasta,
                                        cotizador=cotizador_nombre,
-                                       cotizador_tel=cotizador_tel)
+                                       cotizador_tel=cotizador_tel,
+                                       notas=notas_cot)
             nombre = f"Cotizacion_VeggiExpress_{desde.strftime('%d%m%Y')}.pdf"
             st.download_button("📥 Descargar PDF", data=pdf_bytes,
                 file_name=nombre, mime="application/pdf",

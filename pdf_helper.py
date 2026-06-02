@@ -808,7 +808,8 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
 
 # ── COTIZACIÓN DE PRECIOS ─────────────────────────────────────────────────────
 def generar_cotizacion(lineas: list, desde: "date", hasta: "date",
-                       cotizador: str = "", cotizador_tel: str = "") -> bytes:
+                       cotizador: str = "", cotizador_tel: str = "",
+                       notas: str = "") -> bytes:
     """
     PDF de cotización de precios para prospección o actualización de precios.
     lineas: [{producto, unidad, precio_cotizar}]
@@ -891,7 +892,11 @@ def generar_cotizacion(lineas: list, desde: "date", hasta: "date",
     firma_style = ParagraphStyle("firma", fontSize=9, fontName="Helvetica",
                                   textColor=GRIS_CARB, leading=13)
 
-    story.append(_p(_s("Precios sujetos a cambios por disponibilidad."), nota_style))
+    _notas_txt = notas.strip() if notas and notas.strip() \
+                 else "Precios sujetos a cambios por disponibilidad."
+    for linea_nota in _notas_txt.splitlines():
+        if linea_nota.strip():
+            story.append(_p(_s(linea_nota.strip()), nota_style))
     story.append(Spacer(1, 4*mm))
     story.append(_p("Saludos cordiales,", firma_style))
     story.append(Spacer(1, 1*mm))
