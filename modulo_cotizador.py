@@ -286,6 +286,17 @@ def _cotizacion():
                                key="cot_hasta")
 
     st.divider()
+
+    # Quién cotiza
+    COTIZADORES = {
+        "Andrea Castillo Sanabria": "Tel. 59306817",
+        "Sergio Burgos Alburez":    "Tel. 58749679",
+    }
+    cotizador_nombre = st.selectbox("Elaborado por:", list(COTIZADORES.keys()),
+                                     key="cot_quien")
+    cotizador_tel    = COTIZADORES[cotizador_nombre]
+
+    st.divider()
     st.markdown("**Productos a cotizar** — seleccioná y ajustá el precio:")
 
     SEGS = {"Premium":50,"Alto":40,"Media Alta":35,"Media":30,
@@ -399,7 +410,9 @@ def _cotizacion():
         st.success(f"**{len(lineas_pdf)} producto(s)** listos para el PDF.")
         if st.button("📄 Generar PDF de Cotización", type="primary"):
             with st.spinner("Generando PDF..."):
-                pdf_bytes = generar_cotizacion(lineas_pdf, desde, hasta)
+                pdf_bytes = generar_cotizacion(lineas_pdf, desde, hasta,
+                                       cotizador=cotizador_nombre,
+                                       cotizador_tel=cotizador_tel)
             nombre = f"Cotizacion_VeggiExpress_{desde.strftime('%d%m%Y')}.pdf"
             st.download_button("📥 Descargar PDF", data=pdf_bytes,
                 file_name=nombre, mime="application/pdf",
