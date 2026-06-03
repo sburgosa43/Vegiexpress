@@ -4,10 +4,16 @@ Flujo: Cola de pedidos en memoria → un solo ciclo Drive al grabar todo.
 """
 import streamlit as st
 import pandas as pd
+import io
+from difflib import get_close_matches
 from datetime import date, timedelta
 from data_helper   import cargar_clientes, cargar_productos
 from excel_helper  import leer_productos_con_fila
 from order_helper  import guardar_pedidos_batch
+try:
+    import openpyxl  # para leer archivos subidos
+except ImportError:
+    openpyxl = None
 
 AVISO_KEY = "costos_revisados"
 COLA_KEY  = "cola_pedidos"
@@ -375,17 +381,278 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    _init()
+    tab_manual, tab_import = st.tabs(["✍️ Ingreso Manual", "📥 Importar desde Excel"])
 
-    if not _aviso_costos():
-        return
+    with tab_manual:
+        _init()
+        if not _aviso_costos():
+            pass
+        else:
+            _mostrar_cola_compacta()
+            p = st.session_state.ped_paso
+            if p in (1, 2, 3): _pasos()
 
-    _mostrar_cola_compacta()
-
-    p = st.session_state.ped_paso
-    if p in (1, 2, 3): _pasos()
+    with tab_import:
+        _importar_pedidos()
 
     if   p == 1: _paso1()
     elif p == 2: _paso2()
     elif p == 3: _paso3()
     elif p == 4: _paso4()
+
+
+# ── IMPORTAR PEDIDOS DESDE EXCEL / PASTE ──────────────────────────────────────
+def _importar_pedidos():
+    """
+    Sub-módulo de importación masiva de pedidos.
+    Acepta paste desde Excel o archivo .xlsx/.csv.
+    Valida clientes y productos, permite corrección inline, luego guarda.
+    """
+    from data_helper  import cargar_clientes, cargar_productos
+    from excel_helper import leer_productos_con_fila
+    from difflib      import get_close_matches
+    from datetime     import datetime
+    import io, base64
+
+    clientes_list = cargar_clientes()
+    prods_list    = leer_productos_con_fila(es_antigua=False) + \
+                    leer_productos_con_fila(es_antigua=True)
+
+    nombres_cli  = [c["nombre"] for c in clientes_list]
+    nombres_prod = [p["nombre"] for p in prods_list]
+    prod_dict    = {p["nombre"]: p for p in prods_list}
+
+    # ── Plantilla descargable ─────────────────────────────────────────────────
+    plantilla_csv = "Cliente,Fecha,Producto,Cantidad,Precio\n" \
+                    "Nanajuana Hotel,21/05/2026,Arugula Baby,2,28\n" \
+                    "Nanajuana Hotel,21/05/2026,Espinaca Organica,1.5,\n" \
+                    "Sundog Restaurant,22/05/2026,Pepino Criollo,3,\n"
+    st.download_button("📄 Descargar plantilla",
+                        data=plantilla_csv,
+                        file_name="plantilla_pedidos.csv",
+                        mime="text/csv",
+                        key="imp_plantilla")
+
+    st.caption("Columnas: **Cliente · Fecha (dd/mm/yyyy) · Producto · Cantidad · Precio** "
+               "(Precio es opcional — si está vacío se toma del catálogo)")
+    st.divider()
+
+    # ── Fuente de datos ───────────────────────────────────────────────────────
+    src_tab1, src_tab2 = st.tabs(["📋 Pegar desde Excel", "📁 Subir archivo"])
+
+    raw_df = None
+
+    with src_tab1:
+        pegado = st.text_area("Pegá las filas copiadas de Excel (sin encabezado)",
+                               height=140, key="imp_paste",
+                               placeholder="Nanajuana\t21/05/2026\tArugula Baby\t2\t28\n"
+                                           "Sundog\t22/05/2026\tPepino\t3\t")
+        if st.button("▶ Procesar texto", key="imp_parse_paste") and pegado.strip():
+            rows = []
+            for line in pegado.strip().splitlines():
+                parts = [x.strip() for x in line.split("\t")]
+                if len(parts) >= 4:
+                    rows.append({
+                        "Cliente":   parts[0],
+                        "Fecha":     parts[1],
+                        "Producto":  parts[2],
+                        "Cantidad":  parts[3],
+                        "Precio":    parts[4] if len(parts) > 4 else "",
+                    })
+            if rows:
+                raw_df = pd.DataFrame(rows)
+                st.session_state["imp_raw_df"] = raw_df
+                st.success(f"✅ {len(rows)} fila(s) leídas")
+
+    with src_tab2:
+        archivo = st.file_uploader("Subí tu archivo", type=["xlsx","csv"],
+                                    key="imp_file")
+        if archivo:
+            try:
+                if archivo.name.endswith(".csv"):
+                    raw_df = pd.read_csv(archivo, dtype=str)
+                else:
+                    raw_df = pd.read_excel(archivo, dtype=str)
+                # Normalizar columnas
+                raw_df.columns = [c.strip() for c in raw_df.columns]
+                col_map = {
+                    "cliente":"Cliente","fecha":"Fecha",
+                    "producto":"Producto","cantidad":"Cantidad","precio":"Precio"
+                }
+                raw_df = raw_df.rename(columns={k:v for k,v in col_map.items()
+                                                  if k in raw_df.columns})
+                for col in ["Cliente","Fecha","Producto","Cantidad","Precio"]:
+                    if col not in raw_df.columns:
+                        raw_df[col] = ""
+                st.session_state["imp_raw_df"] = raw_df
+                st.success(f"✅ {len(raw_df)} fila(s) leídas")
+            except Exception as e:
+                st.error(f"Error leyendo archivo: {e}")
+
+    # ── Recuperar del estado ──────────────────────────────────────────────────
+    if raw_df is None and "imp_raw_df" in st.session_state:
+        raw_df = st.session_state["imp_raw_df"]
+
+    if raw_df is None or raw_df.empty:
+        return
+
+    # ── Validación y corrección inline ───────────────────────────────────────
+    st.divider()
+    st.markdown(f"### Validación — {len(raw_df)} fila(s)")
+
+    def fuzzy_match(nombre, lista, n=1, cutoff=0.6):
+        hits = get_close_matches(nombre.lower(),
+                                  [x.lower() for x in lista],
+                                  n=n, cutoff=cutoff)
+        if hits:
+            idx = [x.lower() for x in lista].index(hits[0])
+            return lista[idx]
+        return None
+
+    def _sf_imp(v):
+        try: return float(str(v).replace(",",".").strip() or 0)
+        except: return 0.0
+
+    def _parse_fecha_imp(v):
+        v = str(v).strip()
+        for fmt in ("%d/%m/%Y","%d-%m-%Y","%Y-%m-%d","%m/%d/%Y"):
+            try: return datetime.strptime(v, fmt).date()
+            except: pass
+        return None
+
+    # Construir tabla de trabajo con validación
+    filas = []
+    tiene_errores = False
+
+    for _, row in raw_df.iterrows():
+        cli_raw  = str(row.get("Cliente","")  or "").strip()
+        prod_raw = str(row.get("Producto","") or "").strip()
+        fec_raw  = str(row.get("Fecha","")    or "").strip()
+        cant_raw = str(row.get("Cantidad","") or "").strip()
+        prec_raw = str(row.get("Precio","")   or "").strip()
+
+        # Fecha
+        fecha = _parse_fecha_imp(fec_raw)
+        fecha_ok = fecha is not None
+
+        # Cliente — fuzzy match
+        cli_match = fuzzy_match(cli_raw, nombres_cli) if cli_raw else None
+        cli_ok    = cli_match is not None
+        if not cli_ok: tiene_errores = True
+
+        # Producto — fuzzy match
+        prod_match = fuzzy_match(prod_raw, nombres_prod) if prod_raw else None
+        prod_ok    = prod_match is not None
+        if not prod_ok: tiene_errores = True
+
+        # Precio — del archivo o del catálogo
+        precio = _sf_imp(prec_raw)
+        if precio <= 0 and prod_match and prod_match in prod_dict:
+            precio = _sf_imp(prod_dict[prod_match].get("precio", 0))
+
+        filas.append({
+            "✓":          "✅" if (cli_ok and prod_ok and fecha_ok) else "⚠️",
+            "Cliente":    cli_match  or cli_raw,
+            "Fecha":      fec_raw,
+            "Producto":   prod_match or prod_raw,
+            "Cantidad":   _sf_imp(cant_raw),
+            "Precio":     precio,
+            "_cli_ok":    cli_ok,
+            "_prod_ok":   prod_ok,
+            "_fecha_ok":  fecha_ok,
+            "_cli_raw":   cli_raw,
+            "_prod_raw":  prod_raw,
+        })
+
+    df_work = pd.DataFrame(filas)
+
+    n_ok    = df_work["✓"].eq("✅").sum()
+    n_warn  = df_work["✓"].eq("⚠️").sum()
+
+    if n_warn > 0:
+        st.warning(f"⚠️ {n_warn} fila(s) con problemas · {n_ok} correctas. "
+                   f"Corregí los campos resaltados antes de guardar.")
+    else:
+        st.success(f"✅ Todas las {n_ok} filas validadas correctamente.")
+
+    # Tabla editable — Cliente y Producto con selectbox
+    df_edit = df_work[["✓","Cliente","Fecha","Producto","Cantidad","Precio"]].copy()
+
+    edited = st.data_editor(
+        df_edit,
+        column_config={
+            "✓":         st.column_config.TextColumn(disabled=True, width="small"),
+            "Cliente":   st.column_config.SelectboxColumn(
+                            options=nombres_cli, width="medium"),
+            "Fecha":     st.column_config.TextColumn(width="small"),
+            "Producto":  st.column_config.SelectboxColumn(
+                            options=nombres_prod, width="medium"),
+            "Cantidad":  st.column_config.NumberColumn(
+                            format="%.2f", width="small"),
+            "Precio":    st.column_config.NumberColumn(
+                            format="Q%.2f", width="small"),
+        },
+        hide_index=True,
+        use_container_width=True,
+        key="imp_editor",
+        num_rows="fixed",
+    )
+
+    st.caption("Los campos en **Cliente** y **Producto** son editables — "
+               "seleccioná el valor correcto si hay un error de nombre.")
+
+    # ── Botón guardar ─────────────────────────────────────────────────────────
+    st.divider()
+    col_info, col_save = st.columns([3, 1])
+    clientes_unicos = edited["Cliente"].dropna().unique()
+    col_info.markdown(
+        f"**{len(edited)} fila(s)** · "
+        f"{len(clientes_unicos)} cliente(s): "
+        f"{', '.join(clientes_unicos[:4])}"
+        + ("..." if len(clientes_unicos) > 4 else "")
+    )
+
+    if col_save.button("💾 Guardar pedidos", type="primary",
+                        key="imp_guardar"):
+        # Construir cola
+        cola = {}
+        cli_info_map = {c["nombre"]: c for c in clientes_list}
+        errores_save = []
+
+        for _, row in edited.iterrows():
+            cli  = str(row["Cliente"] or "").strip()
+            prod = str(row["Producto"] or "").strip()
+            cant = float(row["Cantidad"] or 0)
+            prec = float(row["Precio"] or 0)
+            fec  = _parse_fecha_imp(str(row["Fecha"]))
+
+            if not cli or not prod or cant <= 0 or not fec:
+                errores_save.append(f"Fila incompleta: {cli} / {prod}")
+                continue
+
+            if prec <= 0 and prod in prod_dict:
+                prec = _sf_imp(prod_dict[prod].get("precio", 0))
+            costo = _sf_imp(prod_dict.get(prod, {}).get("costo", 0))
+            unid  = str(prod_dict.get(prod, {}).get("unidad", ""))
+            key   = (cli, str(fec))
+            if key not in cola:
+                cola[key] = {"cliente_nombre": cli, "fecha": fec, "items": []}
+            cola[key]["items"].append({
+                "nombre":   prod,
+                "cantidad": cant,
+                "precio":   prec,
+                "costo":    costo,
+                "unidad":   unid,
+            })
+
+        if errores_save:
+            for e in errores_save:
+                st.warning(e)
+
+        if cola:
+            with st.spinner(f"Guardando {sum(len(v['items']) for v in cola.values())} líneas..."):
+                result = guardar_pedidos_batch(list(cola.values()))
+            st.success(f"✅ {result['filas']} línea(s) guardadas "
+                       f"para {result['pedidos']} pedido(s).")
+            st.session_state.pop("imp_raw_df", None)
+            st.rerun()
