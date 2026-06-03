@@ -83,7 +83,7 @@ def mostrar():
 
         prod_map = {p["nombre"].lower(): {
             "proveedor":     p.get("proveedor", "").strip(),
-            "costo":         float(p.get("costo", 0)),
+            "costo":         float(p.get("costo") or 0),
             "tipo_producto": str(p.get("tipo_producto", "") or "").strip(),
         } for p in catalog}
 
@@ -104,7 +104,7 @@ def mostrar():
         sin_detalle = []
 
         for p in pedidos_sem:
-            info   = prod_map.get(p["producto"].lower(), {})
+            info   = prod_map.get(str(p["producto"]).strip().lower(), {})
             prov   = info.get("proveedor", "").strip() or "⚠️ SIN PROVEEDOR"
             prod   = p["producto"]
             cant   = float(p["cantidad"])
@@ -290,8 +290,12 @@ def mostrar():
                 for i, row in base_df.iterrows():
                     val = str(edited.loc[i, "A Comprar"] or "")
                     ok, pend, n = _val_comprar(val)
-                    if ok and not pend and float(row["_costo"]) > 0:
-                        est_prov += n * float(row["_costo"])
+                    try:
+                        _c = float(row["_costo"] or 0)
+                    except:
+                        _c = 0.0
+                    if ok and not pend and _c > 0:
+                        est_prov += n * _c
                 if est_prov > 0:
                     st.markdown(
                         f"<div style='text-align:right;font-size:.8rem;"
@@ -329,14 +333,19 @@ def mostrar():
                     val = str(edited.loc[i, "A Comprar"] or "")
                     ok, pend, n = _val_comprar(val)
                     if not ok: continue
-                    items_pdf.append({
+                    item = {
                         "producto":  row["Producto"],
                         "unidad":    row["Unidad"],
                         "cantidad":  float(row["Total"]),
                         "a_comprar": "P" if pend else f"{n:g}",
-                    })
+                    }
+                    for _a in ["Ant-Chim","Chimalt","GT-Stgo","Río"]:
+                        item[_a] = float(row[_a]) if _a in row.index else 0.0
+                    items_pdf.append(item)
 
-                col_lbl, col_btn = st.columns([3, 1])
+                import base64
+                import streamlit.components.v1 as _cpv
+                col_lbl, col_p, col_d = st.columns([3, 0.8, 0.8])
                 col_lbl.markdown(
                     f"<div style='padding-top:6px'>📦 <b>{prov}</b> "
                     f"— {len(items_pdf)} línea(s)</div>",
@@ -348,7 +357,28 @@ def mostrar():
                             prov, items_pdf, semana, año)
                         nom = "".join(ch for ch in prov
                                       if ch.isalnum() or ch == "_")
-                        col_btn.download_button(
+                        _b64 = base64.b64encode(pdf_bytes).decode()
+                        _html_print = f"""
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+function imprimirProv_{nom}(){{
+  var raw=atob('{_b64}');
+  var arr=new Uint8Array(raw.length);
+  for(var i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+  var blob=new Blob([arr],{{type:'application/pdf'}});
+  var url=URL.createObjectURL(blob);
+  var w=window.open(url,'_blank');
+  w.onload=function(){{w.print();}};
+}}
+</script>
+<button onclick="imprimirProv_{nom}()" style="
+  background:#2D7A2D;color:white;border:none;border-radius:6px;
+  padding:6px 10px;font-size:12px;cursor:pointer;width:100%;
+  font-family:sans-serif">🖨️ Imprimir</button>"""
+                        with col_p:
+                            _cpv.html(_html_print, height=40)
+                        col_d.download_button(
                             "📥 PDF", data=pdf_bytes,
                             file_name=f"Compras_{nom}_Sem{semana}_{año}.pdf",
                             mime="application/pdf",

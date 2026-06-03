@@ -920,23 +920,22 @@ def generar_cotizacion(lineas: list, desde: "date", hasta: "date",
 def generar_lista_compras_proveedor(prov: str, items: list,
                                     semana: int, año: int) -> bytes:
     """
-    PDF portrait B&W para UN proveedor.
-    Lista dividida en 2 columnas dentro de la misma página para máximo aprovechamiento.
-    items: [{producto, unidad, cantidad, a_comprar}]
+    PDF portrait A4 B&W para UN proveedor.
+    Columnas: Producto | Unidad | Ant-Chim | Chimalt | GT-Stgo | Río | Total | A Comprar
+    items: [{producto, unidad, Ant-Chim, Chimalt, GT-Stgo, Río, cantidad, a_comprar}]
     """
     from reportlab.lib.pagesizes import A4
     from reportlab.lib           import colors as rc
 
-    buffer = BytesIO()
-    ML = MR = 10*mm
-    MT = MB = 8*mm
-    CW = 210*mm - ML - MR        # 190mm contenido portrait
+    buf  = BytesIO()
+    ML = MR = 10*mm; MT = MB = 8*mm
+    PW, PH = A4
+    CW = PW - ML - MR          # 190mm
 
-    doc = SimpleDocTemplate(buffer, pagesize=A4,
+    doc = SimpleDocTemplate(buf, pagesize=A4,
         leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB,
         title=f"{prov} · Sem {semana}/{año}")
     story = []
-
     NEGRO = rc.black
 
     def ts(name, **kw):
@@ -944,111 +943,86 @@ def generar_lista_compras_proveedor(prov: str, items: list,
                  textColor=NEGRO, leading=9)
         d.update(kw); return ParagraphStyle(name, **d)
 
-    s_title = ts("tit", fontSize=11, fontName="Helvetica-Bold", leading=13)
-    s_sub   = ts("sub", fontSize=7,  alignment=TA_RIGHT)
-    s_prov  = ts("prov", fontSize=9, fontName="Helvetica-Bold", leading=11)
-    s_col   = ts("col",  fontSize=6.5, fontName="Helvetica-Bold")
-    s_col_c = ts("colc", fontSize=6.5, fontName="Helvetica-Bold",
+    s_title = ts("tit",  fontSize=10, fontName="Helvetica-Bold", leading=12)
+    s_sub   = ts("sub",  fontSize=7,  alignment=TA_RIGHT)
+    s_th    = ts("th",   fontSize=6.5, fontName="Helvetica-Bold",
                  alignment=TA_CENTER)
-    s_td    = ts("td")
-    s_td_c  = ts("tdc", alignment=TA_CENTER)
-    s_td_b  = ts("tdb", fontName="Helvetica-Bold", alignment=TA_CENTER)
+    s_th_l  = ts("thl",  fontSize=6.5, fontName="Helvetica-Bold")
+    s_td    = ts("td",   fontSize=7)
+    s_td_c  = ts("tdc",  fontSize=7,  alignment=TA_CENTER)
+    s_td_b  = ts("tdb",  fontSize=7,  fontName="Helvetica-Bold",
+                 alignment=TA_CENTER)
 
     # ── Header ────────────────────────────────────────────────────────────────
     hdr = Table([[
-        _p(_s(prov), s_prov),
-        _p(f"Semana {semana} / {año}  ·  "
+        _p(_s(f"A Pedir: {prov}"), s_title),
+        _p(f"Semana {semana}/{año}  ·  "
            f"{__import__('datetime').date.today().strftime('%d/%m/%Y')}", s_sub),
-    ]], colWidths=[CW * 0.6, CW * 0.4])
+    ]], colWidths=[CW*0.6, CW*0.4])
     hdr.setStyle(TableStyle([
-        ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
-        ("TOPPADDING",    (0,0),(-1,-1), 0),
-        ("BOTTOMPADDING", (0,0),(-1,-1), 2),
+        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+        ("TOPPADDING",(0,0),(-1,-1),0),
+        ("BOTTOMPADDING",(0,0),(-1,-1),2),
     ]))
     story.append(hdr)
     story.append(HRFlowable(width="100%", thickness=1,
                              color=NEGRO, spaceAfter=3*mm))
 
-    # ── Dividir lista en 2 mitades ────────────────────────────────────────────
-    import math
-    n      = len(items)
-    mitad  = math.ceil(n / 2)
-    left   = items[:mitad]
-    right  = items[mitad:]
+    # ── Columnas: Producto(60) | Unidad(18) | 4 áreas(20 c/u) | Total(15) | ACmp(17) ──
+    AREAS = ["Ant-Chim","Chimalt","GT-Stgo","Río"]
+    wP  = CW * 0.30   # Producto
+    wU  = CW * 0.09   # Unidad
+    wA  = CW * 0.11   # cada área (x4 = 0.44)
+    wT  = CW * 0.08   # Total
+    wC  = CW * 0.09   # A Comprar
+    col_w = [wP, wU, wA, wA, wA, wA, wT, wC]
 
-    GAP = 4*mm
-    HW  = (CW - GAP) / 2      # ~93mm por mitad
+    # Encabezado
+    rows = [[
+        _p("Producto",   s_th_l),
+        _p("Unidad",     s_th),
+        _p("Ant-Chim",   s_th),
+        _p("Chimalt",    s_th),
+        _p("GT-Stgo",    s_th),
+        _p("Río",        s_th),
+        _p("Total",      s_th),
+        _p("A Comprar",  s_th),
+    ]]
 
-    # Columnas: [L.Prod, L.Unid, L.Ped, L.Cmp, SEP, R.Prod, R.Unid, R.Ped, R.Cmp]
-    cw = [HW*0.50, HW*0.15, HW*0.15, HW*0.20,
-          GAP,
-          HW*0.50, HW*0.15, HW*0.15, HW*0.20]
+    for it in items:
+        def area_val(a):
+            v = float(it.get(a, 0) or 0)
+            return _p(f"{v:g}" if v > 0 else "—", s_td_c)
 
-    def cell_a(item):
-        """Celda de A Comprar."""
-        if item is None: return ""
-        a = item.get("a_comprar", "")
-        if str(a).upper() == "P":
-            return _p("PEND.", s_td_b)
-        return _p(str(a), s_td_b)
+        a_cmp = it.get("a_comprar","")
+        cmp_cell = _p("PEND." if str(a_cmp).upper()=="P" else str(a_cmp), s_td_b)
 
-    # Fila de encabezados de columna
-    col_hdr = [
-        _p("Producto",  s_col),  _p("Unidad",  s_col_c),
-        _p("Pedido",    s_col_c), _p("A Comprar", s_col_c),
-        "",
-        _p("Producto",  s_col),  _p("Unidad",  s_col_c),
-        _p("Pedido",    s_col_c), _p("A Comprar", s_col_c),
-    ]
+        rows.append([
+            _p(_s(it["producto"]),           s_td),
+            _p(_s(it.get("unidad","")),      s_td_c),
+            area_val("Ant-Chim"),
+            area_val("Chimalt"),
+            area_val("GT-Stgo"),
+            area_val("Río"),
+            _p(f"{float(it.get('cantidad',0) or 0):g}", s_td_c),
+            cmp_cell,
+        ])
 
-    rows = [col_hdr]
-
-    # Filas de productos emparejados
-    max_r = max(len(left), len(right))
-    for j in range(max_r):
-        li = left[j]  if j < len(left)  else None
-        ri = right[j] if j < len(right) else None
-        row = [
-            _p(_s(li["producto"]),          s_td)   if li else "",
-            _p(_s(li["unidad"]),            s_td_c) if li else "",
-            _p(f"{li['cantidad']:,.1f}",    s_td_c) if li else "",
-            cell_a(li),
-            "",   # separador
-            _p(_s(ri["producto"]),          s_td)   if ri else "",
-            _p(_s(ri["unidad"]),            s_td_c) if ri else "",
-            _p(f"{ri['cantidad']:,.1f}",    s_td_c) if ri else "",
-            cell_a(ri),
-        ]
-        rows.append(row)
-
-    # ── Tabla plana B&W ───────────────────────────────────────────────────────
-    tbl = Table(rows, colWidths=cw, repeatRows=1, splitByRow=True)
+    tbl = Table(rows, colWidths=col_w, repeatRows=1, splitByRow=True)
     tbl.setStyle(TableStyle([
-        ("FONTNAME",     (0,0), (3,0), "Helvetica-Bold"),
-        ("FONTNAME",     (5,0), (8,0), "Helvetica-Bold"),
-        ("FONTSIZE",     (0,0), (-1,-1), 7),
-        ("LINEBELOW",    (0,0), (3,0), 0.7, NEGRO),
-        ("LINEBELOW",    (5,0), (8,0), 0.7, NEGRO),
-        ("BOX",          (0,0), (3,-1), 0.6, NEGRO),
-        ("INNERGRID",    (0,0), (3,-1), 0.25, NEGRO),
-        ("BOX",          (5,0), (8,-1), 0.6, NEGRO),
-        ("INNERGRID",    (5,0), (8,-1), 0.25, NEGRO),
-        ("LEFTPADDING",  (4,0), (4,-1), 0),
-        ("RIGHTPADDING", (4,0), (4,-1), 0),
-        ("BOX",          (4,0), (4,-1), 0, rc.white),
-        ("INNERGRID",    (4,0), (4,-1), 0, rc.white),
-        ("TOPPADDING",   (0,0), (-1,-1), 1.5),
-        ("BOTTOMPADDING",(0,0), (-1,-1), 1.5),
-        ("LEFTPADDING",  (0,0), (-1,-1), 3),
-        ("RIGHTPADDING", (0,0), (-1,-1), 3),
-        ("VALIGN",       (0,0), (-1,-1), "MIDDLE"),
-        ("ALIGN", (1,0),(1,-1),"CENTER"), ("ALIGN", (2,0),(2,-1),"CENTER"),
-        ("ALIGN", (3,0),(3,-1),"CENTER"), ("ALIGN", (6,0),(6,-1),"CENTER"),
-        ("ALIGN", (7,0),(7,-1),"CENTER"), ("ALIGN", (8,0),(8,-1),"CENTER"),
+        ("FONTNAME",     (0,0),(-1,0), "Helvetica-Bold"),
+        ("FONTSIZE",     (0,0),(-1,-1), 7),
+        ("LINEBELOW",    (0,0),(-1,0), 0.8, NEGRO),
+        ("BOX",          (0,0),(-1,-1), 0.5, NEGRO),
+        ("INNERGRID",    (0,0),(-1,-1), 0.25, NEGRO),
+        ("TOPPADDING",   (0,0),(-1,-1), 1.5),
+        ("BOTTOMPADDING",(0,0),(-1,-1), 1.5),
+        ("LEFTPADDING",  (0,0),(-1,-1), 2),
+        ("RIGHTPADDING", (0,0),(-1,-1), 2),
+        ("VALIGN",       (0,0),(-1,-1), "MIDDLE"),
     ]))
     story.append(tbl)
 
-    # ── Pie ───────────────────────────────────────────────────────────────────
     story.append(Spacer(1, 3*mm))
     story.append(HRFlowable(width="100%", thickness=0.5,
                              color=NEGRO, spaceAfter=1))
@@ -1058,7 +1032,7 @@ def generar_lista_compras_proveedor(prov: str, items: list,
                                    textColor=NEGRO, alignment=TA_CENTER,
                                    leading=8)))
     doc.build(story)
-    return buffer.getvalue()
+    return buf.getvalue()
 
 
 # Mantener alias para compatibilidad (no se usa en producción)

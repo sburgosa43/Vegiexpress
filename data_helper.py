@@ -65,7 +65,8 @@ def cargar_productos(es_antigua: bool = False,
             "segmento": str(row[2]  or ""),
             "costo":    _sf(row[5]),
             "precio":   precio,
-            "proveedor":str(row[14] if not es_antigua else row[8] or ""),
-            "tipo_producto2": str(row[20] if not es_antigua else row[10] or ""),
+            "proveedor":      str(row[14] if not es_antigua else row[8] or "").strip(),
+            "tipo_producto":  str(row[18] if not es_antigua else "" or "").strip(),
+            "tipo_producto2": str(row[20] if not es_antigua else row[10] or "").strip(),
         })
     return prods
