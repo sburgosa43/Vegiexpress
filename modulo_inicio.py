@@ -6,17 +6,12 @@ import streamlit as st
 from config import excluido_dashboard as _excluido
 from datetime import date
 
+# ZONAS_MAP, COLORES_ZONA y EXCLUIR vienen de config.py
 ZONAS_MAP = {
     "Antigua & Chimal":     ["L03", "L04"],
     "Guatemala & Santiago": ["L05", "L06"],
     "Rio":                  ["L01"],
 }
-COLORES_ZONA = {
-    "Antigua & Chimal":     "#2D7A2D",
-    "Guatemala & Santiago": "#8DC63F",
-    "Rio":                  "#4A4A4A",
-}
-# EXCLUIR viene de config.py
 MODULOS = {
     "⚡ Operación": [
         ("📥", "Pedidos Entrantes", "Pedidos recibidos de clientes", "📥 Pedidos Entrantes"),
@@ -69,7 +64,7 @@ def _kpis():
                     cli_zona[c["nombre"].lower()] = zona
                     break
 
-        def _excl(n): return any(x in n.lower() for x in EXCLUIR)
+        def _excl(n): return _excluido(n)
 
         ped_act = [p for p in todos
                    if p["semana"]==sem_act and p["año"]==año_act

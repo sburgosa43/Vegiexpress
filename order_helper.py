@@ -1,235 +1,147 @@
 """
-order_helper.py — Escritura de pedidos al Excel (individual y batch)
-
-guardar_pedido()        → 1 pedido → 1 ciclo Drive (compatibilidad)
-guardar_pedidos_batch() → N pedidos → 1 solo ciclo Drive (óptimo)
+order_helper.py — Guardar y editar pedidos via Google Sheets.
 """
-from datetime import datetime, date
-from copy import copy
 import streamlit as st
-from drive_helper import cargar_para_escritura, guardar_en_drive
+from datetime import date, datetime
+from gsheets import append_rows, update_cells, get_all_rows
+from excel_helper import leer_pedidos, DIAS_ES, MESES_N, _sf
+
+_K_PED = "pedidos"
+
+TOTAL_COLS = 31
+
 
 def _clear_pedidos_cache():
-    """Clear only the pedidos cache, not clientes/productos."""
-    try:
-        from excel_helper import leer_pedidos
-        leer_pedidos.clear()
-    except Exception:
-        st.cache_data.clear()
-
-FILE_ID      = st.secrets["EXCEL_FILE_ID"]
-HOJA_PEDIDOS = "Pedidos"
-NOMBRE_TABLA = "Tabla3"
-TOTAL_COLS   = 31
-
-DIAS_ES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
-MESES_N = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
-_COLS_ESTATICAS = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,26,27,28,31}
+    leer_pedidos.clear()
 
 
-def _calcular(precio, costo, cant):
+def _calcular(precio: float, costo: float, cant: float) -> dict:
     if precio <= 0:
-        return dict(total=0, total_costo=0, margen_q=0, margen_pct=0, iva=0, isr=0)
+        return dict(total=0, total_costo=0, margen_q=0,
+                    margen_pct=0, iva=0, isr=0)
     return {
         "total":       round(precio * cant, 4),
         "total_costo": round(costo  * cant, 4),
         "margen_q":    round(0.95 * (precio - costo * 1.12) * cant, 4),
-        "margen_pct":  round(0.95 * (1 - costo * 1.12 / precio), 4),
+        "margen_pct":  round(0.95 * (1 - costo * 1.12 / precio), 4)
+                       if precio > 0 else 0,
         "iva":         round((precio - precio / 1.12) * cant, 4),
-        "isr":         round(precio / 1.12 * 0.05 * cant, 4),
+        "isr":         0,
     }
 
 
-def _codigo_cliente(wb, nombre: str) -> str:
-    if "Clientes" not in wb.sheetnames: return "C000"
-    ws = wb["Clientes"]
-    nl = nombre.strip().lower()
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if row[0] and str(row[0]).strip().lower() == nl:
-            return str(row[9] or "C000").strip()
-    return "C000"
+def _codigo_cliente(nombre: str) -> str:
+    rows = get_all_rows("clientes")
+    for row in rows:
+        if str(row[0] or "").strip().lower() == nombre.strip().lower():
+            return str(row[9] if len(row) > 9 else "XX")
+    return "XX"
 
 
-def _escribir_pedido_en_ws(ws, wb, nombre_cliente: str,
-                            fecha_entrega: date, items: list,
-                            unico_override: str = None) -> int:
-    """
-    Escribe las filas de UN pedido en el ws dado.
-    unico_override: si se provee, usa ese Unico en lugar de generar uno nuevo.
-    No hace upload — llamar guardar_en_drive() externamente.
-    Retorna número de filas escritas.
-    """
-    fecha_dt = datetime(fecha_entrega.year, fecha_entrega.month, fecha_entrega.day)
-    semana   = fecha_entrega.isocalendar()[1]
-    año      = fecha_entrega.year
-    mes      = fecha_entrega.month
-    cod      = _codigo_cliente(wb, nombre_cliente)
-    unico    = unico_override or f"{cod}{fecha_entrega.day:02d}{mes:02d}{semana:02d}{año}"
+def _build_row(nombre_cliente: str, fecha_entrega: date,
+               item: dict, unico: str) -> list:
+    """Construye la fila completa de 31 columnas para Pedidos en Sheets."""
+    precio = _sf(item.get("precio", 0))
+    costo  = _sf(item.get("costo",  0))
+    cant   = _sf(item.get("cantidad", 0))
+    fin    = _calcular(precio, costo, cant)
 
-    static_fecha = {
-        13: DIAS_ES[fecha_entrega.weekday()],
-        14: mes, 15: semana, 16: año,
-        26: MESES_N[mes - 1], 27: f"{mes:02d}",
-        28: unico, 31: "Pendiente",
-    }
+    mes = fecha_entrega.month
+    row = [""] * TOTAL_COLS
 
-    primera = ws.max_row + 1
-    agr     = 0
-
-    for item in items:
-        if not item.get("nombre") or (item.get("cantidad") or 0) <= 0:
-            continue
-        precio = float(item.get("precio", 0))
-        costo  = float(item.get("costo",  0))
-        cant   = float(item["cantidad"])
-        fin    = _calcular(precio, costo, cant)
-        fila   = primera + agr
-        ref    = fila - 1
-
-        def w(col, val, fmt=None):
-            c = ws.cell(row=fila, column=col)
-            c.value = val
-            if fmt: c.number_format = fmt
-
-        w(1,  fecha_dt, "dd/mm/yyyy;@")
-        w(2,  nombre_cliente); w(3, cant); w(4, item["nombre"]); w(5, precio)
-        w(6,  costo);          w(7, fin["total"]); w(8, fin["total_costo"])
-        w(9,  fin["margen_q"]); w(10, fin["margen_pct"])
-        w(11, fin["iva"]);     w(12, fin["isr"])
-        for col, val in static_fecha.items():
-            ws.cell(row=fila, column=col).value = val
-        ws.cell(row=fila, column=17).value = item.get("unidad", "")
-
-        for col in range(18, TOTAL_COLS + 1):
-            if col in _COLS_ESTATICAS: continue
-            src = ws.cell(row=ref, column=col)
-            dst = ws.cell(row=fila, column=col)
-            dst.value = src.value; dst.number_format = src.number_format
-            if src.font:
-                dst.font = copy(src.font); dst.fill = copy(src.fill)
-                dst.border = copy(src.border); dst.alignment = copy(src.alignment)
-        agr += 1
-
-    return agr
+    row[0]  = fecha_entrega.strftime("%d/%m/%Y")   # A: Fecha
+    row[1]  = nombre_cliente                         # B: Cliente
+    row[2]  = cant                                   # C: Cantidad
+    row[3]  = item.get("nombre", "")                 # D: Producto
+    row[4]  = precio                                 # E: Precio
+    row[5]  = costo                                  # F: Costo
+    row[6]  = fin["total"]                           # G: Total
+    row[7]  = fin["total_costo"]                     # H: TotalCosto
+    row[8]  = fin["margen_q"]                        # I: MargenQ
+    row[9]  = fin["margen_pct"]                      # J: Margen%
+    row[10] = fin["iva"]                             # K: IVA
+    row[11] = fin["isr"]                             # L: ISR
+    row[12] = DIAS_ES[fecha_entrega.weekday()]       # M: DiaSemana
+    row[13] = mes                                    # N: Mes
+    row[14] = fecha_entrega.isocalendar()[1]         # O: Semana
+    row[15] = fecha_entrega.year                     # P: Año
+    row[16] = item.get("unidad", "")                 # Q: Unidad
+    # R-Y: campos opcionales, dejar vacíos
+    row[25] = MESES_N[mes - 1]                      # Z: MesN
+    row[26] = f"{mes:02d}"                           # AA: MesNN
+    row[27] = unico                                  # AB: Unico
+    row[30] = "Pendiente"                            # AE: Status
+    return row
 
 
-def _expandir_tabla(ws, n_filas_nuevas: int):
-    if n_filas_nuevas <= 0: return
-    nueva_ult = ws.max_row
-    if NOMBRE_TABLA in ws.tables:
-        tbl    = ws.tables[NOMBRE_TABLA]
-        partes = tbl.ref.split(":")
-        col_f  = "".join(c for c in partes[1] if c.isalpha())
-        tbl.ref = f"{partes[0]}:{col_f}{nueva_ult}"
-
-
-
-def _actualizar_ref_tabla(ws):
-    """Actualiza la referencia de la tabla al tamaño actual (expansión O reducción)."""
-    if NOMBRE_TABLA in ws.tables:
-        tbl   = ws.tables[NOMBRE_TABLA]
-        partes = tbl.ref.split(":")
-        col_f  = "".join(ch for ch in partes[1] if ch.isalpha())
-        tbl.ref = f"{partes[0]}:{col_f}{ws.max_row}"
-
-
-def guardar_edicion_pedidos(cambios_edicion: list, nuevas_lineas: list,
-                            filas_eliminar: list = None) -> dict:
-    """
-    Edita filas, agrega líneas nuevas Y elimina filas en UN SOLO ciclo Drive.
-
-    cambios_edicion: [{row_num, nuevo_producto?, nueva_cantidad?, nuevo_precio?}]
-    nuevas_lineas:   [{unico, cliente_nombre, fecha, items}]
-    filas_eliminar:  [row_num, ...] — se eliminan de abajo hacia arriba
-    Retorna: {ediciones, nuevas_filas, eliminadas}
-    """
-    if not cambios_edicion and not nuevas_lineas and not filas_eliminar:
-        return {"ediciones": 0, "nuevas_filas": 0, "eliminadas": 0}
-
-    wb  = cargar_para_escritura(FILE_ID)
-    ws  = wb[HOJA_PEDIDOS]
-
-    # 1. Editar filas existentes
-    ediciones = 0
-    for cambio in cambios_edicion:
-        row = cambio["row_num"]
-        if "nuevo_producto" in cambio:
-            ws.cell(row=row, column=4).value = cambio["nuevo_producto"]
-        if "nueva_cantidad" in cambio:
-            ws.cell(row=row, column=3).value = cambio["nueva_cantidad"]
-        if "nuevo_precio"   in cambio:
-            ws.cell(row=row, column=5).value = cambio["nuevo_precio"]
-        ediciones += 1
-
-    # 2. Eliminar filas (de abajo hacia arriba para no desplazar índices)
-    eliminadas = 0
-    if filas_eliminar:
-        for fila in sorted(filas_eliminar, reverse=True):
-            ws.delete_rows(fila)
-            eliminadas += 1
-
-    # 3. Agregar líneas nuevas
-    nuevas_filas = 0
-    for grupo in nuevas_lineas:
-        n = _escribir_pedido_en_ws(
-            ws, wb,
-            grupo["cliente_nombre"],
-            grupo["fecha"],
-            grupo["items"],
-            unico_override=grupo["unico"],
-        )
-        nuevas_filas += n
-
-    if ediciones or nuevas_filas or eliminadas:
-        _actualizar_ref_tabla(ws)
-        guardar_en_drive(wb, FILE_ID)
-        _clear_pedidos_cache()
-
-    wb.close()
-    return {"ediciones": ediciones, "nuevas_filas": nuevas_filas,
-            "eliminadas": eliminadas}
-
-
-# ── API PÚBLICA ────────────────────────────────────────────────────────────────
-def guardar_pedido(nombre_cliente: str, fecha_entrega: date, items: list) -> int:
-    """Graba 1 pedido (un ciclo Drive). Mantiene compatibilidad."""
-    wb  = cargar_para_escritura(FILE_ID)
-    ws  = wb[HOJA_PEDIDOS]
-    agr = _escribir_pedido_en_ws(ws, wb, nombre_cliente, fecha_entrega, items)
-    if agr:
-        _expandir_tabla(ws, agr)
-        guardar_en_drive(wb, FILE_ID)
-        _clear_pedidos_cache()
-    wb.close()
-    return agr
+def guardar_pedido(nombre_cliente: str, fecha_entrega: date,
+                   items: list) -> dict:
+    return guardar_pedidos_batch([{
+        "cliente_nombre": nombre_cliente,
+        "fecha":          fecha_entrega,
+        "items":          items,
+    }])
 
 
 def guardar_pedidos_batch(cola: list) -> dict:
-    """
-    Graba N pedidos en UN SOLO ciclo de Drive.
-    cola: lista de dicts {cliente_nombre, fecha, items}
-    Retorna: {pedidos: int, filas: int}
-    """
+    """Graba N pedidos en UN SOLO request a Sheets."""
     if not cola:
         return {"pedidos": 0, "filas": 0}
 
-    wb          = cargar_para_escritura(FILE_ID)
-    ws          = wb[HOJA_PEDIDOS]
     total_filas = 0
+    all_rows    = []
 
     for pedido in cola:
-        n = _escribir_pedido_en_ws(
-            ws, wb,
-            pedido["cliente_nombre"],
-            pedido["fecha"],
-            pedido["items"],
-        )
-        total_filas += n
+        nombre   = pedido["cliente_nombre"]
+        fecha    = pedido["fecha"]
+        items    = pedido["items"]
 
-    if total_filas:
-        _expandir_tabla(ws, total_filas)
-        guardar_en_drive(wb, FILE_ID)
+        cod   = _codigo_cliente(nombre)
+        mes   = fecha.month
+        sem   = fecha.isocalendar()[1]
+        unico = f"{cod}{fecha.day:02d}{mes:02d}{sem:02d}{fecha.year}"
+
+        for item in items:
+            if not item.get("nombre") or _sf(item.get("cantidad")) <= 0:
+                continue
+            all_rows.append(_build_row(nombre, fecha, item, unico))
+            total_filas += 1
+
+    if all_rows:
+        append_rows(_K_PED, all_rows)
         _clear_pedidos_cache()
 
-    wb.close()
     return {"pedidos": len(cola), "filas": total_filas}
+
+
+def guardar_edicion_pedidos(cambios: list) -> int:
+    """
+    Edita líneas existentes.
+    cambios: [{row_num, cantidad_nueva, precio_nuevo, ...}]
+    """
+    upd = []
+    for ch in cambios:
+        rn = ch["row_num"]
+        if "producto_nuevo" in ch:
+            upd.append({"range": f"D{rn}", "values": [[ch["producto_nuevo"]]]})
+        if "cantidad_nueva" in ch:
+            cant  = _sf(ch["cantidad_nueva"])
+            prec  = _sf(ch.get("precio_nuevo", 0))
+            cost  = _sf(ch.get("costo_nuevo", 0))
+            fin   = _calcular(prec, cost, cant)
+            upd += [
+                {"range": f"C{rn}", "values": [[cant]]},
+                {"range": f"G{rn}", "values": [[fin["total"]]]},
+                {"range": f"H{rn}", "values": [[fin["total_costo"]]]},
+                {"range": f"I{rn}", "values": [[fin["margen_q"]]]},
+                {"range": f"J{rn}", "values": [[fin["margen_pct"]]]},
+            ]
+        if "precio_nuevo" in ch:
+            upd.append({"range": f"E{rn}", "values": [[ch["precio_nuevo"]]]})
+        if "costo_nuevo" in ch:
+            upd.append({"range": f"F{rn}", "values": [[ch["costo_nuevo"]]]})
+
+    if upd:
+        update_cells(_K_PED, upd)
+        _clear_pedidos_cache()
+    return len(cambios)

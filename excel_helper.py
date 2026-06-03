@@ -1,825 +1,270 @@
 """
-excel_helper.py
-Operaciones de escritura/modificacion en el Excel:
-  - Pedidos: cancelar, restaurar, editar cantidad
-  - Clientes: agregar, editar, eliminar
-  - Productos: agregar, editar, eliminar (lista normal y Antigua)
+excel_helper.py — Acceso a datos via Google Sheets (migrado de Excel/Drive).
+Mismas firmas de función que antes — todos los módulos funcionan sin cambios.
 """
-
 import streamlit as st
-from drive_helper import cargar_para_lectura, cargar_para_escritura, guardar_en_drive
+from datetime import date, datetime, timedelta
+from gsheets import (ws as _ws, get_all_rows, append_rows,
+                     update_cells, update_cell, delete_rows)
+from config import HOJA_PEDIDOS, HOJA_CLIENTES, HOJA_PRODUCTOS, HOJA_PRODUCTOS_ANTIGUA
 
-FILE_ID = st.secrets["EXCEL_FILE_ID"]
+# ── Constantes ─────────────────────────────────────────────────────────────────
+DIAS_ES  = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
+MESES_N  = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
+
+# Claves para hojas en gsheets.py
+_K_PED  = "pedidos"
+_K_CLI  = "clientes"
+_K_PROD = "productos"
+_K_ANT  = "antigua"
+_K_CFG  = "config"
+_K_HIST = "historial"
+
+# Columna "Para Cotizar" (1-indexed en Sheets, igual que en Excel)
+_PARA_COTIZAR_COL = {False: 22, True: 18}
+
+# Zonas para metas
+ZONAS_CONFIG = ["GT + Santiago", "Río", "Antigua + Chimal"]
+
+def _sf(v) -> float:
+    """Safe float — strings vacías o None → 0.0."""
+    try: return float(v or 0)
+    except: return 0.0
+
+def _si(v) -> int:
+    """Safe int."""
+    try: return int(v or 0)
+    except: return 0
+
+def _parse_fecha(v) -> date | None:
+    """Parsea fecha desde string (Sheets devuelve strings)."""
+    if not v: return None
+    if isinstance(v, date): return v
+    s = str(v).strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y"):
+        try: return datetime.strptime(s, fmt).date()
+        except: pass
+    return None
 
 
-def _actualizar_tabla(ws, nombre_tabla: str):
-    """Ajusta la referencia de una tabla al max_row actual."""
-    if nombre_tabla in ws.tables:
-        tbl    = ws.tables[nombre_tabla]
-        partes = tbl.ref.split(":")
-        inicio = partes[0]
-        col_f  = "".join(c for c in partes[1] if c.isalpha())
-        tbl.ref = f"{inicio}:{col_f}{ws.max_row}"
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PEDIDOS
-# ═══════════════════════════════════════════════════════════════════════════════
-
+# ── PEDIDOS ────────────────────────────────────────────────────────────────────
 @st.cache_resource
 def leer_pedidos() -> list[dict]:
-    """
-    Lee pedidos. Fuente unica de precio: col E (precio_excel).
-    Sin cruce con catalogo. 1 solo download, sin ambiguedad.
-    """
-    from datetime import timedelta
-    wb = cargar_para_lectura(FILE_ID)
-    ws = wb["Pedidos"]
-    pedidos = []
-    for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
-        if not row[0]:
-            continue
-        fecha = row[0]
-        if hasattr(fecha, "date"):
-            fecha = fecha.date()
-        elif isinstance(fecha, (int, float)) and fecha:
-            fecha = date(1899, 12, 30) + timedelta(days=int(fecha))
+    rows   = get_all_rows(_K_PED)
+    result = []
+    for i, row in enumerate(rows, start=2):
+        while len(row) < 31: row.append("")
+        if not row[0]: continue
 
-        precio_xl = float(row[4] or 0)   # col E: Precio
-        costo     = float(row[5] or 0)   # col F: Costo
-        total_xl  = float(row[6] or 0)   # col G: Total (puede estar calculado)
-        cantidad  = float(row[2] or 0)
+        fecha = _parse_fecha(row[0])
+        if not fecha: continue
 
-        # Si Precio es 0 pero Total está disponible, derivar precio
-        # (ocurre en filas históricas donde el VLOOKUP perdió caché)
+        precio_xl = _sf(row[4])
+        costo     = _sf(row[5])
+        cantidad  = _sf(row[2])
+        total_xl  = _sf(row[6])
+
         if precio_xl <= 0 and total_xl > 0 and cantidad > 0:
             precio_xl = round(total_xl / cantidad, 4)
 
-        # Siempre calcular total desde precio × cantidad
-        # NO usar col G como fallback — puede contener Precio Impuestos inflado
         total_final = round(precio_xl * cantidad, 2)
 
-        semana_val = row[14] or (fecha.isocalendar()[1] if fecha else None)
-        año_val    = row[15] or (fecha.year              if fecha else None)
+        try: semana_val = int(_sf(row[14])) or fecha.isocalendar()[1]
+        except: semana_val = fecha.isocalendar()[1]
+
+        try: año_val = int(_sf(row[15])) or fecha.year
+        except: año_val = fecha.year
 
         unico_val = str(row[27] or "").strip()
         if not unico_val and fecha and row[1]:
             unico_val = f"_fbk_{str(row[1]).strip()}_{año_val}_{semana_val}_{fecha.strftime('%d%m')}"
 
-        # Fecha Vencimiento (col U = index 20) para créditos pendientes
-        fvenc = row[20]
-        if hasattr(fvenc, "date"):
-            fvenc = fvenc.date()
-        elif isinstance(fvenc, (int, float)) and fvenc:
-            fvenc = date(1899, 12, 30) + timedelta(days=int(fvenc))
-        else:
-            fvenc = None
+        fvenc = _parse_fecha(row[20]) if len(row) > 20 else None
 
-        # Margen Neto Q calculado en Python (no depende de fórmula Excel)
-        margen_q = round(
-            0.95 * (precio_xl - costo * 1.12) * cantidad, 2
-        ) if precio_xl > 0 and costo >= 0 else 0.0
+        margen_q = round(0.95 * (precio_xl - costo * 1.12) * cantidad, 2) \
+                   if precio_xl > 0 else 0.0
 
-        pedidos.append({
-            "row_num":      i,
-            "fecha":        fecha,
-            "cliente":      str(row[1]  or ""),
-            "cantidad":     cantidad,
-            "producto":     str(row[3]  or ""),
-            "precio":       precio_xl,
+        result.append({
+            "row_num":    i,
+            "fecha":      fecha,
+            "cliente":    str(row[1]  or ""),
+            "cantidad":   cantidad,
+            "producto":   str(row[3]  or ""),
+            "precio":     precio_xl,
             "precio_excel": precio_xl,
-            "costo":        costo,
-            "total":        total_final,
-            "margen_q":     margen_q,
-            "semana":       semana_val,
-            "año":          año_val,
-            "status":       str(row[30] or "Pendiente"),
-            "unico":        unico_val,
-            "direccion":    str(row[18] or ""),
-            "unidad":       str(row[16] or ""),
-            "proveedor":    str(row[17] or ""),
-            "fecha_venc":   fvenc,
+            "costo":      costo,
+            "total":      total_final,
+            "margen_q":   margen_q,
+            "semana":     semana_val,
+            "año":        año_val,
+            "status":     str(row[30] or "Pendiente"),
+            "unico":      unico_val,
+            "direccion":  str(row[18] or ""),
+            "unidad":     str(row[16] or ""),
+            "proveedor":  str(row[17] or ""),
+            "fecha_venc": fvenc,
         })
-    wb.close()
-    return pedidos
+    return result
 
 
-
-def cancelar_pedido(unico: str):
-    wb = cargar_para_escritura(FILE_ID)
-    ws = wb["Pedidos"]
-    for fila in ws.iter_rows(min_row=2):
-        if str(fila[27].value or "") == unico:
-            fila[30].value = "Cancelado"
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    st.cache_data.clear()
-
-
-def restaurar_pedido(unico: str):
-    wb = cargar_para_escritura(FILE_ID)
-    ws = wb["Pedidos"]
-    for fila in ws.iter_rows(min_row=2):
-        if str(fila[27].value or "") == unico:
-            fila[30].value = "Pendiente"
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    st.cache_data.clear()
+def cancelar_pedido(unico: str) -> int:
+    pedidos = leer_pedidos()
+    upd = []
+    for p in pedidos:
+        if p["unico"] == unico and p["status"] != "Cancelado":
+            upd.append({"range": f"AE{p['row_num']}", "values": [["Cancelado"]]})
+    if upd:
+        update_cells(_K_PED, upd)
+        leer_pedidos.clear()
+    return len(upd)
 
 
-def editar_cantidad_linea(row_num: int, nueva_cantidad: float):
-    wb = cargar_para_escritura(FILE_ID)
-    ws = wb["Pedidos"]
-    ws.cell(row=row_num, column=3).value = nueva_cantidad
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    st.cache_data.clear()
-
-
-def editar_linea(row_num: int, nuevo_producto: str = None,
-                  nueva_cantidad: float = None, nuevo_precio: float = None):
-    """
-    Edita producto, cantidad y/o precio de una línea específica del pedido.
-    El precio se escribe como valor estático (sobrescribe el VLOOKUP solo en esa fila),
-    permitiendo descuentos o ajustes puntuales sin afectar el catálogo de precios.
-    """
-    wb = cargar_para_escritura(FILE_ID)
-    ws = wb["Pedidos"]
-    if nuevo_producto is not None:
-        ws.cell(row=row_num, column=4).value = nuevo_producto  # col D: Producto
-    if nueva_cantidad is not None:
-        ws.cell(row=row_num, column=3).value = nueva_cantidad  # col C: Cantidad
-    if nuevo_precio is not None:
-        ws.cell(row=row_num, column=5).value = nuevo_precio    # col E: Precio (estático)
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    st.cache_data.clear()
-
-
-
-
-# ── MIGRACIÓN: PEDIDOS FÓRMULAS → VALORES ESTÁTICOS ──────────────────────────
-
-def migrar_pedidos_a_valores() -> dict:
-    """
-    Convierte todas las fórmulas de la hoja Pedidos a valores estáticos.
-    Equivalente a Excel: Copiar → Pegado Especial → Solo Valores.
-
-    Proceso:
-      1. Descarga el Excel y lee los valores cacheados de cada fórmula
-      2. Vuelve a abrir y reemplaza cada fórmula con su valor calculado
-      3. Sube el Excel limpio (cero fórmulas en la hoja Pedidos)
-
-    Retorna: dict con filas y celdas convertidas.
-    """
-    # ── Paso 1: Leer valores cacheados ────────────────────────────────────────
-    wb_r  = cargar_para_lectura(FILE_ID)
-    ws_r  = wb_r["Pedidos"]
-
-    cache = {}   # {(fila, col): valor}
-    for i, row in enumerate(ws_r.iter_rows(min_row=1), start=1):
-        for j, cell in enumerate(row, start=1):
-            cache[(i, j)] = cell.value
-    max_fila = ws_r.max_row
-    wb_r.close()
-
-    # ── Paso 2: Reemplazar fórmulas con valores ───────────────────────────────
-    wb_w = cargar_para_escritura(FILE_ID)
-    ws_w = wb_w["Pedidos"]
-
-    celdas_conv = 0
-    filas_conv  = set()
-
-    for i in range(2, max_fila + 1):
-        # Solo procesar filas con dato en col A (Fecha)
-        if not cache.get((i, 1)):
-            continue
-
-        for j in range(1, ws_w.max_column + 1):
-            cell = ws_w.cell(row=i, column=j)
-            val  = cell.value
-
-            # Si la celda tiene una fórmula (string que empieza con '=')
-            if isinstance(val, str) and val.startswith("="):
-                valor_cache = cache.get((i, j))
-                cell.value  = valor_cache   # reemplazar fórmula por valor
-                celdas_conv += 1
-
-        filas_conv.add(i)
-
-    guardar_en_drive(wb_w, FILE_ID)
-    wb_w.close()
-    leer_pedidos.clear()
-
-    return {"filas": len(filas_conv), "celdas": celdas_conv}
-
-
-
-def editar_fecha_pedido(unico: str, nueva_fecha) -> int:
-    """
-    Cambia la Fecha Entrega de todas las filas de un pedido (mismo unico).
-    Actualiza también los campos derivados: DiaSemana, Mes, Semana, Año, MesN, MesNN.
-    Retorna el número de filas modificadas.
-    """
-    from datetime import datetime
-    DIAS_ES  = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
-    MESES_N  = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]
-
-    fecha_dt = datetime(nueva_fecha.year, nueva_fecha.month, nueva_fecha.day)
-    semana   = nueva_fecha.isocalendar()[1]
-    año      = nueva_fecha.year
-    mes      = nueva_fecha.month
-
-    wb = cargar_para_escritura(FILE_ID)
-    ws = wb["Pedidos"]
-
-    modificadas = 0
-    for row in ws.iter_rows(min_row=2):
-        # Buscar por Unico (col AB = col 28)
-        if str(row[27].value or "").strip() != unico:
-            continue
-        row[0].value  = fecha_dt              # A: Fecha Entrega
-        row[0].number_format = "dd/mm/yyyy;@"
-        row[12].value = DIAS_ES[nueva_fecha.weekday()]   # M: DiaSemana
-        row[13].value = mes                               # N: Mes
-        row[14].value = semana                            # O: Semana
-        row[15].value = año                               # P: Año
-        row[25].value = MESES_N[mes - 1]                 # Z: MesN
-        row[26].value = f"{mes:02d}"                      # AA: MesNN
-        modificadas  += 1
-
-    if modificadas:
-        guardar_en_drive(wb, FILE_ID)
-        st.cache_data.clear()
-    wb.close()
-    return modificadas
-
-
-
-# ── METAS POR ZONA (hoja Config) ─────────────────────────────────────────────
-HOJA_CONFIG  = "Config"
-ZONAS_CONFIG = ["Antigua & Chimal", "Guatemala & Santiago", "Rio"]
-
-def leer_metas() -> dict:
-    """Lee metas desde hoja Config. Crea la hoja si no existe."""
-    wb = cargar_para_lectura(FILE_ID)
-    if HOJA_CONFIG not in wb.sheetnames:
-        wb.close()
-        return {z: 0.0 for z in ZONAS_CONFIG}
-    ws = wb[HOJA_CONFIG]
-    metas = {z: 0.0 for z in ZONAS_CONFIG}
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if row[0] and str(row[0]) in ZONAS_CONFIG:
-            metas[str(row[0])] = float(row[1] or 0)
-    wb.close()
-    return metas
-
-def guardar_metas(metas: dict) -> None:
-    """Guarda metas en hoja Config (la crea si no existe)."""
-    from openpyxl.styles import Font, PatternFill, Alignment
-    wb = cargar_para_escritura(FILE_ID)
-    if HOJA_CONFIG not in wb.sheetnames:
-        ws = wb.create_sheet(HOJA_CONFIG)
-        # Encabezados
-        for col, txt in enumerate(["Zona", "Meta Semanal (Q)"], 1):
-            cell = ws.cell(row=1, column=col, value=txt)
-            cell.font      = Font(bold=True, color="FFFFFF")
-            cell.fill      = PatternFill("solid", fgColor="2D7A2D")
-            cell.alignment = Alignment(horizontal="center")
-        ws.column_dimensions["A"].width = 30
-        ws.column_dimensions["B"].width = 20
-    else:
-        ws = wb[HOJA_CONFIG]
-    # Escribir metas (fila por zona)
-    for i, zona in enumerate(ZONAS_CONFIG, start=2):
-        ws.cell(row=i, column=1).value = zona
-        ws.cell(row=i, column=2).value = float(metas.get(zona, 0))
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    # metas are config only, no cache to clear
-
+def restaurar_pedido(unico: str) -> int:
+    pedidos = leer_pedidos()
+    upd = []
+    for p in pedidos:
+        if p["unico"] == unico and p["status"] == "Cancelado":
+            upd.append({"range": f"AE{p['row_num']}", "values": [["Pendiente"]]})
+    if upd:
+        update_cells(_K_PED, upd)
+        leer_pedidos.clear()
+    return len(upd)
 
 
 def eliminar_pedido(unico: str) -> int:
-    """
-    Elimina del Excel todas las filas de un pedido (por código Unico).
-    Borra de abajo hacia arriba para no desplazar índices.
-    Retorna el número de filas eliminadas.
-    """
-    wb = cargar_para_escritura(FILE_ID)
-    ws = wb["Pedidos"]
-
-    # Encontrar filas a eliminar
-    filas = []
-    for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
-        if str(row[27].value or "").strip() == unico:
-            filas.append(i)
-
-    # Eliminar de abajo hacia arriba para no afectar índices
-    for fila in sorted(filas, reverse=True):
-        ws.delete_rows(fila)
-
-    # Actualizar referencia de la tabla
-    if "Pedidos" in [s.title for s in wb.worksheets]:
-        from openpyxl.utils import get_column_letter
-        if "Tabla3" in ws.tables:
-            tbl    = ws.tables["Tabla3"]
-            partes = tbl.ref.split(":")
-            col_f  = "".join(ch for ch in partes[1] if ch.isalpha())
-            nueva  = ws.max_row
-            if nueva >= 2:
-                tbl.ref = f"{partes[0]}:{col_f}{nueva}"
-
-    if filas:
-        guardar_en_drive(wb, FILE_ID)
+    pedidos = leer_pedidos()
+    rows_to_delete = [p["row_num"] for p in pedidos if p["unico"] == unico]
+    if rows_to_delete:
+        delete_rows(_K_PED, rows_to_delete)
         leer_pedidos.clear()
-    wb.close()
-    return len(filas)
+    return len(rows_to_delete)
 
+
+def editar_linea(row_num: int, campo: str, valor) -> None:
+    COL_MAP = {"cantidad": "C", "precio": "E", "costo": "F", "status": "AE"}
+    col = COL_MAP.get(campo)
+    if col:
+        update_cells(_K_PED, [{"range": f"{col}{row_num}", "values": [[valor]]}])
+        leer_pedidos.clear()
+
+
+def editar_fecha_pedido(unico: str, nueva_fecha: date) -> int:
+    pedidos = leer_pedidos()
+    upd = []
+    fecha_str = nueva_fecha.strftime("%d/%m/%Y")
+    sem = nueva_fecha.isocalendar()[1]
+    año = nueva_fecha.year
+    mes = nueva_fecha.month
+    dia_es = DIAS_ES[nueva_fecha.weekday()]
+    for p in pedidos:
+        if p["unico"] == unico:
+            rn = p["row_num"]
+            upd += [
+                {"range": f"A{rn}", "values": [[fecha_str]]},
+                {"range": f"M{rn}", "values": [[dia_es]]},
+                {"range": f"N{rn}", "values": [[mes]]},
+                {"range": f"O{rn}", "values": [[sem]]},
+                {"range": f"P{rn}", "values": [[año]]},
+            ]
+    if upd:
+        update_cells(_K_PED, upd)
+        leer_pedidos.clear()
+    return len(upd) // 5
 
 
 def editar_cambios_batch(cambios: list) -> int:
     """
-    Aplica múltiples ediciones de pedidos en UN SOLO ciclo Drive.
-    cambios: lista de dicts con row_num + campos opcionales:
-      nuevo_producto, nueva_cantidad, nuevo_precio
-    Retorna: número de filas modificadas.
+    cambios: [{row_num, cantidad_nueva, precio_nuevo, total_nuevo,
+               total_costo_nuevo, margen_q_nuevo, margen_pct_nuevo}]
     """
-    if not cambios:
-        return 0
-
-    wb = cargar_para_escritura(FILE_ID)
-    ws = wb["Pedidos"]
-    modificadas = 0
-
-    for cambio in cambios:
-        row = cambio["row_num"]
-        if "nuevo_producto" in cambio:
-            ws.cell(row=row, column=4).value = cambio["nuevo_producto"]
-        if "nueva_cantidad" in cambio:
-            ws.cell(row=row, column=3).value = cambio["nueva_cantidad"]
-        if "nuevo_precio"   in cambio:
-            ws.cell(row=row, column=5).value = cambio["nuevo_precio"]
-        modificadas += 1
-
-    if modificadas:
-        guardar_en_drive(wb, FILE_ID)
-        st.cache_data.clear()
-    wb.close()
-    return modificadas
-
-
-
-# ── CORRECCIÓN MASIVA DE PRECIOS / COSTOS ─────────────────────────────────────
-
-def preview_correccion_masiva(cliente: str, producto: str,
-                               desde_mes: int, desde_año: int,
-                               hasta_mes: int, hasta_año: int,
-                               nuevo_precio: float, nuevo_costo: float,
-                               cambiar_precio: bool, cambiar_costo: bool) -> dict:
-    """
-    Simula la corrección y retorna un resumen del impacto SIN modificar el Excel.
-    Retorna: {total_filas, delta_ventas, delta_margen, filas (list)}
-    """
-    import calendar
-    from datetime import date, timedelta
-
-    wb = cargar_para_lectura(FILE_ID)
-    ws = wb["Pedidos"]
-
-    desde = date(desde_año, desde_mes, 1)
-    ultimo = calendar.monthrange(hasta_año, hasta_mes)[1]
-    hasta  = date(hasta_año, hasta_mes, ultimo)
-
-    filas = []
-    for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
-        if not row[0]: continue
-        if str(row[30] or "") == "Cancelado": continue
-        if str(row[1] or "").strip().lower() != cliente.lower(): continue
-        if str(row[3] or "").strip().lower() != producto.lower(): continue
-
-        fecha = row[0]
-        if hasattr(fecha, "date"): fecha = fecha.date()
-        elif isinstance(fecha, (int, float)) and fecha:
-            fecha = date(1899, 12, 30) + timedelta(days=int(fecha))
-        if not fecha or not (desde <= fecha <= hasta): continue
-
-        cant      = float(row[2] or 0)
-        p_act     = float(row[4] or 0)
-        c_act     = float(row[5] or 0)
-        p_new     = nuevo_precio if cambiar_precio else p_act
-        c_new     = nuevo_costo  if cambiar_costo  else c_act
-
-        filas.append({
-            "row_num":    i,
-            "fecha":      fecha,
-            "cantidad":   cant,
-            "p_act": p_act, "p_new": p_new,
-            "c_act": c_act, "c_new": c_new,
-            "total_act":  round(p_act * cant, 2),
-            "total_new":  round(p_new * cant, 2),
-            "margen_act": round(0.95*(p_act-c_act*1.12)*cant, 2),
-            "margen_new": round(0.95*(p_new-c_new*1.12)*cant, 2),
-        })
-
-    wb.close()
-
-    return {
-        "total_filas":  len(filas),
-        "delta_ventas": round(sum(f["total_new"]-f["total_act"] for f in filas), 2),
-        "delta_margen": round(sum(f["margen_new"]-f["margen_act"] for f in filas), 2),
-        "filas":        filas,
-    }
-
-
-def aplicar_correccion_masiva(preview_data: dict,
-                               cliente: str, producto: str,
-                               nuevo_precio: float, nuevo_costo: float,
-                               cambiar_precio: bool, cambiar_costo: bool,
-                               desde_mes: int, desde_año: int,
-                               hasta_mes: int, hasta_año: int) -> int:
-    """
-    Aplica la corrección masiva de precios/costos y recalcula columnas E-L.
-    Registra cada cambio en la hoja Historial Cambios.
-    Retorna: número de filas modificadas.
-    """
-    from datetime import datetime as dt_cls
-    filas = preview_data.get("filas", [])
-    if not filas: return 0
-
-    wb     = cargar_para_escritura(FILE_ID)
-    ws_ped = wb["Pedidos"]
-
-    for f in filas:
-        row  = f["row_num"]
-        cant = f["cantidad"]
-        p    = f["p_new"]
-        c_   = f["c_new"]
-
-        if cambiar_precio: ws_ped.cell(row=row, column=5).value  = p
-        if cambiar_costo:  ws_ped.cell(row=row, column=6).value  = c_
-
-        ws_ped.cell(row=row, column=7).value  = round(p * cant, 4)
-        ws_ped.cell(row=row, column=8).value  = round(c_ * cant, 4)
-        ws_ped.cell(row=row, column=9).value  = round(0.95*(p-c_*1.12)*cant, 4)
-        ws_ped.cell(row=row, column=10).value = round(0.95*(1-c_*1.12/p), 4) if p else 0
-        ws_ped.cell(row=row, column=11).value = round((p-p/1.12)*cant, 4)
-        ws_ped.cell(row=row, column=12).value = round(p/1.12*0.05*cant, 4)
-
-    # Registrar en Historial Cambios
-    if HOJA_HISTORIAL not in wb.sheetnames:
-        from openpyxl.styles import Font, PatternFill, Alignment
-        ws_h = wb.create_sheet(HOJA_HISTORIAL)
-        ws_h.append(_HIST_HEADERS)
-        for col in range(1, len(_HIST_HEADERS)+1):
-            cell = ws_h.cell(row=1, column=col)
-            cell.font      = Font(bold=True, color="FFFFFF")
-            cell.fill      = PatternFill("solid", fgColor="2D7A2D")
-            cell.alignment = Alignment(horizontal="center")
-    else:
-        ws_h = wb[HOJA_HISTORIAL]
-
-    ahora  = dt_cls.now()
-    rango  = (f"CORRECCIÓN MASIVA "
-              f"{desde_mes:02d}/{desde_año}→{hasta_mes:02d}/{hasta_año}")
-
-    for f in filas:
-        sem = f["fecha"].isocalendar()[1] if f["fecha"] else ""
-        año = f["fecha"].year             if f["fecha"] else ""
-        if cambiar_precio:
-            ws_h.append([ahora, cliente, producto,
-                          f["p_act"], f["p_new"],
-                          round(f["p_new"]-f["p_act"], 4),
-                          sem, año, rango, f["row_num"]])
-            ws_h.cell(ws_h.max_row, 1).number_format = "dd/mm/yyyy hh:mm"
-
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    leer_pedidos.clear()
-    return len(filas)
-
-
-# ── HISTORIAL DE CAMBIOS DE PRECIO ────────────────────────────────────────────
-HOJA_HISTORIAL  = "Historial Cambios"
-_HIST_HEADERS   = [
-    "Fecha Cambio", "Cliente", "Producto",
-    "Precio Anterior (Q)", "Precio Nuevo (Q)", "Diferencia (Q)",
-    "Semana", "Año", "Unico", "Fila Pedido",
-]
+    upd = []
+    for ch in cambios:
+        rn = ch["row_num"]
+        if "producto_nuevo" in ch:
+            upd.append({"range": f"D{rn}", "values": [[ch["producto_nuevo"]]]})
+        if "cantidad_nueva" in ch:
+            upd.append({"range": f"C{rn}", "values": [[ch["cantidad_nueva"]]]})
+        if "precio_nuevo" in ch:
+            upd.append({"range": f"E{rn}", "values": [[ch["precio_nuevo"]]]})
+        if "total_nuevo" in ch:
+            upd.append({"range": f"G{rn}", "values": [[ch["total_nuevo"]]]})
+    if upd:
+        update_cells(_K_PED, upd)
+        leer_pedidos.clear()
+    return len(cambios)
 
 
 def guardar_cambios_precio(cambios: list, actualizar_catalogo: bool = False) -> int:
-    """
-    Para cada línea con precio modificado:
-      1. Actualiza el precio en la hoja Pedidos (col E)
-      2. Registra el cambio en la hoja 'Historial Cambios'
+    upd_ped = []
+    reales  = []
+    for ch in cambios:
+        precio_ant = _sf(ch.get("precio_anterior", 0))
+        precio_nvo = _sf(ch.get("precio_nuevo", 0))
+        if abs(precio_nvo - precio_ant) < 0.001: continue
+        reales.append(ch)
+        rn = ch["row_num"]
+        upd_ped.append({"range": f"E{rn}", "values": [[precio_nvo]]})
 
-    cambios: lista de dicts con keys:
-      row_num, cliente, producto, precio_anterior, precio_nuevo,
-      semana, año, unico
-    Retorna: cantidad de precios efectivamente cambiados.
-    """
-    from datetime import datetime
+    if upd_ped:
+        update_cells(_K_PED, upd_ped)
 
-    # Filtrar solo los que realmente cambiaron
-    reales = [x for x in cambios if abs(x["precio_nuevo"] - x["precio_anterior"]) > 0.001]
-    if not reales:
-        return 0
+    if actualizar_catalogo and reales:
+        prod_map = {c["producto"]: _sf(c["precio_nuevo"]) for c in reales}
+        _actualizar_precio_catalogo(prod_map)
 
-    wb      = cargar_para_escritura(FILE_ID)
-    ws_ped  = wb["Pedidos"]
-
-    # 1. Actualizar precios en Pedidos
-    for x in reales:
-        ws_ped.cell(row=x["row_num"], column=5).value = x["precio_nuevo"]
-
-    # 2. Crear o abrir hoja Historial
-    if HOJA_HISTORIAL not in wb.sheetnames:
-        ws_hist = wb.create_sheet(HOJA_HISTORIAL)
-        ws_hist.append(_HIST_HEADERS)
-        # Formato de encabezados
-        from openpyxl.styles import Font, PatternFill, Alignment
-        for col in range(1, len(_HIST_HEADERS) + 1):
-            cell = ws_hist.cell(row=1, column=col)
-            cell.font      = Font(bold=True, color="FFFFFF")
-            cell.fill      = PatternFill("solid", fgColor="2D7A2D")
-            cell.alignment = Alignment(horizontal="center")
-    else:
-        ws_hist = wb[HOJA_HISTORIAL]
-
-    # 3. Agregar filas al historial
-    ahora = datetime.now()
-    for x in reales:
-        diff = round(x["precio_nuevo"] - x["precio_anterior"], 4)
-        ws_hist.append([
-            ahora,
-            x["cliente"],
-            x["producto"],
-            round(x["precio_anterior"], 4),
-            round(x["precio_nuevo"],    4),
-            diff,
-            x["semana"],
-            x["año"],
-            x["unico"],
-            x["row_num"],
-        ])
-        # Formato de fecha en la nueva fila
-        last = ws_hist.max_row
-        ws_hist.cell(row=last, column=1).number_format = "dd/mm/yyyy hh:mm"
-
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    leer_pedidos.clear()
+    if upd_ped:
+        leer_pedidos.clear()
     return len(reales)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# CLIENTES
-# ═══════════════════════════════════════════════════════════════════════════════
-
-TABLA_CLIENTES = "Tabla2"
-
-
-def _siguiente_codigo_cliente() -> str:
-    wb = cargar_para_lectura(FILE_ID)
-    ws = wb["Clientes"]
-    nums = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        cod = str(row[9] or "").strip()
-        if cod.upper().startswith("C") and cod[1:].isdigit():
-            nums.append(int(cod[1:]))
-    wb.close()
-    return f"C{(max(nums) + 1) if nums else 1:03d}"
+def _actualizar_precio_catalogo(prod_map: dict) -> None:
+    """Actualiza precio en Listado Productos y Listado Antigua."""
+    for k_hoja, col_precio in [(_K_PROD, 8), (_K_ANT, 7)]:
+        rows = get_all_rows(k_hoja)
+        upd  = []
+        for i, row in enumerate(rows, start=2):
+            prod = str(row[0] if row else "") 
+            if prod in prod_map:
+                col_letter = "H" if col_precio == 8 else "G"
+                upd.append({"range": f"{col_letter}{i}",
+                            "values": [[prod_map[prod]]]})
+        if upd:
+            update_cells(k_hoja, upd)
 
 
-def agregar_cliente(data: dict) -> str:
-    codigo = _siguiente_codigo_cliente()
-    wb = cargar_para_escritura(FILE_ID)
-    ws = wb["Clientes"]
-    ws.append([
-        data.get("nombre", ""),
-        data.get("direccion", ""),
-        data.get("ubicacion", ""),
-        data.get("telefono", ""),
-        data.get("nit", "0"),
-        data.get("tipo", "Restaurante"),
-        data.get("estatus", "Pendiente"),
-        data.get("empresa", data.get("nombre", "")),
-        int(data.get("credito", 0)),
-        codigo,
-        data.get("codigo_lugar", "L05"),
-    ])
-    _actualizar_tabla(ws, TABLA_CLIENTES)
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    st.cache_data.clear()
-    return codigo
+# ── CORRECCIÓN MASIVA ──────────────────────────────────────────────────────────
+def preview_correccion_masiva(patron: str, campo: str, valor_nuevo) -> list:
+    pedidos = leer_pedidos()
+    return [p for p in pedidos
+            if patron.lower() in p["producto"].lower()
+            and p["status"] != "Cancelado"]
 
 
-def editar_cliente(row_num: int, data: dict):
-    wb = cargar_para_escritura(FILE_ID)
-    ws = wb["Clientes"]
-    mapeo = {
-        1: "nombre", 2: "direccion", 3: "ubicacion", 4: "telefono",
-        5: "nit",    6: "tipo",      7: "estatus",   8: "empresa",
-        9: "credito", 11: "codigo_lugar",
-    }
-    for col, campo in mapeo.items():
-        if campo in data:
-            val = int(data[campo]) if campo == "credito" else data[campo]
-            ws.cell(row=row_num, column=col).value = val
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    st.cache_data.clear()
+def aplicar_correccion_masiva(patron: str, campo: str, valor_nuevo,
+                               actualizar_catalogo: bool = False) -> int:
+    pedidos  = leer_pedidos()
+    afectados = [p for p in pedidos
+                 if patron.lower() in p["producto"].lower()
+                 and p["status"] != "Cancelado"]
+    COL = {"precio": "E", "costo": "F"}
+    col = COL.get(campo)
+    if not col or not afectados: return 0
+
+    upd = [{"range": f"{col}{p['row_num']}", "values": [[valor_nuevo]]}
+           for p in afectados]
+    update_cells(_K_PED, upd)
+
+    if actualizar_catalogo and campo == "precio":
+        productos_unicos = {p["producto"] for p in afectados}
+        prod_map = {prod: _sf(valor_nuevo) for prod in productos_unicos}
+        _actualizar_precio_catalogo(prod_map)
+
+    leer_pedidos.clear()
+    return len(afectados)
 
 
-def eliminar_cliente(row_num: int):
-    wb = cargar_para_escritura(FILE_ID)
-    ws = wb["Clientes"]
-    ws.delete_rows(row_num)
-    _actualizar_tabla(ws, TABLA_CLIENTES)
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    st.cache_data.clear()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PRODUCTOS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-_PROD_CFG = {
-    False: {   # Lista normal
-        "hoja":  "Listado Productos",
-        "tabla": "LIstPreciosProd",
-        # columnas manuales col(1-indexed): campo_data
-        "manual": {
-            1:"nombre", 2:"unidad", 3:"segmento", 4:"unidad_despacho",
-            6:"costo",  8:"precio", 15:"proveedor", 16:"pesos",
-            19:"tipo_producto", 20:"parent", 21:"tipo_producto2",
-            22:"para_cotizar",  23:"comentario",
-        },
-        # columnas con formula (copiar de fila anterior)
-        "formulas": [7, 9, 10, 11, 12, 13, 17, 18],
-    },
-    True: {    # Lista Antigua
-        "hoja":  "Listado Productos Antigua",
-        "tabla": "Tabla29",
-        "manual": {
-            1:"nombre", 2:"unidad", 3:"segmento", 4:"unidad_despacho",
-            6:"costo",  7:"precio", 13:"proveedor", 14:"pesos",
-            17:"tipo_producto2",
-        },
-        "formulas": [8, 9, 10, 11, 12, 15, 16],
-    },
-}
-
-
-def agregar_producto(data: dict, es_antigua: bool = False):
-    cfg = _PROD_CFG[es_antigua]
-    wb  = cargar_para_escritura(FILE_ID)
-    ws  = wb[cfg["hoja"]]
-    ref = ws.max_row
-    new = ref + 1
-
-    for col, campo in cfg["manual"].items():
-        ws.cell(row=new, column=col).value = data.get(campo, "")
-
-    for col in cfg["formulas"]:
-        src = ws.cell(row=ref, column=col)
-        dst = ws.cell(row=new, column=col)
-        dst.value         = src.value
-        dst.number_format = src.number_format
-
-    _actualizar_tabla(ws, cfg["tabla"])
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    st.cache_data.clear()
-
-
-def editar_producto(row_num: int, data: dict, es_antigua: bool = False):
-    cfg = _PROD_CFG[es_antigua]
-    wb  = cargar_para_escritura(FILE_ID)
-    ws  = wb[cfg["hoja"]]
-    for col, campo in cfg["manual"].items():
-        if campo in data:
-            ws.cell(row=row_num, column=col).value = data[campo]
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    st.cache_data.clear()
-
-
-def eliminar_producto(row_num: int, es_antigua: bool = False):
-    cfg = _PROD_CFG[es_antigua]
-    wb  = cargar_para_escritura(FILE_ID)
-    ws  = wb[cfg["hoja"]]
-    ws.delete_rows(row_num)
-    _actualizar_tabla(ws, cfg["tabla"])
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    st.cache_data.clear()
-
-
-def leer_productos_con_fila(es_antigua: bool = False) -> list[dict]:
-    """Lee productos con numero de fila para edicion/borrado."""
-    cfg = _PROD_CFG[es_antigua]
-    wb  = cargar_para_lectura(FILE_ID)
-    ws  = wb[cfg["hoja"]]
-    col_precio = 7 if es_antigua else 8   # 1-indexed
-    productos  = []
-    for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
-        if not row[0]:
-            continue
-        productos.append({
-            "row_num":       i,
-            "nombre":        str(row[0]  or ""),
-            "unidad":        str(row[1]  or ""),
-            "segmento":      str(row[2]  or ""),
-            "unidad_despacho": row[3] or 1,
-            "costo":         float(row[5] or 0),
-            "precio":        float(row[col_precio - 1] or 0),
-            "proveedor":     str(row[12] if es_antigua else row[14] or ""),
-            "tipo_producto": str(row[16] if es_antigua else row[18] or ""),
-            "tipo_producto2": str(row[16] if es_antigua else row[20] or ""),
-            "parent":        str(row[19] or row[0] or "") if not es_antigua else str(row[0] or ""),
-            "para_cotizar":  str(row[21] or "") if not es_antigua else str(row[17] if len(row) > 17 else ""),
-            "comentario":    str(row[22] or "") if not es_antigua else "",
-            "pesos":         float(row[13] or 0) if es_antigua else float(row[15] or 0),
-        })
-    wb.close()
-    return productos
-
-
-# ── PARA COTIZAR ──────────────────────────────────────────────────────────────
-_PARA_COTIZAR_COL = {
-    False: 22,   # Listado Productos: columna V (1-indexed = 22)
-    True:  18,   # Listado Antigua: columna R (1-indexed = 18) — se agrega si no existe
-}
-
-
-def guardar_para_cotizar_batch(cambios: dict, es_antigua: bool):
-    """
-    Guarda el campo Para Cotizar para múltiples productos.
-    cambios: {row_num: valor_bool_o_str}
-    """
-    col = _PARA_COTIZAR_COL[es_antigua]
-    cfg = _PROD_CFG[es_antigua]
-    wb  = cargar_para_escritura(FILE_ID)
-    ws  = wb[cfg["hoja"]]
-    for row_num, val in cambios.items():
-        cell_val = "Si" if val else ""
-        ws.cell(row=row_num, column=col).value = cell_val
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-
-
-def agregar_col_para_cotizar_antigua():
-    """
-    Agrega la columna 'Para Cotizar' a Listado Productos Antigua si no existe.
-    La agrega como columna 18 (R) con encabezado en fila 1.
-    Retorna: (True, n_filas) o (False, mensaje)
-    """
-    wb  = cargar_para_escritura(FILE_ID)
-    ws  = wb["Listado Productos Antigua"]
-    # Verificar si ya existe
-    if ws.cell(row=1, column=18).value == "Para Cotizar":
-        wb.close()
-        return False, "La columna ya existe"
-    # Agregar encabezado
-    ws.cell(row=1, column=18).value = "Para Cotizar"
-    # Inicializar filas de datos en vacío
-    n = 0
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value:
-            ws.cell(row=row[0].row, column=18).value = ""
-            n += 1
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    return True, n
-
-
-def limpiar_para_cotizar(es_antigua: bool):
-    """Borra todos los valores Para Cotizar (para reiniciar)."""
-    col = _PARA_COTIZAR_COL[es_antigua]
-    cfg = _PROD_CFG[es_antigua]
-    wb  = cargar_para_escritura(FILE_ID)
-    ws  = wb[cfg["hoja"]]
-    n   = 0
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value:
-            ws.cell(row=row[0].row, column=col).value = ""
-            n += 1
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    return n
-
-
-# ── AJUSTE DE PRECIOS POR SEMANA ──────────────────────────────────────────────
+# ── PRECIO / COSTO POR SEMANA ──────────────────────────────────────────────────
 def leer_productos_semana(semana: int, año: int) -> list:
-    """
-    Retorna lista de productos únicos con sus precios actuales
-    para los pedidos de una semana específica.
-    [{producto, precio_actual, costo, n_pedidos, clientes}]
-    """
     todos = leer_pedidos()
     agg   = {}
     for p in todos:
@@ -827,92 +272,217 @@ def leer_productos_semana(semana: int, año: int) -> list:
         if p["status"] == "Cancelado": continue
         prod = p["producto"]
         if prod not in agg:
-            agg[prod] = {
-                "producto":      prod,
-                "precio_actual": float(p["precio"] or 0),
-                "costo":         float(p["costo"]  or 0),
-                "n_pedidos":     0,
-                "clientes":      set(),
-            }
+            agg[prod] = {"producto": prod, "precio_actual": _sf(p["precio"]),
+                         "costo": _sf(p["costo"]), "n_pedidos": 0,
+                         "clientes": set()}
         agg[prod]["n_pedidos"] += 1
         agg[prod]["clientes"].add(p["cliente"])
-    # Convertir sets a strings
     for v in agg.values():
         v["clientes"] = ", ".join(sorted(v["clientes"]))
     return sorted(agg.values(), key=lambda x: x["producto"])
 
 
 def actualizar_precio_semana(cambios: list, semana: int, año: int) -> dict:
-    """
-    Actualiza el precio en Pedidos (semana/año) + Listado Productos.
-    cambios: [{producto, precio_nuevo}]
-    Retorna: {filas_pedidos, prods_catalogo}
-    """
-    from math import floor
+    todos     = leer_pedidos()
+    precio_map = {c["producto"]: _sf(c["precio_nuevo"]) for c in cambios}
+    costo_map  = {c["producto"]: _sf(c["costo_nuevo"])  for c in cambios}
 
-    # Mapas producto → precio/costo nuevo
-    precio_map = {ch["producto"]: float(ch["precio_nuevo"]) for ch in cambios}
-    costo_map  = {ch["producto"]: float(ch["costo_nuevo"])  for ch in cambios}
-
-    wb          = cargar_para_escritura(FILE_ID)
-    ws_ped      = wb["Pedidos"]
-    ws_gral     = wb["Listado Productos"]
-    ws_ant      = wb["Listado Productos Antigua"]
-
-    filas_ped    = 0
-    prods_cat    = 0
-
-    # ── Actualizar Pedidos ────────────────────────────────────────────────────
-    for row in ws_ped.iter_rows(min_row=2):
-        prod = str(row[3].value or "")  # col D (idx 3)
+    upd = []
+    for p in todos:
+        prod = p["producto"]
         if prod not in precio_map: continue
-        sem  = row[14].value            # col O (idx 14)
-        yr   = row[15].value            # col P (idx 15)
-        try:
-            if int(sem) != semana or int(yr) != año: continue
-        except (TypeError, ValueError):
-            continue
+        if p["semana"] != semana or p["año"] != año: continue
+        rn = p["row_num"]
+        upd.append({"range": f"E{rn}", "values": [[precio_map[prod]]]})
+        if prod in costo_map and costo_map[prod] > 0:
+            upd.append({"range": f"F{rn}", "values": [[costo_map[prod]]]})
 
-        precio_nuevo = precio_map[prod]
-        costo_nuevo  = costo_map.get(prod)
-        cant         = float(row[2].value or 0)   # col C (idx 2)
-        costo        = costo_nuevo if costo_nuevo is not None                        else float(row[5].value or 0)   # col F (idx 5)
+    filas_ped = len(upd)
+    if upd:
+        update_cells(_K_PED, upd)
+        _actualizar_precio_catalogo(precio_map)
+        leer_pedidos.clear()
 
-        total     = round(precio_nuevo * cant, 4)
-        t_costo   = round(costo * cant, 4)
-        margen_q  = round(0.95 * (precio_nuevo - costo * 1.12) * cant, 4)
-        margen_pct= round(0.95 * (1 - costo * 1.12 / precio_nuevo), 4)                     if precio_nuevo > 0 else 0
-        iva       = round((precio_nuevo - precio_nuevo / 1.12) * cant, 4)
+    return {"filas_pedidos": filas_ped, "prods_catalogo": len(precio_map)}
 
-        row[4].value  = precio_nuevo   # col E: precio
-        if costo_nuevo is not None:
-            row[5].value = costo_nuevo     # col F: costo
-        row[6].value  = total          # col G: total
-        row[7].value  = t_costo        # col H: total_costo
-        row[8].value  = margen_q       # col I: margen_q
-        row[9].value  = margen_pct     # col J: margen_pct
-        row[10].value = iva            # col K: iva
-        filas_ped += 1
 
-    # ── Actualizar Listado Productos (general) ────────────────────────────────
-    for row in ws_gral.iter_rows(min_row=2):
-        prod = str(row[0].value or "")
-        if prod in precio_map:
-            row[7].value = precio_map[prod]   # col H (idx 7): Precio
-            if prod in costo_map:
-                row[5].value = costo_map[prod] # col F (idx 5): Costo
-            prods_cat += 1
+def leer_productos_semana_precios(semana: int, año: int) -> list:
+    return leer_productos_semana(semana, año)
 
-    # ── Actualizar Listado Productos Antigua ──────────────────────────────────
-    for row in ws_ant.iter_rows(min_row=2):
-        prod = str(row[0].value or "")
-        if prod in precio_map:
-            row[6].value = precio_map[prod]   # col G (idx 6): Precio Antigua
-            if prod in costo_map:
-                row[5].value = costo_map[prod] # col F (idx 5): Costo Antigua
-            prods_cat += 1
 
-    guardar_en_drive(wb, FILE_ID)
-    wb.close()
-    leer_pedidos.clear()
-    return {"filas_pedidos": filas_ped, "prods_catalogo": prods_cat}
+# ── CLIENTES ───────────────────────────────────────────────────────────────────
+def _siguiente_codigo_cliente() -> str:
+    rows = get_all_rows(_K_CLI)
+    max_n = 0
+    for row in rows:
+        cod = str(row[9] if len(row) > 9 else "")
+        if cod.startswith("C") and cod[1:].isdigit():
+            max_n = max(max_n, int(cod[1:]))
+    return f"C{max_n + 1:03d}"
+
+
+def agregar_cliente(data: dict) -> str:
+    codigo = _siguiente_codigo_cliente()
+    row = [
+        data.get("nombre",      ""),
+        data.get("direccion",   ""),
+        data.get("ubicacion",   ""),
+        data.get("telefono",    ""),
+        data.get("nit",         "0"),
+        data.get("tipo",        "Restaurante"),
+        data.get("estatus",     "Pendiente"),
+        data.get("empresa",     data.get("nombre", "")),
+        int(data.get("credito", 0)),
+        codigo,
+        data.get("codigo_lugar","L05"),
+    ]
+    append_rows(_K_CLI, [row])
+    st.cache_data.clear()
+    return codigo
+
+
+def editar_cliente(row_num: int, data: dict) -> None:
+    mapeo = {
+        "A": "nombre",    "B": "direccion", "C": "ubicacion",
+        "D": "telefono",  "E": "nit",       "F": "tipo",
+        "G": "estatus",   "H": "empresa",   "I": "credito",
+        "K": "codigo_lugar",
+    }
+    upd = []
+    for col, campo in mapeo.items():
+        if campo in data:
+            val = int(data[campo]) if campo == "credito" else data[campo]
+            upd.append({"range": f"{col}{row_num}", "values": [[val]]})
+    if upd:
+        update_cells(_K_CLI, upd)
+    st.cache_data.clear()
+
+
+def eliminar_cliente(row_num: int) -> None:
+    delete_rows(_K_CLI, [row_num])
+    st.cache_data.clear()
+
+
+# ── PRODUCTOS ──────────────────────────────────────────────────────────────────
+_PROD_COLS = {
+    False: {  # Lista General (columnas 1-indexed → letras)
+        "A":"nombre", "B":"unidad",   "C":"segmento",      "D":"unidad_despacho",
+        "F":"costo",  "H":"precio",   "O":"proveedor",     "P":"pesos",
+        "S":"tipo_producto", "T":"parent", "U":"tipo_producto2",
+        "V":"para_cotizar",  "W":"comentario",
+    },
+    True: {   # Lista Antigua
+        "A":"nombre", "B":"unidad",   "C":"segmento",      "D":"unidad_despacho",
+        "F":"costo",  "G":"precio",   "I":"proveedor",     "J":"pesos",
+        "K":"tipo_producto2", "R":"para_cotizar",
+    },
+}
+
+
+def leer_productos_con_fila(es_antigua: bool = False) -> list[dict]:
+    k     = _K_ANT if es_antigua else _K_PROD
+    rows  = get_all_rows(k)
+    col_p = 6 if es_antigua else 7   # 0-indexed: G=6, H=7
+    productos = []
+    for i, row in enumerate(rows, start=2):
+        while len(row) < 23: row.append("")
+        if not row[0]: continue
+        productos.append({
+            "row_num":        i,
+            "nombre":         str(row[0]  or ""),
+            "unidad":         str(row[1]  or ""),
+            "segmento":       str(row[2]  or ""),
+            "unidad_despacho": _si(row[3]) or 1,
+            "costo":          _sf(row[5]),
+            "precio":         _sf(row[col_p]),
+            "proveedor":      str(row[14] if not es_antigua else row[8] or ""),
+            "pesos":          _sf(row[15] if not es_antigua else row[9]),
+            "tipo_producto":  str(row[18] if not es_antigua else "" or ""),
+            "tipo_producto2": str(row[20] if not es_antigua else row[10] or ""),
+            "parent":         str(row[19] if not es_antigua else row[0] or ""),
+            "para_cotizar":   str(row[21] if not es_antigua else
+                                  (row[17] if len(row) > 17 else "") or ""),
+            "comentario":     str(row[22] if not es_antigua else ""),
+        })
+    return productos
+
+
+def agregar_producto(data: dict, es_antigua: bool = False) -> None:
+    k    = _K_ANT if es_antigua else _K_PROD
+    cols = _PROD_COLS[es_antigua]
+    # Build row (max column: W=23 for general, R=18 for antigua)
+    max_col = 23 if not es_antigua else 18
+    row = [""] * max_col
+    for col_letter, campo in cols.items():
+        idx = ord(col_letter) - ord("A")
+        val = data.get(campo, "")
+        if campo == "unidad_despacho": val = int(val or 1)
+        row[idx] = val
+    append_rows(k, [row])
+    st.cache_data.clear()
+
+
+def editar_producto(row_num: int, data: dict, es_antigua: bool = False) -> None:
+    k    = _K_ANT if es_antigua else _K_PROD
+    cols = _PROD_COLS[es_antigua]
+    upd  = []
+    for col_letter, campo in cols.items():
+        if campo in data:
+            val = int(data[campo] or 1) if campo == "unidad_despacho" else data[campo]
+            upd.append({"range": f"{col_letter}{row_num}", "values": [[val]]})
+    if upd:
+        update_cells(k, upd)
+    st.cache_data.clear()
+
+
+def eliminar_producto(row_num: int, es_antigua: bool = False) -> None:
+    k = _K_ANT if es_antigua else _K_PROD
+    delete_rows(k, [row_num])
+    st.cache_data.clear()
+
+
+def guardar_para_cotizar_batch(cambios: dict, es_antigua: bool) -> None:
+    k      = _K_ANT if es_antigua else _K_PROD
+    col    = "R" if es_antigua else "V"
+    upd    = []
+    for row_num, val in cambios.items():
+        cell_val = "Si" if val else ""
+        upd.append({"range": f"{col}{row_num}", "values": [[cell_val]]})
+    if upd:
+        update_cells(k, upd)
+
+
+# ── METAS (Config sheet) ───────────────────────────────────────────────────────
+def leer_metas() -> dict:
+    metas = {z: 0.0 for z in ZONAS_CONFIG}
+    try:
+        rows = get_all_rows(_K_CFG)
+        for row in rows:
+            if row and str(row[0]) in ZONAS_CONFIG:
+                metas[str(row[0])] = _sf(row[1] if len(row) > 1 else 0)
+    except Exception:
+        pass
+    return metas
+
+
+def guardar_metas(metas: dict) -> None:
+    rows = get_all_rows(_K_CFG)
+    zona_rows = {str(r[0]): i+2 for i, r in enumerate(rows) if r}
+    upd = []
+    new_rows = []
+    for zona, val in metas.items():
+        if zona in zona_rows:
+            upd.append({"range": f"B{zona_rows[zona]}", "values": [[val]]})
+        else:
+            new_rows.append([zona, val])
+    if upd:      update_cells(_K_CFG, upd)
+    if new_rows: append_rows(_K_CFG, new_rows)
+
+
+# ── FUNCIONES LEGACY (compatibilidad) ─────────────────────────────────────────
+def migrar_pedidos_a_valores(): pass   # Ya no aplica con Sheets
+def _actualizar_tabla(*args, **kwargs): pass
+def editar_cantidad_linea(row_num, cant): editar_linea(row_num, "cantidad", cant)
+
+# Alias para orden_helper
+FILE_ID = None  # Ya no se usa — mantenido por compatibilidad de imports

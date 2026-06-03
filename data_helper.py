@@ -1,75 +1,65 @@
 """
-data_helper.py — Lectura de catálogos (clientes y productos) con caché.
+data_helper.py — Caché de clientes y productos via Google Sheets.
 """
 import streamlit as st
-from drive_helper import cargar_para_lectura
+from gsheets import get_all_rows
 
-FILE_ID = st.secrets["EXCEL_FILE_ID"]
+_K_CLI  = "clientes"
+_K_PROD = "productos"
+_K_ANT  = "antigua"
 
 
 @st.cache_resource
 def cargar_clientes() -> list[dict]:
-    wb = cargar_para_lectura(FILE_ID)
-    ws = wb["Clientes"]
+    """Lista completa de clientes desde Sheets."""
+    rows = get_all_rows(_K_CLI)
     clientes = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if not row[0]:
-            continue
-        codigo_lugar = str(row[10] or "").strip()
-        estatus      = str(row[6]  or "").strip()
+    for i, row in enumerate(rows, start=2):
+        while len(row) < 11: row.append("")
+        if not row[0]: continue
         clientes.append({
-            "nombre":       str(row[0]).strip(),
-            "direccion":    str(row[1] or "").strip(),
-            "ubicacion":    str(row[2] or "").strip(),
-            "telefono":     str(row[3] or "").strip(),
-            "nit":          str(row[4] or "0").strip(),
-            "tipo":         str(row[5] or "").strip(),
-            "estatus":      estatus,
-            "empresa":      str(row[7] or row[0]).strip(),
-            "credito":      int(row[8]) if row[8] else 0,
-            "codigo":       str(row[9] or "").strip(),
-            "codigo_lugar": codigo_lugar,
-            "es_antigua":   codigo_lugar == "L03",
-            "activo":       estatus.lower() == "cliente",
+            "row_num":      i,
+            "nombre":       str(row[0]  or ""),
+            "direccion":    str(row[1]  or ""),
+            "ubicacion":    str(row[2]  or ""),
+            "telefono":     str(row[3]  or ""),
+            "nit":          str(row[4]  or "0"),
+            "tipo":         str(row[5]  or "Restaurante"),
+            "estatus":      str(row[6]  or "Pendiente"),
+            "empresa":      str(row[7]  or row[0] or ""),
+            "credito":      int(float(row[8] or 0)),
+            "codigo":       str(row[9]  or ""),
+            "codigo_lugar": str(row[10] or "L05"),
         })
-    wb.close()
-    return sorted(clientes, key=lambda c: c["nombre"])
+    return clientes
 
 
 @st.cache_resource
 def cargar_productos(es_antigua: bool = False) -> list[dict]:
-    """
-    Lista normal : Precio en col 8 (índice 7)
-    Lista Antigua: Precio en col 7 (índice 6) — no tiene columna 'Precio Impuestos'
-    """
-    hoja      = "Listado Productos Antigua" if es_antigua else "Listado Productos"
-    idx_precio = 6 if es_antigua else 7   # índice 0-based
-    wb = cargar_para_lectura(FILE_ID)
-    ws = wb[hoja]
-    productos = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if not row[0]:
-            continue
-        precio = float(row[idx_precio] or 0)
-        if precio <= 0:
-            continue
-        costo   = float(row[5] or 0)
-        cotizar = str(row[21] or "") if not es_antigua else ""
-        productos.append({
-            "nombre":          str(row[0]).strip(),
-            "unidad":          str(row[1]  or "").strip(),
-            "segmento":        str(row[2]  or "").strip(),
-            "unidad_despacho": int(row[3]) if row[3] else 1,
-            "costo":           costo,
-            "precio":          precio,
-            "precio_sin_iva":  float(row[15] or 0) if es_antigua else float(row[17] or 0),
-            "proveedor":       str(row[12] if es_antigua else row[14] or "").strip(),
-            "tipo_producto":   str(row[16] if es_antigua else row[18] or "").strip(),
-            "parent":          str(row[0]  if es_antigua else row[19] or row[0]).strip(),
-            "tipo_producto2":  str(row[16] if es_antigua else row[20] or "").strip(),
-            "para_cotizar":    cotizar,
-            "comentario":      str(row[22] or "") if not es_antigua else "",
-            "es_especialidad": cotizar.upper() == "ESPECIALIDAD",
+    """Productos para catálogo (app de pedidos y cotizador)."""
+    k     = _K_ANT if es_antigua else _K_PROD
+    rows  = get_all_rows(k)
+    col_p = 6 if es_antigua else 7   # 0-indexed precio
+
+    prods = []
+    for row in rows:
+        while len(row) < 23: row.append("")
+        nombre    = str(row[0] or "").strip()
+        cotizar   = str(row[21] if not es_antigua else
+                        (row[17] if len(row) > 17 else "") or "").strip().lower()
+        if not nombre or cotizar not in ("si", "sí", "yes", "1"): continue
+
+        try: precio = float(row[col_p] or 0)
+        except: precio = 0.0
+        if precio <= 0: continue
+
+        prods.append({
+            "nombre":   nombre,
+            "unidad":   str(row[1]  or ""),
+            "segmento": str(row[2]  or ""),
+            "costo":    float(row[5] or 0),
+            "precio":   precio,
+            "proveedor":str(row[14] if not es_antigua else row[8] or ""),
+            "tipo_producto2": str(row[20] if not es_antigua else row[10] or ""),
         })
-    wb.close()
-    return sorted(productos, key=lambda p: p["nombre"])
+    return prods
