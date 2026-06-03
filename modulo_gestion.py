@@ -403,9 +403,14 @@ def _modificar(todos):
                         "items":           items_nv,
                     })
 
-            with st.spinner("Guardando en Drive (1 solo ciclo)..."):
-                res = guardar_edicion_pedidos(cambios_batch, nuevas_batch,
-                                              filas_eliminar)
+            st.caption(f"Debug: {len(cambios_batch)} cambio(s), {len(nuevas_batch)} nuevo(s), {len(filas_eliminar)} a eliminar")
+            with st.spinner("Guardando..."):
+                try:
+                    res = guardar_edicion_pedidos(cambios_batch, nuevas_batch,
+                                                  filas_eliminar)
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
+                    st.stop()
 
             # Limpiar session state
             for unico in sel:

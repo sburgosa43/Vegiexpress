@@ -149,7 +149,10 @@ def guardar_edicion_pedidos(cambios: list,
                 upd.append({"range": f"F{rn}", "values": [[cost]]})
 
     if upd:
-        update_cells(_K_PED, upd)
+        try:
+            update_cells(_K_PED, upd)
+        except Exception as e:
+            raise RuntimeError(f"Error al guardar en Sheets: {e}") from e
 
     # ── Agregar líneas nuevas ─────────────────────────────────────────────────
     filas_nuevas = 0
