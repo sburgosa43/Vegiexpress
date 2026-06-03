@@ -168,7 +168,7 @@ def guardar_edicion_pedidos(cambios: list,
         _clear_pedidos_cache()
 
     return {
-        "cambios":   len(cambios),
-        "nuevas":    filas_nuevas,
-        "eliminadas":filas_elim,
+        "ediciones":   len(cambios),
+        "nuevas_filas":filas_nuevas,
+        "eliminadas":  filas_elim,
     }
