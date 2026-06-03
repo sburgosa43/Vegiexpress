@@ -390,15 +390,14 @@ def mostrar():
         else:
             _mostrar_cola_compacta()
             p = st.session_state.ped_paso
-            if p in (1, 2, 3): _pasos()
+            if   p == 1: _paso1()
+            elif p == 2: _paso2()
+            elif p == 3: _paso3()
+            elif p == 4: _paso4()
 
     with tab_import:
         _importar_pedidos()
 
-    if   p == 1: _paso1()
-    elif p == 2: _paso2()
-    elif p == 3: _paso3()
-    elif p == 4: _paso4()
 
 
 # ── IMPORTAR PEDIDOS DESDE EXCEL / PASTE ──────────────────────────────────────
