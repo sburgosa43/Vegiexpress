@@ -227,18 +227,22 @@ def _modificar(todos):
                                        key=f"upd_cat_mod_{unico}",
                                        help="Actualiza Listado de Productos")
 
-                hdr = st.columns([3.5, 1.2, 1.5, 1.8, 1.8])
+                hdr = st.columns([3.5, 1.2, 1.5])
                 hdr[0].markdown("**Producto**")
                 hdr[1].markdown("**Cantidad**")
                 hdr[2].markdown("**Precio (Q)**")
-                hdr[3].markdown("**Costo · P.Eq.**")
-                hdr[4].markdown("**Margen**")
 
                 cambios_pedido = 0
                 for linea in lineas:
                     rn  = linea["row_num"]
                     uid = f"mod_{rn}"
                     lineas_originales[rn] = linea
+
+                    # Pre-inicializar con valores actuales si no hay edición en curso
+                    if f"{uid}_cant" not in st.session_state:
+                        st.session_state[f"{uid}_cant"] = float(linea["cantidad"] or 0)
+                    if f"{uid}_prec" not in st.session_state or                             st.session_state[f"{uid}_prec"] == 0.0:
+                        st.session_state[f"{uid}_prec"] = float(linea["precio"] or 0)
 
                     ec1, ec2, ec3 = st.columns([3.5, 1.2, 1.5])
                     prod_nuevo = ec1.selectbox("",  prods_lista,
