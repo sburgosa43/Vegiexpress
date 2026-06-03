@@ -136,7 +136,7 @@ def _paso2():
     st.caption(f"📅 {fec.strftime('%d/%m/%Y')} · 📍 {c['direccion']}"
                + (" · 🔖 Precios Antigua" if c["es_antigua"] else ""))
 
-    prods     = cargar_productos(es_antigua=c["es_antigua"])
+    prods     = cargar_productos(es_antigua=c["es_antigua"], solo_catalogo=False)
     prod_dict = {p["nombre"]: p for p in prods}
     nombres   = [""] + [p["nombre"] for p in prods]
     n         = st.session_state.ped_nfilas

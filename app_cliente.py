@@ -50,27 +50,30 @@ def _cargar_clientes():
 
 @st.cache_data(ttl=3600)
 def _cargar_catalogo(es_antigua: bool):
-    from drive_helper import cargar_para_lectura
-    FILE_ID = st.secrets["EXCEL_FILE_ID"]
-    wb   = cargar_para_lectura(FILE_ID)
-    hoja = "Listado Productos Antigua" if es_antigua else "Listado Productos"
-    ws   = wb[hoja]
+    """Carga catálogo desde Google Sheets — solo productos Para Cotizar."""
+    from gsheets import get_all_rows
+    k   = "antigua" if es_antigua else "productos"
+    col_precio    = 6 if es_antigua else 7   # 0-indexed
+    col_para_cot  = 17 if es_antigua else 21
+    col_tipo      = 16 if es_antigua else 18
+
     prods = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if not row[0]: continue
-        # Para Cotizar: col 22 (idx 21) general, col 18 (idx 17) antigua
-        para_cot_idx = 17 if es_antigua else 21
-        para_cot = str(row[para_cot_idx] if len(row) > para_cot_idx else "").strip().lower()
-        if para_cot not in ["si", "sí", "yes", "1", "true"]: continue
-        col_precio = 6 if es_antigua else 7   # 0-indexed
+    for row in get_all_rows(k):
+        while len(row) < 23: row.append("")
+        nombre = str(row[0] or "").strip()
+        if not nombre: continue
+        para_cot = str(row[col_para_cot] or "").strip().lower()
+        if para_cot not in ("si", "sí", "yes", "1", "true"): continue
+        try: precio = float(row[col_precio] or 0)
+        except: precio = 0.0
+        if precio <= 0: continue
         prods.append({
-            "nombre":   str(row[0]).strip(),
+            "nombre":   nombre,
             "unidad":   str(row[1] or "").strip(),
-            "tipo":     str(row[16] if es_antigua else row[18] or "").strip(),
+            "tipo":     str(row[col_tipo] or "").strip(),
             "segmento": str(row[2] or "").strip(),
-            "precio":   float(row[col_precio] or 0),
+            "precio":   precio,
         })
-    wb.close()
     return sorted(prods, key=lambda x: (x["tipo"], x["nombre"]))
 
 

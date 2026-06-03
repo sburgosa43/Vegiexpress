@@ -36,7 +36,7 @@ def cargar_clientes() -> list[dict]:
     return clientes
 
 
-@st.cache_resource
+@st.cache_data(ttl=300)
 def cargar_productos(es_antigua: bool = False,
                      solo_catalogo: bool = True) -> list[dict]:
     """Productos para catálogo (app de pedidos y cotizador)."""
@@ -51,7 +51,8 @@ def cargar_productos(es_antigua: bool = False,
         cotizar   = str(row[21] if not es_antigua else
                         (row[17] if len(row) > 17 else "") or "").strip().lower()
         if not nombre: continue
-        if solo_catalogo and cotizar not in ("si", "sí", "yes", "1"): continue
+        # Si solo_catalogo: incluir Si/Sí/yes y vacíos, excluir solo "no"
+        if solo_catalogo and cotizar in ("no",): continue
 
         try: precio = float(row[col_p] or 0)
         except: precio = 0.0
