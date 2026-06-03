@@ -30,12 +30,15 @@ def cargar_clientes() -> list[dict]:
             "credito":      int(float(row[8] or 0)),
             "codigo":       str(row[9]  or ""),
             "codigo_lugar": str(row[10] or "L05"),
+            "activo":       str(row[6] or "").strip().lower() != "inactivo",
+            "es_antigua":   str(row[10] or "L05").strip() in ("L03", "L04"),
         })
     return clientes
 
 
 @st.cache_resource
-def cargar_productos(es_antigua: bool = False) -> list[dict]:
+def cargar_productos(es_antigua: bool = False,
+                     solo_catalogo: bool = True) -> list[dict]:
     """Productos para catálogo (app de pedidos y cotizador)."""
     k     = _K_ANT if es_antigua else _K_PROD
     rows  = get_all_rows(k)
@@ -47,7 +50,8 @@ def cargar_productos(es_antigua: bool = False) -> list[dict]:
         nombre    = str(row[0] or "").strip()
         cotizar   = str(row[21] if not es_antigua else
                         (row[17] if len(row) > 17 else "") or "").strip().lower()
-        if not nombre or cotizar not in ("si", "sí", "yes", "1"): continue
+        if not nombre: continue
+        if solo_catalogo and cotizar not in ("si", "sí", "yes", "1"): continue
 
         try: precio = float(row[col_p] or 0)
         except: precio = 0.0

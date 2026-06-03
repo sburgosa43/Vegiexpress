@@ -78,7 +78,7 @@ def mostrar():
 
         with st.spinner("Cargando pedidos y catálogo..."):
             todos    = leer_pedidos()
-            catalog  = cargar_productos(False)
+            catalog  = cargar_productos(False, solo_catalogo=False)
             cli_list = cargar_clientes()
 
         prod_map = {p["nombre"].lower(): {

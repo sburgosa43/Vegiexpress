@@ -78,17 +78,9 @@ def _form_cliente(prefill: dict = None, key_prefix: str = "new") -> dict | None:
 
 
 def _cargar_row_map():
-    """Lee el Excel una sola vez y retorna {nombre: row_num}."""
-    from drive_helper import cargar_para_lectura
-    FILE_ID = st.secrets["EXCEL_FILE_ID"]
-    wb = cargar_para_lectura(FILE_ID)
-    ws = wb["Clientes"]
-    rmap = {}
-    for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
-        if row[0]:
-            rmap[str(row[0]).strip()] = i
-    wb.close()
-    return rmap
+    """Retorna {nombre: row_num} desde Google Sheets."""
+    from data_helper import cargar_clientes
+    return {c["nombre"]: c["row_num"] for c in cargar_clientes()}
 
 
 def mostrar():

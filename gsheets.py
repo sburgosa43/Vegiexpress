@@ -12,7 +12,7 @@ HOJAS = {
     "pedidos":    "Pedidos",
     "clientes":   "Clientes",
     "productos":  "Listado Productos",
-    "antigua":    "Listado Antigua",
+    "antigua":    "Listado Productos Antigua",
     "config":     "Config",
     "historial":  "Historial Cambios",
 }
