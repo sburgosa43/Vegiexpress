@@ -358,14 +358,19 @@ def _modificar(todos):
                 prod_n = st.session_state.get(f"{uid}_prod", linea["producto"])
                 cant_n = st.session_state.get(f"{uid}_cant", linea["cantidad"])
                 prec_n = st.session_state.get(f"{uid}_prec", linea["precio"])
-                cambio = {"row_num": rn}
+                cambio = {
+                    "row_num":       rn,
+                    "_cant_actual":  float(linea["cantidad"] or 0),
+                    "_prec_actual":  float(linea["precio"]   or 0),
+                    "_costo_actual": float(linea.get("costo", 0) or 0),
+                }
                 if prod_n and prod_n != linea["producto"]:
-                    cambio["nuevo_producto"] = prod_n
+                    cambio["producto_nuevo"] = prod_n
                 if abs(float(cant_n or 0) - float(linea["cantidad"] or 0)) > 0.001:
-                    cambio["nueva_cantidad"] = cant_n
+                    cambio["cantidad_nueva"] = float(cant_n)
                 if abs(float(prec_n or 0) - float(linea["precio"] or 0)) > 0.001:
-                    cambio["nuevo_precio"] = prec_n
-                if len(cambio) > 1:
+                    cambio["precio_nuevo"] = float(prec_n)
+                if len(cambio) > 4:   # más que solo los 4 campos base
                     cambios_batch.append(cambio)
 
             # Recopilar filas a eliminar

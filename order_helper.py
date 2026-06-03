@@ -131,9 +131,9 @@ def guardar_edicion_pedidos(cambios: list,
         if "producto_nuevo" in ch:
             upd.append({"range": f"D{rn}", "values": [[ch["producto_nuevo"]]]})
         if "cantidad_nueva" in ch or "precio_nuevo" in ch:
-            cant  = _sf(ch.get("cantidad_nueva", 0))
-            prec  = _sf(ch.get("precio_nuevo",  0))
-            cost  = _sf(ch.get("costo_nuevo",   0))
+            cant  = _sf(ch.get("cantidad_nueva") or ch.get("_cant_actual", 0))
+            prec  = _sf(ch.get("precio_nuevo")   or ch.get("_prec_actual", 0))
+            cost  = _sf(ch.get("costo_nuevo")    or ch.get("_costo_actual", 0))
             fin   = _calcular(prec, cost, cant)
             if "cantidad_nueva" in ch:
                 upd += [
