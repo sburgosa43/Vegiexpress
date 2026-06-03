@@ -9,7 +9,6 @@ from excel_helper import (leer_pedidos, preview_correccion_masiva,
                            aplicar_correccion_masiva, migrar_pedidos_a_valores,
                            agregar_col_para_cotizar_antigua, limpiar_para_cotizar)
 from data_helper  import cargar_clientes, cargar_productos
-from data_helper import cargar_clientes, cargar_productos
 
 MESES_ES = {
     1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril",

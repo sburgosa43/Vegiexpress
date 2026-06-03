@@ -486,3 +486,14 @@ def editar_cantidad_linea(row_num, cant): editar_linea(row_num, "cantidad", cant
 
 # Alias para orden_helper
 FILE_ID = None  # Ya no se usa — mantenido por compatibilidad de imports
+
+
+# ── FUNCIONES LEGACY DE MANTENIMIENTO ─────────────────────────────────────────
+def agregar_col_para_cotizar_antigua() -> str:
+    """Migración legacy — ya no aplica con Google Sheets."""
+    return "ok"
+
+
+def limpiar_para_cotizar(es_antigua: bool = False) -> int:
+    """Limpia valores 'Para Cotizar' en blanco. Sheets lo maneja automáticamente."""
+    return 0
