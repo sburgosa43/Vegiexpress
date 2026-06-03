@@ -386,9 +386,9 @@ function imprimirProv_{nom}(){{
                             type="primary",
                             use_container_width=True)
                     except Exception as e:
-                        col_btn.error(f"Error: {e}")
+                        col_d.error(f"Error: {e}")
                 else:
-                    col_btn.button("📥 PDF", disabled=True,
+                    col_d.button("📥 PDF", disabled=True,
                                    key=f"dl_dis_{prov}_{semana}_{año}",
                                    help="Ingresá cantidades primero",
                                    use_container_width=True)
