@@ -6,6 +6,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 from data_helper   import cargar_clientes, cargar_productos
+from excel_helper  import leer_productos_con_fila
 from order_helper  import guardar_pedidos_batch
 
 AVISO_KEY = "costos_revisados"
@@ -136,7 +137,7 @@ def _paso2():
     st.caption(f"📅 {fec.strftime('%d/%m/%Y')} · 📍 {c['direccion']}"
                + (" · 🔖 Precios Antigua" if c["es_antigua"] else ""))
 
-    prods     = cargar_productos(es_antigua=c["es_antigua"], solo_catalogo=False)
+    prods     = leer_productos_con_fila(es_antigua=c["es_antigua"])
     prod_dict = {p["nombre"]: p for p in prods}
     nombres   = [""] + [p["nombre"] for p in prods]
     n         = st.session_state.ped_nfilas

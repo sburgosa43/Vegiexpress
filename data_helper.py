@@ -56,7 +56,7 @@ def cargar_productos(es_antigua: bool = False,
 
         try: precio = float(row[col_p] or 0)
         except: precio = 0.0
-        if precio <= 0: continue
+        if solo_catalogo and precio <= 0: continue
 
         prods.append({
             "nombre":   nombre,
