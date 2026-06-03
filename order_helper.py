@@ -114,34 +114,61 @@ def guardar_pedidos_batch(cola: list) -> dict:
     return {"pedidos": len(cola), "filas": total_filas}
 
 
-def guardar_edicion_pedidos(cambios: list) -> int:
+def guardar_edicion_pedidos(cambios: list,
+                              nuevas: list = None,
+                              filas_eliminar: list = None) -> dict:
     """
-    Edita líneas existentes.
-    cambios: [{row_num, cantidad_nueva, precio_nuevo, ...}]
+    Edita, agrega y elimina líneas de pedidos en un solo ciclo.
+    cambios:         [{row_num, producto_nuevo, cantidad_nueva, precio_nuevo, ...}]
+    nuevas:          [{unico, cliente_nombre, fecha, items}]
+    filas_eliminar:  [row_num, ...]
     """
     upd = []
+
+    # ── Editar líneas existentes ──────────────────────────────────────────────
     for ch in cambios:
         rn = ch["row_num"]
         if "producto_nuevo" in ch:
             upd.append({"range": f"D{rn}", "values": [[ch["producto_nuevo"]]]})
-        if "cantidad_nueva" in ch:
-            cant  = _sf(ch["cantidad_nueva"])
-            prec  = _sf(ch.get("precio_nuevo", 0))
-            cost  = _sf(ch.get("costo_nuevo", 0))
+        if "cantidad_nueva" in ch or "precio_nuevo" in ch:
+            cant  = _sf(ch.get("cantidad_nueva", 0))
+            prec  = _sf(ch.get("precio_nuevo",  0))
+            cost  = _sf(ch.get("costo_nuevo",   0))
             fin   = _calcular(prec, cost, cant)
-            upd += [
-                {"range": f"C{rn}", "values": [[cant]]},
-                {"range": f"G{rn}", "values": [[fin["total"]]]},
-                {"range": f"H{rn}", "values": [[fin["total_costo"]]]},
-                {"range": f"I{rn}", "values": [[fin["margen_q"]]]},
-                {"range": f"J{rn}", "values": [[fin["margen_pct"]]]},
-            ]
-        if "precio_nuevo" in ch:
-            upd.append({"range": f"E{rn}", "values": [[ch["precio_nuevo"]]]})
-        if "costo_nuevo" in ch:
-            upd.append({"range": f"F{rn}", "values": [[ch["costo_nuevo"]]]})
+            if "cantidad_nueva" in ch:
+                upd += [
+                    {"range": f"C{rn}", "values": [[cant]]},
+                    {"range": f"G{rn}", "values": [[fin["total"]]]},
+                    {"range": f"H{rn}", "values": [[fin["total_costo"]]]},
+                    {"range": f"I{rn}", "values": [[fin["margen_q"]]]},
+                    {"range": f"J{rn}", "values": [[fin["margen_pct"]]]},
+                ]
+            if "precio_nuevo" in ch:
+                upd.append({"range": f"E{rn}", "values": [[prec]]})
+            if "costo_nuevo" in ch:
+                upd.append({"range": f"F{rn}", "values": [[cost]]})
 
     if upd:
         update_cells(_K_PED, upd)
+
+    # ── Agregar líneas nuevas ─────────────────────────────────────────────────
+    filas_nuevas = 0
+    if nuevas:
+        res = guardar_pedidos_batch(nuevas)
+        filas_nuevas = res.get("filas", 0)
+
+    # ── Eliminar filas ────────────────────────────────────────────────────────
+    filas_elim = 0
+    if filas_eliminar:
+        from gsheets import delete_rows
+        delete_rows(_K_PED, filas_eliminar)
+        filas_elim = len(filas_eliminar)
+
+    if upd or filas_nuevas or filas_elim:
         _clear_pedidos_cache()
-    return len(cambios)
+
+    return {
+        "cambios":   len(cambios),
+        "nuevas":    filas_nuevas,
+        "eliminadas":filas_elim,
+    }

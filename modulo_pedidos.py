@@ -602,7 +602,7 @@ def _importar_pedidos():
 
     # ── Botón guardar ─────────────────────────────────────────────────────────
     st.divider()
-    col_info, col_save = st.columns([3, 1])
+    col_info, col_save, col_clear = st.columns([3, 1, 1])
     clientes_unicos = edited["Cliente"].dropna().unique()
     col_info.markdown(
         f"**{len(edited)} fila(s)** · "
@@ -610,6 +610,11 @@ def _importar_pedidos():
         f"{', '.join(clientes_unicos[:4])}"
         + ("..." if len(clientes_unicos) > 4 else "")
     )
+
+    if col_clear.button("🗑️ Limpiar", key="imp_limpiar",
+                         help="Limpia la tabla para ingresar otro pedido"):
+        st.session_state.pop("imp_raw_df", None)
+        st.rerun()
 
     if col_save.button("💾 Guardar pedidos", type="primary",
                         key="imp_guardar"):
