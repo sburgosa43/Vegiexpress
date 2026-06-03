@@ -138,6 +138,12 @@ def _paso2():
                + (" · 🔖 Precios Antigua" if c["es_antigua"] else ""))
 
     prods     = leer_productos_con_fila(es_antigua=c["es_antigua"])
+    # Diagnóstico — remover después de confirmar Sheets
+    sin_precio = [p for p in prods if p["precio"] <= 0]
+    if prods and len(sin_precio) == len(prods):
+        st.warning(f"⚠️ {len(prods)} productos cargados pero todos con precio=0. "
+                   f"Revisá columnas en Sheets (esperado: F=Costo, H=Precio). "
+                   f"Muestra fila 1: {prods[0] if prods else {}}")
     prod_dict = {p["nombre"]: p for p in prods}
     nombres   = [""] + [p["nombre"] for p in prods]
     n         = st.session_state.ped_nfilas

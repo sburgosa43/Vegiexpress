@@ -27,8 +27,20 @@ _PARA_COTIZAR_COL = {False: 22, True: 18}
 ZONAS_CONFIG = ["GT + Santiago", "Río", "Antigua + Chimal"]
 
 def _sf(v) -> float:
-    """Safe float — strings vacías o None → 0.0."""
-    try: return float(v or 0)
+    """Safe float — maneja vacíos, comas decimales y símbolos de moneda."""
+    if v is None or v == "": return 0.0
+    if isinstance(v, (int, float)): return float(v)
+    s = str(v).strip().replace("Q","").replace("$","").replace(" ","")
+    # Manejar formato europeo/centroamericano: 1.234,56 → 1234.56
+    if "," in s and "." in s:
+        # Si el punto viene antes que la coma: 1.234,56
+        if s.index(".") < s.index(","):
+            s = s.replace(".","").replace(",",".")
+        else:
+            s = s.replace(",","")
+    elif "," in s:
+        s = s.replace(",",".")
+    try: return float(s)
     except: return 0.0
 
 def _si(v) -> int:
