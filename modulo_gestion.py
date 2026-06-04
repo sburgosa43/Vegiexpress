@@ -227,10 +227,11 @@ def _modificar(todos):
                                        key=f"upd_cat_mod_{unico}",
                                        help="Actualiza Listado de Productos")
 
-                hdr = st.columns([3.5, 1.2, 1.5])
+                hdr = st.columns([3.5, 1.2, 1.5, 0.6])
                 hdr[0].markdown("**Producto**")
                 hdr[1].markdown("**Cantidad**")
                 hdr[2].markdown("**Precio (Q)**")
+                hdr[3].markdown("**🗑**")
 
                 cambios_pedido = 0
                 for linea in lineas:

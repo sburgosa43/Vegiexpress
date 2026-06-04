@@ -319,10 +319,11 @@ def mostrar():
 
     # Tabs por zona
     # Add Listados as extra tab
-    tab_labels = [f"{z} ({len(por_zona[z])})" for z in ZONAS_ENVIO] + ["📋 Listados"]
+    tab_labels = [f"{z} ({len(por_zona[z])})" for z in ZONAS_ENVIO] + ["📋 Listados", "🖨️ Impresión Masiva"]
     all_tabs   = st.tabs(tab_labels)
-    envio_tabs = all_tabs[:-1]
-    tab_list   = all_tabs[-1]
+    envio_tabs = all_tabs[:-2]
+    tab_list   = all_tabs[-2]
+    tab_masiva = all_tabs[-1]
 
     for tab, zona in zip(envio_tabs, ZONAS_ENVIO):
         with tab:
@@ -347,3 +348,138 @@ def mostrar():
     # ── TAB LISTADOS ──────────────────────────────────────────────────────────
     with tab_list:
         _tab_listados(todos, sem_act, año_act)
+
+    with tab_masiva:
+        _tab_impresion_masiva(todos, cli_list, sem_act, año_act)
+
+
+# ── IMPRESIÓN MASIVA ───────────────────────────────────────────────────────────
+def _tab_impresion_masiva(todos: list, cli_list: list, sem_def: int, año_def: int):
+    """PDFs individuales por cliente para un área y semana — impresión masiva."""
+    import base64
+    import streamlit.components.v1 as components
+    from pdf_helper import generar_envio, nombre_archivo
+
+    st.markdown("### 🖨️ Impresión Masiva por Área")
+    st.caption("Un PDF por cliente · filtrá por semana y área · imprimí o descargá individualmente")
+
+    # ── Filtros ────────────────────────────────────────────────────────────────
+    fc1, fc2, fc3 = st.columns(3)
+    semana  = fc1.number_input("Semana", 1, 53, sem_def, key="im_sem")
+    año     = fc2.number_input("Año", 2020, 2030, año_def, key="im_año")
+    zonas   = list(ZONAS_ENVIO.keys())
+    area    = fc3.selectbox("Área", zonas, key="im_area")
+
+    # ── Filtrar pedidos ────────────────────────────────────────────────────────
+    codigos_zona = ZONAS_ENVIO[area]
+    cli_map  = {c["nombre"]: c for c in cli_list}
+    cli_zona = {c["nombre"].lower(): c["codigo_lugar"] for c in cli_list}
+
+    pedidos_sem = [
+        p for p in todos
+        if p["semana"] == semana and p["año"] == año
+        and p["status"] != "Cancelado"
+        and float(p.get("cantidad") or 0) > 0
+        and cli_zona.get(p["cliente"].lower(), "") in codigos_zona
+    ]
+
+    if not pedidos_sem:
+        st.info(f"Sin pedidos activos en {area} para semana {semana}/{año}.")
+        return
+
+    # Agrupar por cliente
+    por_cliente = {}
+    for p in pedidos_sem:
+        cli = p["cliente"]
+        if cli not in por_cliente:
+            por_cliente[cli] = []
+        por_cliente[cli].append(p)
+
+    st.divider()
+    total_lineas = sum(len(v) for v in por_cliente.values())
+    st.markdown(f"**{len(por_cliente)} cliente(s) · {total_lineas} línea(s) en {area}**")
+
+    # ── Selector de clientes ───────────────────────────────────────────────────
+    sel_clis = st.multiselect(
+        "Clientes a imprimir:",
+        sorted(por_cliente.keys()),
+        default=sorted(por_cliente.keys()),
+        key="im_sel_clis",
+    )
+
+    if not sel_clis:
+        st.info("Seleccioná al menos un cliente.")
+        return
+
+    st.divider()
+
+    # ── PDF por cliente ────────────────────────────────────────────────────────
+    for cli_nombre in sorted(sel_clis):
+        peds = por_cliente[cli_nombre]
+        fechas   = [p["fecha"] for p in peds if p["fecha"]]
+        fecha_ent = max(fechas) if fechas else None
+        cli_info = cli_map.get(cli_nombre, {
+            "nombre": cli_nombre, "empresa": cli_nombre,
+            "direccion": "", "nit": "CF", "telefono": "",
+        })
+
+        lineas = sorted([{
+            "producto": p["producto"],
+            "cantidad": float(p.get("cantidad") or 0),
+            "unidad":   p.get("unidad", ""),
+            "precio":   float(p.get("precio") or 0),
+            "total":    round(float(p.get("precio") or 0) *
+                              float(p.get("cantidad") or 0), 2),
+        } for p in peds], key=lambda x: x["producto"])
+
+        total_cli = sum(l["total"] for l in lineas)
+
+        # Generar PDF
+        try:
+            unico    = peds[0].get("unico", "") if peds else ""
+            pdf_bytes = generar_envio(cli_info, fecha_ent, lineas, unico)
+            pdf_b64   = base64.b64encode(pdf_bytes).decode()
+            nom_safe  = "".join(ch for ch in cli_nombre if ch.isalnum() or ch == "_")
+            filename  = f"Envio_{nom_safe}_S{semana}_{año}.pdf"
+
+            col_info, col_print, col_dl = st.columns([4, 1, 1])
+            col_info.markdown(
+                f"**{cli_nombre}** · {len(lineas)} línea(s) · "
+                f"Q{total_cli:,.2f} · "
+                f"{fecha_ent.strftime('%d/%m/%Y') if fecha_ent else f'Sem {semana}'}"
+            )
+
+            # Botón imprimir (PDF.js)
+            html_print = f"""
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+            <script>
+            pdfjsLib.GlobalWorkerOptions.workerSrc=
+              'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            function imp_{nom_safe}(){{
+              var raw=atob('{pdf_b64}');
+              var arr=new Uint8Array(raw.length);
+              for(var i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+              var blob=new Blob([arr],{{type:'application/pdf'}});
+              var url=URL.createObjectURL(blob);
+              var w=window.open(url,'_blank');
+              w.onload=function(){{w.print();}};
+            }}
+            </script>
+            <button onclick="imp_{nom_safe}()" style="
+              background:#2D7A2D;color:white;border:none;border-radius:6px;
+              padding:6px 10px;font-size:12px;cursor:pointer;width:100%;
+              font-family:sans-serif">🖨️ Imprimir</button>"""
+            with col_print:
+                components.html(html_print, height=40)
+
+            col_dl.download_button(
+                "📥 PDF",
+                data=pdf_bytes,
+                file_name=filename,
+                mime="application/pdf",
+                key=f"im_dl_{nom_safe}_{semana}_{año}",
+                use_container_width=True,
+            )
+
+        except Exception as e:
+            st.error(f"{cli_nombre}: Error generando PDF — {e}")
