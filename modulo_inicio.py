@@ -78,10 +78,27 @@ def _kpis():
                    if p["semana"]==sem_ant and p["año"]==año_ant
                    and p["status"]!="Cancelado" and not _excl(p["cliente"])]
 
-        ventas_zona = {z: 0.0 for z in ZONAS_MAP}
+        ventas_zona     = {z: 0.0 for z in ZONAS_MAP}
+        ventas_zona_ant = {z: 0.0 for z in ZONAS_MAP}
         for p in ped_act:
             z = cli_zona.get(p["cliente"].lower())
             if z: ventas_zona[z] += p["total"] or 0
+        for p in ped_ant:
+            z = cli_zona.get(p["cliente"].lower())
+            if z: ventas_zona_ant[z] += p["total"] or 0
+
+        # Metas desde Config sheet
+        from excel_helper import leer_metas
+        metas_raw = leer_metas()   # {"GT + Santiago": X, "Río": Y, ...}
+
+        # Mapear claves Dashboard → ZONAS_MAP
+        _META_MAP = {
+            "🔖 Antigua & Chimal":     "Antigua + Chimal",
+            "🏙️ Guatemala & Santiago": "GT + Santiago",
+            "🌊 Río":                  "Río",
+        }
+        metas_zona = {z: metas_raw.get(_META_MAP.get(z, ""), 0.0)
+                      for z in ZONAS_MAP}
 
         clis_act = {p["cliente"].lower() for p in ped_act}
         sin_ped  = sorted({p["cliente"] for p in ped_ant
@@ -90,6 +107,8 @@ def _kpis():
         return {
             "total":       sum(ventas_zona.values()),
             "por_zona":    ventas_zona,
+            "ant_zona":    ventas_zona_ant,
+            "metas_zona":  metas_zona,
             "sin_pedido":  sin_ped,
             "sem_act":     sem_act,
             "año_act":     año_act,
@@ -154,14 +173,36 @@ def mostrar():
 
         zcols = st.columns(len(ZONAS_MAP))
         for col, (zona, val) in zip(zcols, kpis["por_zona"].items()):
-            color = COLORES_ZONA[zona]
+            color   = COLORES_ZONA[zona]
+            meta    = kpis.get("metas_zona", {}).get(zona, 0.0)
+            ant     = kpis.get("ant_zona",   {}).get(zona, 0.0)
+
+            # Vs meta
+            if meta > 0:
+                diff_meta = val - meta
+                tri_m  = "▲" if diff_meta >= 0 else "▼"
+                col_m  = "#2D7A2D" if diff_meta >= 0 else "#c62828"
+                lbl_m  = f"{tri_m} Q{abs(diff_meta):,.0f} vs meta"
+            else:
+                lbl_m, col_m = "", "#888"
+
+            # Vs semana anterior
+            diff_ant = val - ant
+            tri_a  = "▲" if diff_ant >= 0 else "▼"
+            col_a  = "#2D7A2D" if diff_ant >= 0 else "#c62828"
+            lbl_a  = f"{tri_a} Q{abs(diff_ant):,.0f} vs sem. ant."
+
             col.markdown(
                 f"<div style='background:#f5f5f5;border-left:4px solid {color};"
                 f"border-radius:6px;padding:8px 12px;text-align:center;"
                 f"margin-bottom:4px'>"
                 f"<div style='font-size:.62rem;color:#888'>{zona}</div>"
-                f"<div style='font-size:.95rem;font-weight:bold'>"
-                f"Q{val:,.0f}</div></div>",
+                f"<div style='font-size:.95rem;font-weight:bold'>Q{val:,.0f}</div>"
+                + (f"<div style='font-size:.65rem;color:{col_m};font-style:italic'>"
+                   f"{lbl_m}</div>" if lbl_m else "")
+                + f"<div style='font-size:.65rem;color:{col_a};font-style:italic'>"
+                f"{lbl_a}</div>"
+                + "</div>",
                 unsafe_allow_html=True)
 
     st.divider()
