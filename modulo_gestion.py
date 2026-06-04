@@ -286,6 +286,21 @@ def _modificar(todos):
                             f"Margen: {margen_p*100:.1f}%</small>",
                             unsafe_allow_html=True)
 
+                    # Referencia de precio original
+                    precio_orig = float(linea["precio"] or 0)
+                    if precio_orig > 0 and abs(prec_nuevo - precio_orig) > 0.001:
+                        st.markdown(
+                            f"<small style='color:#888'>Precio original: "
+                            f"Q{precio_orig:,.2f}</small>",
+                            unsafe_allow_html=True)
+                    elif precio_orig <= 0:
+                        _pcat = float(prods_cat.get(linea["producto"],{}).get("precio",0) or 0)
+                        if _pcat > 0:
+                            st.markdown(
+                                f"<small style='color:#2D7A2D'>✓ Precio del catálogo: "
+                                f"Q{_pcat:,.2f}</small>",
+                                unsafe_allow_html=True)
+
                     # Indicadores de cambio
                     hay_diff = []
                     if prod_nuevo and prod_nuevo != linea["producto"]:
