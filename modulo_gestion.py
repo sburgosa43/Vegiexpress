@@ -245,7 +245,7 @@ def _modificar(todos):
                     if f"{uid}_prec" not in st.session_state or                             st.session_state[f"{uid}_prec"] == 0.0:
                         st.session_state[f"{uid}_prec"] = float(linea["precio"] or 0)
 
-                    ec1, ec2, ec3 = st.columns([3.5, 1.2, 1.5])
+                    ec1, ec2, ec3, ec4 = st.columns([3.5, 1.2, 1.5, 0.7])
                     prod_nuevo = ec1.selectbox("",  prods_lista,
                         index=(prods_lista.index(linea["producto"])
                                if linea["producto"] in prods_lista else 0),
@@ -258,6 +258,13 @@ def _modificar(todos):
                         value=float(linea["precio"] or 0),
                         step=0.25, key=f"{uid}_prec",
                         label_visibility="collapsed")
+                    del_check = ec4.checkbox("", key=f"del_row_{rn}",
+                        help="Eliminar esta línea al guardar",
+                        label_visibility="collapsed")
+                    if del_check:
+                        ec1.markdown(
+                            "<small style='color:#c62828'>⚠️ se eliminará</small>",
+                            unsafe_allow_html=True)
 
                     # ── Contexto financiero ───────────────────────────────
                     prod_info = prods_cat.get(prod_nuevo, {})
