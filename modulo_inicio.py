@@ -87,11 +87,22 @@ def _kpis():
             z = cli_zona.get(p["cliente"].lower())
             if z: ventas_zona_ant[z] += p["total"] or 0
 
-        # Metas desde Config sheet
-        from excel_helper import leer_metas
-        metas_raw = leer_metas()   # {"GT + Santiago": X, "Río": Y, ...}
+        # Metas — leer directo del Config sheet con debug
+        from gsheets import get_all_rows as _gar
+        try:
+            _cfg_rows = _gar("config")
+            _debug_cfg = str(_cfg_rows[:6])
+        except Exception as e:
+            _cfg_rows = []
+            _debug_cfg = f"Error: {e}"
 
-        # Mapear claves Dashboard → ZONAS_MAP
+        from excel_helper import _sf as _esf
+        _ZONAS_CONFIG = ["GT + Santiago", "Río", "Antigua + Chimal"]
+        metas_raw = {z: 0.0 for z in _ZONAS_CONFIG}
+        for _row in _cfg_rows:
+            if _row and str(_row[0]).strip() in _ZONAS_CONFIG:
+                metas_raw[str(_row[0]).strip()] = _esf(_row[1] if len(_row)>1 else 0)
+
         _META_MAP = {
             "Antigua & Chimal":     "Antigua + Chimal",
             "Guatemala & Santiago": "GT + Santiago",
@@ -99,6 +110,7 @@ def _kpis():
         }
         metas_zona = {z: metas_raw.get(_META_MAP.get(z, ""), 0.0)
                       for z in ZONAS_MAP}
+        _debug_meta = f"Rows Config: {_debug_cfg} | metas_raw: {metas_raw} | metas_zona: {metas_zona}"
 
         clis_act = {p["cliente"].lower() for p in ped_act}
         sin_ped  = sorted({p["cliente"] for p in ped_ant
@@ -171,6 +183,7 @@ def mostrar():
             f"{kpis['año_act']} — Total: Q{kpis['total']:,.0f}</div>",
             unsafe_allow_html=True)
 
+        st.caption(f"🔍 {_debug_meta}")
         zcols = st.columns(len(ZONAS_MAP))
         for col, (zona, val) in zip(zcols, kpis["por_zona"].items()):
             color   = COLORES_ZONA[zona]
