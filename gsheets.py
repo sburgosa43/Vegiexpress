@@ -1,7 +1,8 @@
 """
-gsheets.py — Capa de acceso a Google Sheets (reemplaza drive_helper + openpyxl)
+gsheets.py — Capa de acceso a Google Sheets con retry automático.
 """
 import json
+import time
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
@@ -34,31 +35,82 @@ def _gc():
     return gspread.authorize(creds)
 
 
-@st.cache_resource
 def _wb():
-    """Spreadsheet cacheado."""
-    return _gc().open_by_key(SHEET_ID)
+    """
+    Abre el Spreadsheet con retry automático.
+    NO se cachea para evitar tokens expirados — _gc() ya está cacheado.
+    """
+    last_err = None
+    for attempt in range(3):
+        try:
+            return _gc().open_by_key(SHEET_ID)
+        except gspread.exceptions.APIError as e:
+            last_err = e
+            if attempt < 2:
+                # Limpiar caché de credenciales y reintentar
+                _gc.clear()
+                time.sleep(2 ** attempt)
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    raise ConnectionError(f"No se pudo conectar a Google Sheets: {last_err}")
 
 
 def ws(nombre: str):
-    """Retorna un worksheet por nombre clave."""
-    return _wb().worksheet(HOJAS[nombre])
+    """Retorna un worksheet por nombre clave, con retry."""
+    last_err = None
+    for attempt in range(3):
+        try:
+            return _wb().worksheet(HOJAS[nombre])
+        except gspread.exceptions.APIError as e:
+            last_err = e
+            _gc.clear()
+            time.sleep(2 ** attempt)
+        except Exception as e:
+            last_err = e
+            time.sleep(2 ** attempt)
+    raise ConnectionError(f"No se pudo acceder a '{HOJAS[nombre]}': {last_err}")
 
 
 def get_all_rows(nombre: str) -> list[list]:
-    """Lee todas las filas (sin encabezado) como listas de strings."""
-    vals = ws(nombre).get_all_values()
-    return vals[1:] if vals else []   # skip header row 1
+    """Lee todas las filas (sin encabezado) con retry."""
+    last_err = None
+    for attempt in range(3):
+        try:
+            vals = ws(nombre).get_all_values()
+            return vals[1:] if vals else []
+        except Exception as e:
+            last_err = e
+            _gc.clear()
+            time.sleep(2 ** attempt)
+    raise ConnectionError(f"Error leyendo '{nombre}': {last_err}")
 
 
 def get_all_records_ws(nombre: str) -> list[dict]:
-    """Lee todos los registros como dicts usando el encabezado de fila 1."""
-    return ws(nombre).get_all_records()
+    """Lee todos los registros como dicts."""
+    for attempt in range(3):
+        try:
+            return ws(nombre).get_all_records()
+        except Exception as e:
+            if attempt < 2:
+                _gc.clear()
+                time.sleep(2 ** attempt)
+    return []
 
 
 def append_rows(nombre: str, rows: list[list]) -> None:
     """Agrega múltiples filas al final de la hoja."""
-    ws(nombre).append_rows(rows, value_input_option="USER_ENTERED")
+    for attempt in range(3):
+        try:
+            ws(nombre).append_rows(rows, value_input_option="USER_ENTERED")
+            return
+        except Exception as e:
+            if attempt < 2:
+                _gc.clear()
+                time.sleep(2 ** attempt)
+            else:
+                raise
 
 
 def update_cells(nombre: str, updates: list[dict]) -> None:
@@ -66,19 +118,49 @@ def update_cells(nombre: str, updates: list[dict]) -> None:
     Actualiza múltiples celdas en un solo request.
     updates: [{"range": "E2", "values": [[value]]}, ...]
     """
-    ws(nombre).batch_update(updates, value_input_option="USER_ENTERED")
+    if not updates:
+        return
+    for attempt in range(3):
+        try:
+            ws(nombre).batch_update(updates, value_input_option="USER_ENTERED")
+            return
+        except Exception as e:
+            if attempt < 2:
+                _gc.clear()
+                time.sleep(2 ** attempt)
+            else:
+                raise
 
 
 def update_cell(nombre: str, row: int, col: int, value) -> None:
     """Actualiza una celda individual (row y col son 1-indexed)."""
-    ws(nombre).update_cell(row, col, value)
+    for attempt in range(3):
+        try:
+            ws(nombre).update_cell(row, col, value)
+            return
+        except Exception as e:
+            if attempt < 2:
+                _gc.clear()
+                time.sleep(2 ** attempt)
+            else:
+                raise
 
 
 def delete_rows(nombre: str, row_indices: list[int]) -> None:
-    """Elimina filas (1-indexed). Debe hacerse en orden descendente."""
+    """Elimina filas (1-indexed) en orden descendente."""
     sheet = ws(nombre)
     for row in sorted(row_indices, reverse=True):
-        sheet.delete_rows(row)
+        for attempt in range(3):
+            try:
+                sheet.delete_rows(row)
+                break
+            except Exception as e:
+                if attempt < 2:
+                    _gc.clear()
+                    sheet = ws(nombre)
+                    time.sleep(1)
+                else:
+                    raise
 
 
 def cell_value(nombre: str, row: int, col: int):
@@ -87,6 +169,5 @@ def cell_value(nombre: str, row: int, col: int):
 
 
 def clear_ws_cache():
-    """Limpia el caché del workbook para forzar reconexión."""
-    _wb.clear()
+    """Limpia el caché para forzar reconexión."""
     _gc.clear()
