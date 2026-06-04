@@ -171,6 +171,10 @@ def mostrar():
             f"{kpis['año_act']} — Total: Q{kpis['total']:,.0f}</div>",
             unsafe_allow_html=True)
 
+        # Debug temporal — metas cargadas
+        _mz = kpis.get("metas_zona", {})
+        st.caption(f"🔍 Metas: {_mz}")
+
         zcols = st.columns(len(ZONAS_MAP))
         for col, (zona, val) in zip(zcols, kpis["por_zona"].items()):
             color   = COLORES_ZONA[zona]
@@ -178,13 +182,14 @@ def mostrar():
             ant     = kpis.get("ant_zona",   {}).get(zona, 0.0)
 
             # Vs meta
-            if meta > 0:
+            if meta and meta > 0:
                 diff_meta = val - meta
                 tri_m  = "▲" if diff_meta >= 0 else "▼"
                 col_m  = "#2D7A2D" if diff_meta >= 0 else "#c62828"
-                lbl_m  = f"{tri_m} Q{abs(diff_meta):,.0f} vs meta"
+                lbl_m  = f"{tri_m} Q{abs(diff_meta):,.0f} vs meta (Q{meta:,.0f})"
             else:
-                lbl_m, col_m = "", "#888"
+                lbl_m  = "⚙️ meta no configurada"
+                col_m  = "#aaa"
 
             # Vs semana anterior
             diff_ant = val - ant
