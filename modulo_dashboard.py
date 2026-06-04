@@ -662,7 +662,10 @@ def _tab_shares(todos, clientes):
                 if not p["fecha"]: return False
                 f = p["fecha"]
                 if periodo == "YTD":
-                    return f.year == año_act - 1
+                    # PYTD: mismo período del año anterior (no FY completo)
+                    try: cutoff = hoy.replace(year=año_act - 1)
+                    except: cutoff = hoy.replace(year=año_act-1, day=28)
+                    return f.year == año_act - 1 and f <= cutoff
                 if periodo == "Trimestre Actual":
                     return f.year == año_act - 1 and _quarter_num(f.month) == q_act
                 if periodo == "Último Mes":
@@ -832,20 +835,20 @@ def _tab_comparativo(todos, clientes):
 
     st.divider()
 
-    # ── Gráfico 3: Últimos 12 meses (apilado) ────────────────────────────────
-    st.markdown("#### 📆 Últimos 12 Meses")
+    # ── Gráfico 3: Últimos 13 meses (apilado) — comparación interanual ──────────
+    st.markdown("#### 📆 Últimos 13 Meses")
 
     from datetime import date as dt_
-    def _12_months():
+    def _13_months():
         meses = []
         m, a = mes_act, año_act
-        for _ in range(12):
+        for _ in range(13):
             meses.append((m, a))
             m -= 1
             if m < 1: m = 12; a -= 1
         return list(reversed(meses))
 
-    meses12 = _12_months()
+    meses12 = _13_months()
     MESES_N = ["","Ene","Feb","Mar","Abr","May","Jun",
                "Jul","Ago","Sep","Oct","Nov","Dic"]
     m_labels = [f"{MESES_N[m]}-{str(a)[2:]}" for m, a in meses12]
@@ -879,6 +882,6 @@ def _tab_comparativo(todos, clientes):
         ))
     fig_m.update_layout(
         barmode="stack", height=400,
-        title=f"Últimos 12 Meses — {dim} · {zona_sel}",
+        title=f"Últimos 13 Meses — {dim} · {zona_sel}",
     )
     st.plotly_chart(fig_m, use_container_width=True)

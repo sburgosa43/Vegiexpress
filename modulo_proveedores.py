@@ -14,8 +14,8 @@ from pdf_helper   import generar_lista_compras_proveedor
 # EXCLUIR_CLIENTES viene de config.py
 
 AREAS_PROV = [
-    ("Ant-Chim", lambda cli, z: z in ["L03","L04"] and "chimalt" not in cli.lower()),
-    ("Chimalt",  lambda cli, z: "chimalt" in cli.lower()),
+    ("Ant-Chim", lambda cli, z: z in ["L03","L04"] and "chimalt" not in cli.lower() and z != "L10"),
+    ("Chimalt",  lambda cli, z: z == "L10" or "chimalt" in cli.lower()),
     ("GT-Stgo",  lambda cli, z: z in ["L05","L06"]),
     ("Río",      lambda cli, z: z == "L01"),
 ]

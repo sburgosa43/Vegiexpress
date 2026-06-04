@@ -5,7 +5,7 @@ Todas las constantes de negocio en un solo lugar.
 
 # ── Zonas geográficas ─────────────────────────────────────────────────────────
 ZONAS_MAP = {
-    "🔖 Antigua & Chimal":     ["L03", "L04"],
+    "🔖 Antigua & Chimal":     ["L03", "L04", "L10"],
     "🏙️ Guatemala & Santiago": ["L05", "L06"],
     "🌊 Río":                  ["L01"],
 }
@@ -32,7 +32,7 @@ COLORES_ZONA_RUTAS = {
 
 # Subgrupos operativos
 ZONA_GT_RIO = ["L01", "L05", "L06"]   # Sergio
-ZONA_VEGGI  = ["L03", "L04"]           # Esposa
+ZONA_VEGGI  = ["L03", "L04", "L10"]    # Esposa
 
 # ── Clientes a excluir de reportes ───────────────────────────────────────────
 EXCLUIR_DASHBOARD   = ["veggi", "chimalt", "wilson"]

@@ -8,7 +8,7 @@ from datetime import date
 
 # Mapas de zonas locales (inicio usa claves sin emoji)
 ZONAS_MAP = {
-    "Antigua & Chimal":     ["L03", "L04"],
+    "Antigua & Chimal":     ["L03", "L04", "L10"],
     "Guatemala & Santiago": ["L05", "L06"],
     "Rio":                  ["L01"],
 }
