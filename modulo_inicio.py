@@ -171,10 +171,6 @@ def mostrar():
             f"{kpis['año_act']} — Total: Q{kpis['total']:,.0f}</div>",
             unsafe_allow_html=True)
 
-        # Debug temporal — metas cargadas
-        _mz = kpis.get("metas_zona", {})
-        st.caption(f"🔍 Metas: {_mz}")
-
         zcols = st.columns(len(ZONAS_MAP))
         for col, (zona, val) in zip(zcols, kpis["por_zona"].items()):
             color   = COLORES_ZONA[zona]
