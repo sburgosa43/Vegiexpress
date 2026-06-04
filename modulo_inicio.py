@@ -93,9 +93,9 @@ def _kpis():
 
         # Mapear claves Dashboard → ZONAS_MAP
         _META_MAP = {
-            "🔖 Antigua & Chimal":     "Antigua + Chimal",
-            "🏙️ Guatemala & Santiago": "GT + Santiago",
-            "🌊 Río":                  "Río",
+            "Antigua & Chimal":     "Antigua + Chimal",
+            "Guatemala & Santiago": "GT + Santiago",
+            "Rio":                  "Río",
         }
         metas_zona = {z: metas_raw.get(_META_MAP.get(z, ""), 0.0)
                       for z in ZONAS_MAP}
