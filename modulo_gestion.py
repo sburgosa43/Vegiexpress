@@ -2,6 +2,17 @@
 modulo_gestion.py — Gestión de Pedidos (Revisar y Editar)
 """
 import streamlit as st
+
+def _conf(key: str, msg: str):
+    """Guarda mensaje de confirmación para mostrar en el próximo render."""
+    st.session_state[f"_conf_{key}"] = msg
+
+def _show_conf(key: str):
+    """Muestra y consume el mensaje de confirmación (desaparece en siguiente acción)."""
+    msg = st.session_state.pop(f"_conf_{key}", None)
+    if msg:
+        st.success(msg)
+
 import base64
 from datetime import date
 from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido,
@@ -449,7 +460,7 @@ def _modificar(todos):
             if res["ediciones"]:   partes.append(f"{res['ediciones']} edición(es)")
             if res["nuevas_filas"]: partes.append(f"{res['nuevas_filas']} línea(s) nueva(s)")
             if res["eliminadas"]:   partes.append(f"{res['eliminadas']} eliminada(s)")
-            st.success(f"✅ {' + '.join(partes)} en 1 ciclo Drive.")
+            _conf("edicion", f"✅ Cambios guardados — {' + '.join(partes)} en 1 ciclo Drive.")
             st.rerun()
     else:
         st.info("Sin cambios ni líneas nuevas detectadas.")
@@ -607,6 +618,7 @@ def _tab_remision(todos: list):
 
 def _ajuste_precios():
     """Actualiza precios de productos en pedidos de la semana actual + catálogo."""
+    _show_conf("ajuste")
     import pandas as pd
     from datetime import date
     from excel_helper import leer_productos_semana, actualizar_precio_semana
@@ -694,26 +706,44 @@ def _ajuste_precios():
             })
 
     if cambios:
-        st.warning(f"⚠️ {len(cambios)} producto(s) con precio modificado:")
+        st.warning(f"⚠️ {len(cambios)} producto(s) modificado(s):")
         for ch in cambios:
             linea = f"- **{ch['producto']}**:"
             if ch["p_cambia"]:
-                linea += f" Precio Q{ch['precio_ant']:,.2f}→Q{ch['precio_nuevo']:,.2f}"
+                linea += f" Precio Q{ch['precio_ant']:,.2f} → Q{ch['precio_nuevo']:,.2f}"
             if ch["c_cambia"]:
-                linea += f" · Costo Q{ch['costo_ant']:,.2f}→Q{ch['costo_nuevo']:,.2f}"
+                linea += f" · Costo Q{ch['costo_ant']:,.2f} → Q{ch['costo_nuevo']:,.2f}"
             st.markdown(linea)
+
+        st.divider()
+        upd_cat = st.checkbox(
+            "📦 Actualizar también en el catálogo (aplica a pedidos futuros)",
+            value=True, key="ajp_upd_cat",
+            help="Si está marcado: precio y costo se guardan en Listado Productos "
+                 "y aplicarán automáticamente a los pedidos de próximas semanas.")
+        if not upd_cat:
+            st.caption("⚠️ Solo se actualizarán los pedidos de esta semana. "
+                       "La próxima semana los pedidos saldrán con los precios anteriores.")
+        else:
+            st.caption("✅ Se actualizarán pedidos de esta semana + catálogo "
+                       "para próximas semanas.")
 
         if st.button(f"💾 Aplicar {len(cambios)} cambio(s)",
                      type="primary", key="ajp_guardar"):
-            with st.spinner("Actualizando pedidos y catálogo..."):
-                res = actualizar_precio_semana(cambios, sem_cargada, año_cargado)
-            st.success(
-                f"✅ {res['filas_pedidos']} fila(s) de pedidos actualizadas · "
-                f"{res['prods_catalogo']} producto(s) en catálogo actualizados.")
+            with st.spinner("Actualizando pedidos..." +
+                            (" y catálogo..." if upd_cat else "")):
+                res = actualizar_precio_semana(
+                    cambios, sem_cargada, año_cargado,
+                    actualizar_catalogo=upd_cat)
+            msg = (f"✅ Cambios guardados — "
+                       f"{res['filas_pedidos']} línea(s) actualizadas"
+                       + (f" · Catálogo actualizado ({res['prods_catalogo']} campo(s))"
+                          if upd_cat else " · Solo pedidos de esta semana"))
+            _conf("ajuste", msg)
             st.session_state.pop("ajp_data", None)
             st.rerun()
     else:
-        st.info("Sin cambios de precio detectados.")
+        st.info("Sin cambios detectados.")
 
 
 def mostrar():

@@ -2,6 +2,17 @@
 modulo_clientes.py — CRUD de clientes
 """
 import streamlit as st
+
+def _conf(key: str, msg: str):
+    """Guarda mensaje de confirmación para mostrar en el próximo render."""
+    st.session_state[f"_conf_{key}"] = msg
+
+def _show_conf(key: str):
+    """Muestra y consume el mensaje de confirmación (desaparece en siguiente acción)."""
+    msg = st.session_state.pop(f"_conf_{key}", None)
+    if msg:
+        st.success(msg)
+
 from data_helper  import cargar_clientes
 from excel_helper import agregar_cliente, editar_cliente, eliminar_cliente
 
@@ -84,6 +95,8 @@ def _cargar_row_map():
 
 
 def mostrar():
+    _show_conf("cliente_new")
+    _show_conf("cliente_upd")
     st.markdown("## 👥 Clientes")
     # Botón de regreso al Inicio
     if st.button("🏠 Inicio", key="btn_home_cli", type="secondary"):
@@ -158,7 +171,7 @@ def mostrar():
                                 with st.spinner("Guardando..."):
                                     editar_cliente(row_num, datos)
                                     st.session_state.cli_row_map = _cargar_row_map()
-                                st.success("✅ Cliente actualizado.")
+                                _conf("cliente_upd", "✅ Cliente actualizado correctamente.")
                                 st.session_state[modo_key] = "ver"
                                 st.rerun()
 
@@ -196,6 +209,5 @@ def mostrar():
                 # Refrescar el row_map
                 if "cli_row_map" in st.session_state:
                     del st.session_state["cli_row_map"]
-            st.success(
-                f"✅ Cliente **{datos['nombre']}** creado con código **{codigo}**."
+            _conf("cliente_new", f"✅ Cliente guardado — {datos['nombre']} creado con código **{codigo}**."
             )

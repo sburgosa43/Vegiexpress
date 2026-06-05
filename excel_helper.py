@@ -229,19 +229,28 @@ def guardar_cambios_precio(cambios: list, actualizar_catalogo: bool = False) -> 
     return len(reales)
 
 
-def _actualizar_precio_catalogo(prod_map: dict) -> None:
-    """Actualiza precio en Listado Productos y Listado Antigua."""
-    for k_hoja, col_precio in [(_K_PROD, 8), (_K_ANT, 7)]:
+def _actualizar_precio_catalogo(precio_map: dict,
+                                    costo_map:  dict = None) -> int:
+    """Actualiza precio Y costo en Listado Productos y Listado Antigua."""
+    costo_map = costo_map or {}
+    total = 0
+    # General: precio=col H(8), costo=col F(6)
+    # Antigua: precio=col G(7), costo=col F(6)
+    for k_hoja, col_prec, col_cost in [(_K_PROD, "H", "F"), (_K_ANT, "G", "F")]:
         rows = get_all_rows(k_hoja)
         upd  = []
         for i, row in enumerate(rows, start=2):
-            prod = str(row[0] if row else "") 
-            if prod in prod_map:
-                col_letter = "H" if col_precio == 8 else "G"
-                upd.append({"range": f"{col_letter}{i}",
-                            "values": [[prod_map[prod]]]})
+            prod = str(row[0] if row else "").strip()
+            if prod in precio_map:
+                upd.append({"range": f"{col_prec}{i}",
+                            "values": [[precio_map[prod]]]})
+            if prod in costo_map and costo_map[prod] > 0:
+                upd.append({"range": f"{col_cost}{i}",
+                            "values": [[costo_map[prod]]]})
         if upd:
             update_cells(k_hoja, upd)
+            total += len(upd)
+    return total
 
 
 # ── CORRECCIÓN MASIVA ──────────────────────────────────────────────────────────
@@ -294,28 +303,36 @@ def leer_productos_semana(semana: int, año: int) -> list:
     return sorted(agg.values(), key=lambda x: x["producto"])
 
 
-def actualizar_precio_semana(cambios: list, semana: int, año: int) -> dict:
-    todos     = leer_pedidos()
-    precio_map = {c["producto"]: _sf(c["precio_nuevo"]) for c in cambios}
-    costo_map  = {c["producto"]: _sf(c["costo_nuevo"])  for c in cambios}
+def actualizar_precio_semana(cambios: list, semana: int, año: int,
+                                actualizar_catalogo: bool = True) -> dict:
+    todos      = leer_pedidos()
+    precio_map = {c["producto"]: _sf(c["precio_nuevo"]) for c in cambios
+                  if c.get("p_cambia")}
+    costo_map  = {c["producto"]: _sf(c["costo_nuevo"])  for c in cambios
+                  if c.get("c_cambia")}
+    # Para filas de pedidos actualizar siempre precio y costo
+    prod_all   = {c["producto"] for c in cambios}
 
     upd = []
     for p in todos:
         prod = p["producto"]
-        if prod not in precio_map: continue
+        if prod not in prod_all: continue
         if p["semana"] != semana or p["año"] != año: continue
         rn = p["row_num"]
-        upd.append({"range": f"E{rn}", "values": [[precio_map[prod]]]})
+        if prod in precio_map:
+            upd.append({"range": f"E{rn}", "values": [[precio_map[prod]]]})
         if prod in costo_map and costo_map[prod] > 0:
             upd.append({"range": f"F{rn}", "values": [[costo_map[prod]]]})
 
     filas_ped = len(upd)
+    prods_cat = 0
     if upd:
         update_cells(_K_PED, upd)
-        _actualizar_precio_catalogo(precio_map)
         leer_pedidos.clear()
+    if actualizar_catalogo and (precio_map or costo_map):
+        prods_cat = _actualizar_precio_catalogo(precio_map, costo_map)
 
-    return {"filas_pedidos": filas_ped, "prods_catalogo": len(precio_map)}
+    return {"filas_pedidos": filas_ped, "prods_catalogo": prods_cat}
 
 
 def leer_productos_semana_precios(semana: int, año: int) -> list:

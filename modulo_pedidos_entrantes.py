@@ -2,11 +2,23 @@
 modulo_pedidos_entrantes.py — Revisión y aprobación de pedidos del catálogo cliente.
 """
 import streamlit as st
+
+def _conf(key: str, msg: str):
+    """Guarda mensaje de confirmación para mostrar en el próximo render."""
+    st.session_state[f"_conf_{key}"] = msg
+
+def _show_conf(key: str):
+    """Muestra y consume el mensaje de confirmación (desaparece en siguiente acción)."""
+    msg = st.session_state.pop(f"_conf_{key}", None)
+    if msg:
+        st.success(msg)
+
 import pandas as pd
 from datetime import date
 
 
 def mostrar():
+    _show_conf("entrante")
     st.markdown("## 📥 Pedidos Entrantes")
     if st.button("🏠 Inicio", key="btn_home_pe", type="secondary"):
         st.session_state["_nav_target"] = "🏠 Inicio"
@@ -95,7 +107,7 @@ def mostrar():
                         indices = (grupo.index + 2).tolist()  # +2: header+0-index
                         with st.spinner("Actualizando..."):
                             actualizar_status(indices, "Confirmado")
-                        st.success("✅ Pedido confirmado.")
+                        _conf("entrante", "✅ Pedido confirmado y procesado correctamente.")
                         st.rerun()
 
                 with br:

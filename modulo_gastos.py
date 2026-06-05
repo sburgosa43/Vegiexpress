@@ -3,6 +3,17 @@ modulo_gastos.py — Registro y análisis de gastos operativos + personales
 Tabs: ➕ Registrar | 📊 Operación | 🏠 Casa | 📋 Historial | ⚙️ Categorías
 """
 import streamlit as st
+
+def _conf(key: str, msg: str):
+    """Guarda mensaje de confirmación para mostrar en el próximo render."""
+    st.session_state[f"_conf_{key}"] = msg
+
+def _show_conf(key: str):
+    """Muestra y consume el mensaje de confirmación (desaparece en siguiente acción)."""
+    msg = st.session_state.pop(f"_conf_{key}", None)
+    if msg:
+        st.success(msg)
+
 import pandas as pd
 from datetime import date, datetime
 from gsheets import get_all_rows, append_rows, update_cells
@@ -162,6 +173,7 @@ def _semanas_del_mes(mes: int, año: int) -> list[int]:
 
 # ── TAB Registrar ─────────────────────────────────────────────────────────────
 def _tab_registrar(cfg: dict):
+    _show_conf("gasto")
     st.markdown("#### ➕ Registrar Gasto")
     subcats = cfg["subcats"]
     cat_opts = CATS + sorted({c for _, c in subcats if c not in CATS})
@@ -190,7 +202,8 @@ def _tab_registrar(cfg: dict):
             _guardar_gasto_row(fecha, categoria,
                                subcat if subcat else concepto,
                                proveedor, concepto, monto)
-            st.success(f"✅ Q{monto:,.2f} — {subcat or concepto} guardado.")
+            _conf("gasto", f"✅ Gasto guardado — {subcat or concepto} · "
+                           f"Q{monto:,.2f} · {categoria} · {fecha.strftime('%d/%m/%Y')}")
             st.rerun()
 
 

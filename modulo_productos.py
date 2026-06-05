@@ -4,6 +4,17 @@ Tabs: Nuevo General | Nuevo Antigua | Actualización General |
       Actualización Antigua | Precios General | Precios Antigua
 """
 import streamlit as st
+
+def _conf(key: str, msg: str):
+    """Guarda mensaje de confirmación para mostrar en el próximo render."""
+    st.session_state[f"_conf_{key}"] = msg
+
+def _show_conf(key: str):
+    """Muestra y consume el mensaje de confirmación (desaparece en siguiente acción)."""
+    msg = st.session_state.pop(f"_conf_{key}", None)
+    if msg:
+        st.success(msg)
+
 import pandas as pd
 from excel_helper import (leer_productos_con_fila, agregar_producto,
                           editar_producto, eliminar_producto,
@@ -145,7 +156,7 @@ def _actualizar_producto(es_antigua: bool):
     if datos:
         with st.spinner("Guardando..."):
             editar_producto(prod["row_num"], datos, es_antigua)
-        st.success(f"✅ **{datos['nombre']}** actualizado.")
+        _conf("prod_upd", f"✅ Producto guardado — {datos['nombre']} actualizado.")
         st.rerun()
 
 
@@ -196,13 +207,15 @@ def _precios_tabla(es_antigua: bool):
             with st.spinner(f"Guardando {len(cambios)} cambio(s)..."):
                 guardar_para_cotizar_batch(cambios, es_antigua)
             st.session_state[reset_key] = st.session_state.get(reset_key, 0) + 1
-            st.success(f"✅ {len(cambios)} producto(s) actualizados.")
+            _conf("precios_upd", f"✅ Precios guardados — {len(cambios)} producto(s) actualizados.")
             st.rerun()
         else:
             st.info("Sin cambios detectados.")
 
 
 def mostrar():
+    _show_conf("prod_upd")
+    _show_conf("precios_upd")
     st.markdown("## 📦 Productos")
     if st.button("🏠 Inicio", key="btn_home_prod", type="secondary"):
         st.session_state["_nav_target"] = "🏠 Inicio"
