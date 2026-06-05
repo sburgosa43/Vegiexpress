@@ -35,7 +35,7 @@ SUBCATS_DEFAULT = [
     ("Colegios","Casa"),("Transporte Casa","Casa"),("Ocio","Casa"),
     ("Energia Electrica","Casa"),("Celulares","Casa"),("Otros Casa","Casa"),
 ]
-CAMPO_CLIENTS_DEFAULT = ["rodrigo","martin","legume","4 pinos","cebollines"]
+CAMPO_CLIENTS_DEFAULT = ["aldyk","tierra fria","legume","4 pinos","cebollines"]
 CATS = ["Campo","Veggi","Casa"]
 
 PROVEEDORES = ["CENMA","Patojas","El Huerto","Productor Directo",
@@ -140,7 +140,9 @@ def _ingresos_campo_veggi(pedidos: list, campo_clis: list,
         if not filtro_fn(p): continue
         if p["status"] == "Cancelado": continue
         total = _sf(p.get("total", 0))
-        if any(k in p["cliente"].lower() for k in campo_set):
+        cli = p["cliente"].lower().strip()
+        # Exact match — evita falsos positivos por substring
+        if cli in campo_set:
             inc["Campo"] += total
         else:
             inc["Veggi"] += total
