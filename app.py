@@ -69,6 +69,10 @@ elif pagina.startswith("🏠"):
     import modulo_inicio
     modulo_inicio.mostrar()
 
+elif pagina.startswith("💳"):
+    import modulo_gastos
+    modulo_gastos.mostrar()
+
 elif pagina.startswith("💰"):
     import modulo_flujo_caja
     modulo_flujo_caja.mostrar()
