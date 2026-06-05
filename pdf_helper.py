@@ -687,120 +687,143 @@ def generar_lista_compras_proveedor(prov: str, items: list,
     """
     PDF portrait A4 B&W para UN proveedor.
     Columnas: Producto | Unidad | Ant-Chim | Chimalt | GT-Stgo | Río | Total | A Comprar
-    items: [{producto, unidad, Ant-Chim, Chimalt, GT-Stgo, Río, cantidad, a_comprar}]
+    Máx 50 filas por página — paginación manual con header y footer en cada página.
     """
     from reportlab.lib.pagesizes import A4
     from reportlab.lib           import colors as rc
+    from reportlab.platypus      import PageBreak
+    from datetime import date as _date
 
-    buf  = BytesIO()
-    ML = MR = 10*mm; MT = MB = 8*mm
+    buf   = BytesIO()
+    ML = MR = 12*mm
+    MT = MB = 10*mm
     PW, PH = A4
-    CW = PW - ML - MR          # 190mm
+    CW = PW - ML - MR          # ancho útil
 
     doc = SimpleDocTemplate(buf, pagesize=A4,
-        leftMargin=ML, rightMargin=MR, topMargin=MT, bottomMargin=MB,
+        leftMargin=ML, rightMargin=MR,
+        topMargin=MT, bottomMargin=MB,
         title=f"{prov} · Sem {semana}/{año}")
+
     story = []
     NEGRO = rc.black
+    HOY   = _date.today().strftime("%d/%m/%Y")
+    ROWS_PER_PAGE = 50
 
     def ts(name, **kw):
-        d = dict(fontSize=7, fontName="Helvetica",
-                 textColor=NEGRO, leading=9)
+        d = dict(fontSize=7, fontName="Helvetica", textColor=NEGRO, leading=9)
         d.update(kw); return ParagraphStyle(name, **d)
 
-    s_title = ts("tit",  fontSize=10, fontName="Helvetica-Bold", leading=12)
-    s_sub   = ts("sub",  fontSize=7,  alignment=TA_RIGHT)
-    s_th    = ts("th",   fontSize=6.5, fontName="Helvetica-Bold",
-                 alignment=TA_CENTER)
-    s_th_l  = ts("thl",  fontSize=6.5, fontName="Helvetica-Bold")
-    s_td    = ts("td",   fontSize=7)
-    s_td_c  = ts("tdc",  fontSize=7,  alignment=TA_CENTER)
-    s_td_b  = ts("tdb",  fontSize=7,  fontName="Helvetica-Bold",
-                 alignment=TA_CENTER)
+    s_title = ts("tit", fontSize=10, fontName="Helvetica-Bold", leading=12)
+    s_sub   = ts("sub", fontSize=7,  alignment=TA_RIGHT)
+    s_th    = ts("th",  fontSize=6.5, fontName="Helvetica-Bold", alignment=TA_CENTER)
+    s_th_l  = ts("thl", fontSize=6.5, fontName="Helvetica-Bold")
+    s_td    = ts("td",  fontSize=7)
+    s_td_c  = ts("tdc", fontSize=7,  alignment=TA_CENTER)
+    s_td_b  = ts("tdb", fontSize=7,  fontName="Helvetica-Bold", alignment=TA_CENTER)
+    s_ft    = ParagraphStyle("ft", fontSize=6, fontName="Helvetica-Oblique",
+                              textColor=NEGRO, alignment=TA_CENTER, leading=8)
 
-    # ── Header ────────────────────────────────────────────────────────────────
-    hdr = Table([[
-        _p(_s(f"A Pedir: {prov}"), s_title),
-        _p(f"Semana {semana}/{año}  ·  "
-           f"{__import__('datetime').date.today().strftime('%d/%m/%Y')}", s_sub),
-    ]], colWidths=[CW*0.6, CW*0.4])
-    hdr.setStyle(TableStyle([
-        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-        ("TOPPADDING",(0,0),(-1,-1),0),
-        ("BOTTOMPADDING",(0,0),(-1,-1),2),
-    ]))
-    story.append(hdr)
-    story.append(HRFlowable(width="100%", thickness=1,
-                             color=NEGRO, spaceAfter=3*mm))
-
-    # ── Columnas: Producto(60) | Unidad(18) | 4 áreas(20 c/u) | Total(15) | ACmp(17) ──
-    AREAS = ["Ant-Chim","Chimalt","GT-Stgo","Río"]
-    wP  = CW * 0.30   # Producto
-    wU  = CW * 0.09   # Unidad
-    wA  = CW * 0.11   # cada área (x4 = 0.44)
-    wT  = CW * 0.08   # Total
-    wC  = CW * 0.09   # A Comprar
+    # ── Anchos de columna ────────────────────────────────────────────────────
+    wP  = CW * 0.30
+    wU  = CW * 0.09
+    wA  = CW * 0.11
+    wT  = CW * 0.08
+    wC  = CW * 0.09
     col_w = [wP, wU, wA, wA, wA, wA, wT, wC]
 
-    # Encabezado
-    rows = [[
-        _p("Producto",   s_th_l),
-        _p("Unidad",     s_th),
-        _p("Ant-Chim",   s_th),
-        _p("Chimalt",    s_th),
-        _p("GT-Stgo",    s_th),
-        _p("Río",        s_th),
-        _p("Total",      s_th),
-        _p("A Comprar",  s_th),
-    ]]
+    # ── Fila de encabezado de columnas ───────────────────────────────────────
+    def header_row():
+        return [
+            _p("Producto",  s_th_l),
+            _p("Unidad",    s_th),
+            _p("Ant-Chim",  s_th),
+            _p("Chimalt",   s_th),
+            _p("GT-Stgo",   s_th),
+            _p("Río",       s_th),
+            _p("Total",     s_th),
+            _p("A Comprar", s_th),
+        ]
 
-    for it in items:
+    def data_row(it):
         def area_val(a):
             v = float(it.get(a, 0) or 0)
             return _p(f"{v:g}" if v > 0 else "—", s_td_c)
-
-        a_cmp = it.get("a_comprar","")
-        cmp_cell = _p("PEND." if str(a_cmp).upper()=="P" else str(a_cmp), s_td_b)
-
-        rows.append([
-            _p(_s(it["producto"]),           s_td),
-            _p(_s(it.get("unidad","")),      s_td_c),
+        a_cmp = it.get("a_comprar", "")
+        cmp   = _p("PEND." if str(a_cmp).upper() == "P" else str(a_cmp), s_td_b)
+        return [
+            _p(_s(it["producto"]),          s_td),
+            _p(_s(it.get("unidad", "")),    s_td_c),
             area_val("Ant-Chim"),
             area_val("Chimalt"),
             area_val("GT-Stgo"),
             area_val("Río"),
-            _p(f"{float(it.get('cantidad',0) or 0):g}", s_td_c),
-            cmp_cell,
+            _p(f"{float(it.get('cantidad', 0) or 0):g}", s_td_c),
+            cmp,
+        ]
+
+    def table_style(n_rows):
+        return TableStyle([
+            ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 7),
+            ("LINEBELOW",     (0, 0), (-1, 0),  0.8, NEGRO),
+            ("BOX",           (0, 0), (-1, -1), 0.5, NEGRO),
+            ("INNERGRID",     (0, 0), (-1, -1), 0.25, NEGRO),
+            ("TOPPADDING",    (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 2),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 2),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [rc.white, rc.Color(0.96, 0.96, 0.96)]),
         ])
 
-    tbl = Table(rows, colWidths=col_w, repeatRows=1, splitByRow=True)
-    tbl.setStyle(TableStyle([
-        ("FONTNAME",     (0,0),(-1,0), "Helvetica-Bold"),
-        ("FONTSIZE",     (0,0),(-1,-1), 7),
-        ("LINEBELOW",    (0,0),(-1,0), 0.8, NEGRO),
-        ("BOX",          (0,0),(-1,-1), 0.5, NEGRO),
-        ("INNERGRID",    (0,0),(-1,-1), 0.25, NEGRO),
-        ("TOPPADDING",   (0,0),(-1,-1), 1.5),
-        ("BOTTOMPADDING",(0,0),(-1,-1), 1.5),
-        ("LEFTPADDING",  (0,0),(-1,-1), 2),
-        ("RIGHTPADDING", (0,0),(-1,-1), 2),
-        ("VALIGN",       (0,0),(-1,-1), "MIDDLE"),
-    ]))
-    story.append(tbl)
+    def page_header(page_num, total_pages):
+        hdr = Table([[
+            _p(_s(f"A Pedir: {prov}"), s_title),
+            _p(f"Semana {semana}/{año}  ·  {HOY}"
+               + (f"  ·  Pág. {page_num}/{total_pages}"
+                  if total_pages > 1 else ""), s_sub),
+        ]], colWidths=[CW * 0.6, CW * 0.4])
+        hdr.setStyle(TableStyle([
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING",    (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]))
+        return hdr
 
-    story.append(Spacer(1, 3*mm))
-    story.append(HRFlowable(width="100%", thickness=0.5,
-                             color=NEGRO, spaceAfter=1))
-    story.append(_p(_s("VeggiExpress  ·  Más fresco, imposible."),
-                    ParagraphStyle("ft", fontSize=6,
-                                   fontName="Helvetica-Oblique",
-                                   textColor=NEGRO, alignment=TA_CENTER,
-                                   leading=8)))
+    def page_footer():
+        return _p(_s("VeggiExpress  ·  Más fresco, imposible."), s_ft)
+
+    # ── Paginar items en chunks de ROWS_PER_PAGE ─────────────────────────────
+    chunks = [items[i:i + ROWS_PER_PAGE]
+              for i in range(0, max(len(items), 1), ROWS_PER_PAGE)]
+    total_pages = len(chunks)
+
+    for page_idx, chunk in enumerate(chunks):
+        if page_idx > 0:
+            story.append(PageBreak())
+
+        # Header
+        story.append(page_header(page_idx + 1, total_pages))
+        story.append(HRFlowable(width="100%", thickness=1,
+                                 color=NEGRO, spaceAfter=2*mm))
+
+        # Tabla de datos
+        rows = [header_row()] + [data_row(it) for it in chunk]
+        tbl = Table(rows, colWidths=col_w, splitByRow=False)
+        tbl.setStyle(table_style(len(chunk)))
+        story.append(tbl)
+
+        # Footer
+        story.append(Spacer(1, 3*mm))
+        story.append(HRFlowable(width="100%", thickness=0.5,
+                                 color=NEGRO, spaceAfter=1))
+        story.append(page_footer())
+
     doc.build(story)
     return buf.getvalue()
 
 
-# ── LISTADO CHECKLIST (Envíos) ────────────────────────────────────────────────
 def generar_listado_checklist(clientes_grupos: list,
                                area_label: str,
                                semana: int, año: int) -> bytes:

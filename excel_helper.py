@@ -60,7 +60,7 @@ def _parse_fecha(v) -> date | None:
 
 
 # ── PEDIDOS ────────────────────────────────────────────────────────────────────
-@st.cache_resource
+@st.cache_data(ttl=600, show_spinner=False)
 def leer_pedidos() -> list[dict]:
     rows   = get_all_rows(_K_PED)
     result = []

@@ -10,7 +10,7 @@ _K_PROD = "productos"
 _K_ANT  = "antigua"
 
 
-@st.cache_resource
+@st.cache_data(ttl=600, show_spinner=False)
 def cargar_clientes() -> list[dict]:
     """Lista completa de clientes desde Sheets."""
     rows = get_all_rows(_K_CLI)
@@ -37,7 +37,7 @@ def cargar_clientes() -> list[dict]:
     return clientes
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600, show_spinner=False)
 def cargar_productos(es_antigua: bool = False,
                      solo_catalogo: bool = True) -> list[dict]:
     """Productos para catálogo (app de pedidos y cotizador)."""

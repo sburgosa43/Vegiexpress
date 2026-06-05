@@ -32,7 +32,7 @@ PROVEEDORES = ["CENMA","Patojas","El Huerto","Productor Directo",
 
 
 # ── Config I/O ────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600, show_spinner=False)
 def _cargar_config() -> dict:
     """
     Lee GastosConfig sheet.
@@ -518,6 +518,32 @@ def _tab_categorias(cfg: dict):
 
 
 # ── MOSTRAR ───────────────────────────────────────────────────────────────────
+
+def _ensure_gastos_sheets():
+    """Crea las hojas Gastos y GastosConfig si no existen en el Sheet."""
+    from gsheets import _wb as _get_wb, HOJAS
+    try:
+        wb = _get_wb()
+        existing = [ws.title for ws in wb.worksheets()]
+        created = []
+        if HOJAS["gastos"] not in existing:
+            sheet = wb.add_worksheet(title=HOJAS["gastos"], rows=2000, cols=10)
+            sheet.append_row(
+                ["Fecha","Semana","Año","Categoria","SubCategoria",
+                 "Proveedor","Concepto","Monto"],
+                value_input_option="USER_ENTERED")
+            created.append(HOJAS["gastos"])
+        if HOJAS["gastosconfig"] not in existing:
+            sheet2 = wb.add_worksheet(title=HOJAS["gastosconfig"], rows=200, cols=6)
+            sheet2.append_row(["Tipo","Val1","Val2","","",""],
+                               value_input_option="USER_ENTERED")
+            created.append(HOJAS["gastosconfig"])
+        if created:
+            st.info(f"✅ Hojas creadas automáticamente: {', '.join(created)}")
+    except Exception as e:
+        st.warning(f"No se pudieron crear las hojas automáticamente: {e}. "
+                   f"Creá manualmente 'Gastos' y 'GastosConfig' en tu Google Sheet.")
+
 def mostrar():
     st.markdown("## 💰 Gastos")
     if st.button("🏠 Inicio", key="btn_home_gto", type="secondary"):
@@ -525,6 +551,7 @@ def mostrar():
         st.rerun()
     st.divider()
 
+    _ensure_gastos_sheets()
     cfg = _cargar_config()
 
     from excel_helper import leer_pedidos
