@@ -3,6 +3,7 @@ modulo_inicio.py — Hub Principal / Página de Inicio VeggiExpress
 """
 import os
 import streamlit as st
+from datetime import date, timedelta
 from config import excluido_dashboard as _excluido
 from datetime import date
 

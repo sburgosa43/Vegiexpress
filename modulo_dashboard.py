@@ -3,6 +3,7 @@ modulo_dashboard.py — Dashboard VeggiExpress
 Períodos: Sem Actual | Sem Ant. | MTD | YTD | PYTD
 """
 import streamlit as st
+import plotly.graph_objects as go
 from config import (ZONAS_DASH, COLORES_ZONA_RUTAS, excluido_dashboard,
                      EXCLUIR_DASHBOARD)
 import pandas as pd
@@ -530,7 +531,6 @@ def _top10_resto(items_dict, n=10):
 
 # ── TAB EVOLUCIÓN SEMANAL ─────────────────────────────────────────────────────
 def _tab_evolucion(todos, clientes):
-    import plotly.graph_objects as go
     from datetime import date, timedelta
 
     czmap = _cli_zona_map(clientes)
@@ -599,8 +599,6 @@ def _tab_evolucion(todos, clientes):
 
 
 def _tab_shares(todos, clientes):
-    import plotly.express as px
-    import plotly.graph_objects as go
     from datetime import date
 
     czmap = _cli_zona_map(clientes)
@@ -696,7 +694,6 @@ def _tab_shares(todos, clientes):
                     "Var.":    var_txt,
                 })
             if rows_tabla:
-                import pandas as pd
                 st.dataframe(pd.DataFrame(rows_tabla), hide_index=True,
                              use_container_width=True,
                              column_config={
@@ -711,10 +708,7 @@ def _tab_shares(todos, clientes):
 
 # ── TAB COMPARATIVO ANUAL ─────────────────────────────────────────────────────
 def _tab_comparativo(todos, clientes):
-    import plotly.graph_objects as go
-    import plotly.express as px
     from datetime import date
-    import pandas as pd
 
     czmap   = _cli_zona_map(clientes)
     hoy     = date.today()

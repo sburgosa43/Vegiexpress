@@ -21,7 +21,6 @@ AREAS_PROV = [
 ]
 
 
-def _excluido(n): return _excluido_cfg(n)
 
 
 def _get_area(cliente, zona):

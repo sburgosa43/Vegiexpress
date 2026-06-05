@@ -3,6 +3,8 @@ modulo_envios.py — Envíos y Facturación Semana Actual
 Tres zonas: Antigua & Chimal | Guatemala & Santiago | Rio
 """
 import streamlit as st
+import pandas as pd
+import base64
 from datetime import date
 from excel_helper import (leer_pedidos, cancelar_pedido,
                           restaurar_pedido, guardar_cambios_precio)
@@ -126,8 +128,6 @@ AREAS_LIST = {
 
 
 def _tab_listados(todos, semana, año):
-    import pandas as pd
-    import base64
     from pdf_helper import generar_listado_checklist
 
     st.markdown("### 📋 Listado de Empaque")
@@ -356,7 +356,6 @@ def mostrar():
 # ── IMPRESIÓN MASIVA ───────────────────────────────────────────────────────────
 def _tab_impresion_masiva(todos: list, cli_list: list, sem_def: int, año_def: int):
     """PDFs individuales por cliente para un área y semana — impresión masiva."""
-    import base64
     import streamlit.components.v1 as components
     from pdf_helper import generar_envio, nombre_archivo
 

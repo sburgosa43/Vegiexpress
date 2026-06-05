@@ -17,7 +17,6 @@ ZONA_VEGGI   = ["L03", "L04"]
 
 
 
-def _excluido(n): return _excluido_fc(n)
 
 
 def _reglas(cliente_nombre: str) -> dict:

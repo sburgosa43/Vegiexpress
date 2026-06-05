@@ -2,6 +2,7 @@
 modulo_gestion.py — Gestión de Pedidos (Revisar y Editar)
 """
 import streamlit as st
+import base64
 from datetime import date
 from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido,
                           editar_linea, editar_fecha_pedido, eliminar_pedido)
@@ -459,7 +460,6 @@ def _modificar(todos):
 
 def _tab_remision(todos: list):
     """Remisión por cliente — single-select, imprimir + vista previa."""
-    import base64
     import streamlit.components.v1 as components
     from pdf_helper import generar_remision
     from datetime   import date

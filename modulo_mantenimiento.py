@@ -247,13 +247,19 @@ def _tab_estructura():
     st.divider()
 
     if st.button("📖 Leer estructura del Excel", type="primary"):
-        from drive_helper import cargar_para_lectura
-        FILE_ID = st.secrets["EXCEL_FILE_ID"]
-
-        with st.spinner("Descargando y analizando Excel..."):
-            wb = cargar_para_lectura(FILE_ID)
-
-        st.success(f"✅ Excel leído — {len(wb.sheetnames)} hojas encontradas")
+        from gsheets import HOJAS
+        with st.spinner("Verificando Google Sheets..."):
+            from gsheets import ws as _ws_check
+            hojas_ok = []
+            for k, nombre in HOJAS.items():
+                try:
+                    _ws_check(k)
+                    hojas_ok.append(f"✅ {nombre}")
+                except Exception as e:
+                    hojas_ok.append(f"❌ {nombre}: {e}")
+        st.success(f"Sheets verificadas: {len([h for h in hojas_ok if '✅' in h])}/{len(hojas_ok)}")
+        for h in hojas_ok:
+            st.caption(h)
         st.divider()
 
         for hoja in wb.sheetnames:
@@ -368,7 +374,7 @@ def _tab_catalogo():
 
 
 def _tab_cache():
-    """Limpieza manual de caché para forzar recarga desde Drive."""
+    """Limpieza de caché de datos para forzar recarga desde Google Sheets."""
     st.markdown("### 🔄 Caché de datos")
     st.markdown("""
     La app guarda los datos en memoria para ser más rápida.
@@ -410,4 +416,4 @@ def _tab_cache():
         cargar_clientes.clear()
         cargar_productos.clear()
         st.success("✅ Todo el caché limpiado. "
-                   "La próxima acción descargará datos frescos de Drive.")
+                   "La próxima acción leerá datos frescos de Google Sheets.")
