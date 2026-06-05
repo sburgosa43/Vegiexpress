@@ -5,6 +5,7 @@ Tab 2: Resumen  — productos por Tipo Producto (Proceso/Fresco) con desglose po
 """
 import streamlit as st
 from config import excluido_proveedores as _excluido_cfg
+_excluido = _excluido_cfg  # alias local
 import pandas as pd
 from datetime import date
 from excel_helper import leer_pedidos

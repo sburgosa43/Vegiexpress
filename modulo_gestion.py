@@ -431,7 +431,6 @@ def _modificar(todos):
                         "items":           items_nv,
                     })
 
-            st.caption(f"Debug: {len(cambios_batch)} cambio(s), {len(nuevas_batch)} nuevo(s), {len(filas_eliminar)} a eliminar")
             with st.spinner("Guardando..."):
                 try:
                     res = guardar_edicion_pedidos(cambios_batch, nuevas_batch,

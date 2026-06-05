@@ -6,6 +6,7 @@ Fase 1: clientes semanales GT/Río.
 import streamlit as st
 from config import (REGLAS_PAGO as REGLAS, ISR_UMBRAL,
                      ZONA_GT_RIO, excluido_dashboard as _excluido_fc)
+_excluido = _excluido_fc  # alias local
 import pandas as pd
 from datetime import date, timedelta
 from excel_helper import leer_pedidos

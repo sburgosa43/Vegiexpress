@@ -247,7 +247,7 @@ def mostrar():
 
     # ── Selectores ────────────────────────────────────────────────────────────
     hoy = date.today()
-    meses_disp = [(m, f"{MESES_ES[m]} {y}")
+    meses_disp = [(m, f"{MESES_ES[m-1]} {y}")
                   for y in range(hoy.year, hoy.year - 2, -1)
                   for m in range(12, 0, -1)
                   if (y, m) <= (hoy.year, hoy.month)]

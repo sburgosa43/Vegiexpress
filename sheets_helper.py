@@ -1,81 +1,106 @@
 """
-sheets_helper.py — Google Sheets para pedidos pendientes de clientes.
-Usa la misma cuenta de servicio que Drive.
+sheets_helper.py — Pedidos entrantes de clientes (migrado a gspread).
+Reemplaza la implementación anterior que usaba la API directa de Sheets.
 """
 import streamlit as st
+from datetime import datetime
+from gsheets import get_all_rows, append_rows, update_cells
 
-SHEET_NAME_PEDIDOS = "Pedidos_Entrantes"
-HEADERS = [
-    "Timestamp", "Restaurante", "Es_Nuevo", "Area",
-    "Fecha_Entrega", "Semana", "Producto", "Cantidad",
-    "Unidad", "Precio", "Total", "Status", "Notas",
-]
+PEDIDOS_SHEET_KEY = "pedidos_entrantes_clientes"  # clave separada de gsheets
 
+# Sheet ID de pedidos entrantes (diferente al Sheet principal)
+import json
 
 def _get_client():
-    import gspread, json
+    import gspread
     from google.oauth2.service_account import Credentials
-    scopes = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    # Soporta GOOGLE_CREDENTIALS (JSON string) o gcp_service_account (TOML dict)
+    SCOPES = ["https://spreadsheets.google.com/feeds",
+              "https://www.googleapis.com/auth/drive"]
     if "GOOGLE_CREDENTIALS" in st.secrets:
         info = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
     else:
         info = dict(st.secrets["gcp_service_account"])
-    creds = Credentials.from_service_account_info(info, scopes=scopes)
+    creds = Credentials.from_service_account_info(info, scopes=SCOPES)
     return gspread.authorize(creds)
 
 
+@st.cache_resource
 def _get_sheet():
-    gc        = _get_client()
-    sheet_id  = st.secrets["PEDIDOS_SHEET_ID"]
-    wb        = gc.open_by_key(sheet_id)
+    sheet_id = st.secrets.get("PEDIDOS_SHEET_ID", "")
+    if not sheet_id:
+        return None
+    gc = _get_client()
+    return gc.open_by_key(sheet_id).sheet1
+
+
+def guardar_pedido_cliente(data: dict) -> bool:
+    """Guarda un pedido de cliente en el Sheet de pedidos entrantes."""
     try:
-        ws = wb.worksheet(SHEET_NAME_PEDIDOS)
-    except Exception:
-        ws = wb.add_worksheet(SHEET_NAME_PEDIDOS, rows=1000, cols=len(HEADERS))
-        ws.append_row(HEADERS)
-    return ws
-
-
-def guardar_pedido_cliente(restaurante: str, es_nuevo: bool, area: str,
-                            fecha_entrega: str, semana: int,
-                            lineas: list) -> int:
-    """
-    Guarda las líneas de un pedido del cliente en el Google Sheet.
-    lineas: [{producto, cantidad, unidad, precio, total}]
-    """
-    from datetime import datetime
-    ws  = _get_sheet()
-    ts  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    rows = []
-    for l in lineas:
-        rows.append([
-            ts, restaurante, "Sí" if es_nuevo else "No", area,
-            fecha_entrega, semana,
-            l["producto"], l["cantidad"], l["unidad"],
-            l["precio"], l["total"],
-            "Pendiente", "",
-        ])
-    ws.append_rows(rows, value_input_option="USER_ENTERED")
-    return len(rows)
-
-
-def leer_pedidos_entrantes() -> list:
-    """Lee todos los pedidos del Google Sheet. Retorna lista de dicts."""
-    try:
-        ws   = _get_sheet()
-        data = ws.get_all_records()
-        return data
+        ws = _get_sheet()
+        if not ws:
+            return False
+        row = [
+            datetime.now().strftime("%d/%m/%Y %H:%M"),
+            data.get("restaurante", ""),
+            data.get("es_nuevo", "No"),
+            data.get("area", ""),
+            data.get("fecha_entrega", ""),
+            data.get("semana", ""),
+            data.get("producto", ""),
+            data.get("cantidad", ""),
+            data.get("unidad", ""),
+            data.get("notas", ""),
+            "Pendiente",
+        ]
+        ws.append_row(row, value_input_option="USER_ENTERED")
+        _get_sheet.clear()
+        return True
     except Exception as e:
+        st.error(f"Error guardando pedido: {e}")
+        return False
+
+
+def leer_pedidos_entrantes() -> list[dict]:
+    """Lee todos los pedidos entrantes del Sheet."""
+    try:
+        ws = _get_sheet()
+        if not ws:
+            return []
+        rows = ws.get_all_records()
+        result = []
+        for i, row in enumerate(rows, start=2):
+            result.append({
+                "row_num":    i,
+                "timestamp":  str(row.get("Timestamp", "")),
+                "restaurante":str(row.get("Restaurante", "")),
+                "es_nuevo":   str(row.get("Es_Nuevo", "")),
+                "area":       str(row.get("Area", "")),
+                "fecha":      str(row.get("Fecha_Entrega", "")),
+                "semana":     str(row.get("Semana", "")),
+                "producto":   str(row.get("Producto", "")),
+                "cantidad":   str(row.get("Cantidad", "")),
+                "unidad":     str(row.get("Unidad", "")),
+                "notas":      str(row.get("Notas", "")),
+                "status":     str(row.get("Status", "Pendiente")),
+            })
+        return result
+    except Exception as e:
+        st.warning(f"Error leyendo pedidos entrantes: {e}")
         return []
 
 
-def actualizar_status(row_indices: list, nuevo_status: str):
-    """Actualiza el status de las filas indicadas (1-indexed, incluyendo header)."""
-    ws = _get_sheet()
-    STATUS_COL = HEADERS.index("Status") + 1  # 1-indexed
-    for ri in row_indices:
-        ws.update_cell(ri, STATUS_COL, nuevo_status)
+def actualizar_status(row_num: int, nuevo_status: str) -> bool:
+    """Actualiza el status de un pedido entrante."""
+    try:
+        ws = _get_sheet()
+        if not ws:
+            return False
+        # Status suele estar en la última columna — ajustar si cambia
+        headers = ws.row_values(1)
+        col_status = headers.index("Status") + 1 if "Status" in headers else 11
+        ws.update_cell(row_num, col_status, nuevo_status)
+        _get_sheet.clear()
+        return True
+    except Exception as e:
+        st.warning(f"Error actualizando status: {e}")
+        return False
