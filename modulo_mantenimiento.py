@@ -259,7 +259,7 @@ def _tab_renombrar():
             upd_cli, upd_ped = [], []
             for rn, nombre in hits_cli:
                 nuevo = RENOMBRES.get(nombre.lower(), nombre)
-                upd_cli.append({"range": f"B{rn}", "values": [[nuevo]]})
+                upd_cli.append({"range": f"A{rn}", "values": [[nuevo]]})
             for rn, cli in hits_ped:
                 nuevo = RENOMBRES.get(cli.strip().lower(), cli)
                 upd_ped.append({"range": f"B{rn}", "values": [[nuevo]]})
@@ -281,81 +281,6 @@ def _tab_renombrar():
             st.rerun()
 
 
-# ── TAB 7: Recuperar fechas ────────────────────────────────────────────────────
-def _tab_recuperar_fechas():
-    st.markdown("#### Recuperar Fechas Sobreescritas")
-    st.error("Este tab corrige el error de renombrado: restaura fechas en columna A "
-             "y escribe los nombres nuevos en columna B.")
-
-    MAPA = {
-        "aldyk":       ("Aldyk",       "Rodrigo"),
-        "tierra fria": ("Tierra Fria", "Martin"),
-    }
-
-    from gsheets import update_cells, ws as _ws
-    from datetime import date as _date
-    import time
-
-    if st.button("Ver filas a recuperar", key="rec_preview"):
-        sheet = _ws("pedidos")
-        all_rows = sheet.get_all_values()
-        hits = []
-        for i, row in enumerate(all_rows[1:], start=2):
-            if not row: continue
-            col_a = str(row[0]).strip().lower()
-            if col_a in MAPA:
-                hits.append({
-                    "row_num": i,
-                    "col_a":   str(row[0]).strip(),
-                    "col_b":   str(row[1]).strip() if len(row) > 1 else "",
-                    "semana":  str(row[14]).strip() if len(row) > 14 else "",
-                    "anio":    str(row[15]).strip() if len(row) > 15 else "",
-                })
-        st.session_state["rec_hits"] = hits
-
-    hits = st.session_state.get("rec_hits")
-    if hits is not None:
-        st.markdown(f"**{len(hits)} fila(s) con fecha sobreescrita:**")
-        for h in hits[:8]:
-            st.markdown(f"  Fila {h['row_num']}: ColA={h['col_a']} "
-                        f"Sem={h['semana']} Anio={h['anio']}")
-        if len(hits) > 8:
-            st.caption(f"... y {len(hits)-8} mas")
-
-        if not hits:
-            st.success("No se encontraron filas con fechas sobreescritas.")
-            return
-
-        st.divider()
-        st.warning(f"Se van a restaurar {len(hits)} fechas y corregir nombres.")
-
-        if st.button(f"Recuperar {len(hits)} filas", type="primary", key="rec_exec"):
-            upd = []
-            for h in hits:
-                nombre_en_a = h["col_a"].lower()
-                if nombre_en_a not in MAPA: continue
-                nuevo_nombre, _ = MAPA[nombre_en_a]
-                try:
-                    sem = int(h["semana"])
-                    anio = int(h["anio"])
-                    fecha_rec = _date.fromisocalendar(anio, sem, 1).strftime("%d/%m/%Y")
-                except Exception:
-                    fecha_rec = "01/01/2025"
-                rn = h["row_num"]
-                upd.append({"range": f"A{rn}", "values": [[fecha_rec]]})
-                upd.append({"range": f"B{rn}", "values": [[nuevo_nombre]]})
-
-            with st.spinner(f"Restaurando {len(upd)} celdas..."):
-                for i in range(0, len(upd), 100):
-                    update_cells("pedidos", upd[i:i+100])
-                    time.sleep(0.3)
-
-            from excel_helper import leer_pedidos
-            leer_pedidos.clear()
-            st.success(f"{len(hits)} filas recuperadas.")
-            st.session_state.pop("rec_hits", None)
-            st.caption("Las fechas son el lunes de cada semana (aproximacion).")
-            st.rerun()
 
 
 # ── TAB 8: Backup ─────────────────────────────────────────────────────────────
@@ -440,14 +365,13 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
+    t1, t2, t3, t4, t5, t6, t7 = st.tabs([
         "Correccion Masiva",
         "Migracion de Datos",
         "Estructura Sheets",
         "Catalogo Cliente",
         "Cache",
         "Renombrar Clientes",
-        "Recuperar Fechas",
         "Backup Drive",
     ])
     with t1: _tab_correccion()
@@ -456,5 +380,4 @@ def mostrar():
     with t4: _tab_catalogo()
     with t5: _tab_cache()
     with t6: _tab_renombrar()
-    with t7: _tab_recuperar_fechas()
-    with t8: _tab_backup()
+    with t7: _tab_backup()

@@ -131,21 +131,79 @@ def _guardar_gasto_row(fecha: date, categoria: str, subcat: str,
 
 
 # ── Helpers financieros ───────────────────────────────────────────────────────
+# Clientes excluidos de financiero
+_EXCLUIR_FINANCIERO = {"wilson"}          # excluye totalmente
+_INTERNOS           = {"veggi", "chimalt"} # mostrar aparte, no sumar
+
 def _ingresos_campo_veggi(pedidos: list, campo_clis: list,
                            filtro_fn) -> dict:
-    """Separa ingresos en Campo y Veggi según clientes configurados."""
+    """
+    Separa ingresos en Campo y Veggi (simple, para Inicio y Casa).
+    Wilson: excluido. Internos (veggi/chimalt): excluidos del total.
+    """
     campo_set = {c.lower().strip() for c in campo_clis}
     inc = {"Campo": 0.0, "Veggi": 0.0}
     for p in pedidos:
         if not filtro_fn(p): continue
         if p["status"] == "Cancelado": continue
         total = _sf(p.get("total", 0))
-        cli = p["cliente"].lower().strip()
-        # Exact match — evita falsos positivos por substring
+        cli   = p["cliente"].lower().strip()
+        if any(x in cli for x in _EXCLUIR_FINANCIERO): continue
+        if any(x in cli for x in _INTERNOS):           continue
         if cli in campo_set:
             inc["Campo"] += total
         else:
             inc["Veggi"] += total
+    return inc
+
+
+def _ingresos_detallado(pedidos: list, campo_clis: list,
+                         filtro_fn, cli_zona: dict = None) -> dict:
+    """
+    Version detallada para tab Operacion de Gastos.
+    Retorna:
+      Campo:   {cliente: total}
+      Veggi:   {Rio-Guate: {cli:total}, Antigua-Chimal: {cli:total}}
+      Interno: {cliente: total}   — visible pero fuera del P&L
+    """
+    campo_set  = {c.lower().strip() for c in campo_clis}
+    cli_zona   = cli_zona or {}
+    ANTIGUA    = {"Antigua & Chimal"}   # zona que va a Antigua-Chimal
+    ZONAS_RIO     = {"Rio"}              # L01, L02
+    ZONAS_ANTIGUA = {"Antigua & Chimal"} # L03, L04, L10
+    # Guatemala & Santiago (L05/L06) ya están en campo_clis — no deben llegar aquí
+
+    inc = {
+        "Campo":   {},
+        "Veggi":   {"Rio": {}, "Antigua-Chimal": {}},
+        "Interno": {},
+    }
+    for p in pedidos:
+        if not filtro_fn(p): continue
+        if p["status"] == "Cancelado": continue
+        total = _sf(p.get("total", 0))
+        cli   = p["cliente"].lower().strip()
+        nom   = p["cliente"]
+
+        if any(x in cli for x in _EXCLUIR_FINANCIERO):
+            continue                               # Wilson: invisible
+        if any(x in cli for x in _INTERNOS):
+            inc["Interno"][nom] = inc["Interno"].get(nom, 0) + total
+            continue
+        if cli in campo_set:
+            inc["Campo"][nom] = inc["Campo"].get(nom, 0) + total
+        else:
+            zona = cli_zona.get(cli, "")
+            if zona in ZONAS_ANTIGUA:
+                inc["Veggi"]["Antigua-Chimal"][nom] = (
+                    inc["Veggi"]["Antigua-Chimal"].get(nom, 0) + total)
+            elif zona in ZONAS_RIO:
+                inc["Veggi"]["Rio"][nom] = (
+                    inc["Veggi"]["Rio"].get(nom, 0) + total)
+            else:
+                # Zona desconocida: va a Río por defecto
+                inc["Veggi"]["Rio"][nom] = (
+                    inc["Veggi"]["Rio"].get(nom, 0) + total)
     return inc
 
 
@@ -250,9 +308,22 @@ def _tab_operacion(pedidos: list, cfg: dict):
     gastos = _leer_gastos()
     campo_clis = cfg["campo_clis"]
 
-    # Ingresos
-    inc     = _ingresos_campo_veggi(pedidos, campo_clis, filtro_ped)
-    inc_ant = _ingresos_campo_veggi(pedidos, campo_clis, filtro_ped_ant)
+    # Mapa cliente → zona para desglose geográfico Veggi
+    from data_helper import cargar_clientes as _cc
+    from config import ZONAS_MAP as _ZM
+    _clis = _cc()
+    cli_zona = {}
+    for _c in _clis:
+        for _z, _cods in _ZM.items():
+            if _c.get("codigo_lugar","") in _cods:
+                cli_zona[_c["nombre"].lower().strip()] = _z
+                break
+
+    # Ingresos detallados (con desglose geográfico)
+    inc     = _ingresos_detallado(pedidos, campo_clis, filtro_ped,  cli_zona)
+    inc_ant = _ingresos_detallado(pedidos, campo_clis, filtro_ped_ant, cli_zona)
+    inc_s   = _ingresos_campo_veggi(pedidos, campo_clis, filtro_ped)   # simple para KPIs
+    inc_s_a = _ingresos_campo_veggi(pedidos, campo_clis, filtro_ped_ant)
     proy    = _costo_proyectado(pedidos, campo_clis, filtro_ped)
 
     # Gastos reales por categoría (sin Casa)
@@ -265,7 +336,7 @@ def _tab_operacion(pedidos: list, cfg: dict):
         gas_cat[g["categoria"]][g["subcat"]] = \
             gas_cat[g["categoria"]].get(g["subcat"], 0) + g["monto"]
 
-    total_inc   = sum(inc.values())
+    total_inc   = sum(inc_s.values())
     total_gas   = sum(g["monto"] for g in gas_op)
     total_ant   = sum(g["monto"] for g in gas_ant)
     ganancia    = total_inc - total_gas
@@ -277,7 +348,7 @@ def _tab_operacion(pedidos: list, cfg: dict):
     # KPI row
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Ingresos", f"Q{total_inc:,.0f}",
-               delta=f"Q{total_inc-sum(inc_ant.values()):+,.0f} vs ant.")
+               delta=f"Q{total_inc-sum(inc_s_a.values()):+,.0f} vs ant.")
     k2.metric("Gastos", f"Q{total_gas:,.0f}",
                delta=f"Q{total_gas-total_ant:+,.0f} vs ant.",
                delta_color="inverse")
@@ -286,32 +357,77 @@ def _tab_operacion(pedidos: list, cfg: dict):
 
     st.divider()
 
-    # Detalle por categoría operativa
-    for cat in ["Campo","Veggi"]:
-        inc_cat  = inc.get(cat, 0)
-        gas_d    = gas_cat.get(cat, {})
-        gas_tot  = sum(gas_d.values())
-        proy_cat = proy.get(cat, 0)
-        gan_cat  = inc_cat - gas_tot
+    # ── Detalle Campo ────────────────────────────────────────────────────────
+    campo_d   = inc.get("Campo", {})
+    campo_tot = sum(campo_d.values())
+    gas_campo = gas_cat.get("Campo", {})
+    gas_campo_tot = sum(gas_campo.values())
+    proy_campo = proy.get("Campo", 0)
 
+    with st.expander(
+            f"**Campo** — Ing: Q{campo_tot:,.0f} · Gas: Q{gas_campo_tot:,.0f} · "
+            f"Gan: Q{campo_tot-gas_campo_tot:,.0f}", expanded=True):
+        cc1, cc2 = st.columns(2)
+        cc1.markdown(f"**Ingresos Campo:** Q{campo_tot:,.0f}")
+        cc2.markdown(f"**Gastos reales:** Q{gas_campo_tot:,.0f}"
+                     + (f" · Proy Q{proy_campo:,.0f}" if proy_campo > 0 else ""))
+        if campo_d:
+            df_c = pd.DataFrame([{"Cliente": k, "Q": f"Q{v:,.2f}"}
+                                  for k, v in sorted(campo_d.items(), key=lambda x: -x[1])])
+            st.dataframe(df_c, hide_index=True, use_container_width=True)
+        if gas_campo:
+            df_gc = pd.DataFrame([{"Gasto": k, "Q": f"Q{v:,.2f}"}
+                                   for k, v in sorted(gas_campo.items(), key=lambda x: -x[1])])
+            st.dataframe(df_gc, hide_index=True, use_container_width=True)
+
+    # ── Detalle Veggi (con desglose geográfico colapsable) ───────────────────
+    veggi_rg   = inc.get("Veggi", {}).get("Rio", {})
+    veggi_ac   = inc.get("Veggi", {}).get("Antigua-Chimal", {})
+    veggi_rg_t = sum(veggi_rg.values())
+    veggi_ac_t = sum(veggi_ac.values())
+    veggi_tot  = veggi_rg_t + veggi_ac_t
+    gas_veggi  = gas_cat.get("Veggi", {})
+    gas_veggi_t= sum(gas_veggi.values())
+    proy_veggi = proy.get("Veggi", 0)
+
+    with st.expander(
+            f"**Veggi** — Ing: Q{veggi_tot:,.0f} · Gas: Q{gas_veggi_t:,.0f} · "
+            f"Gan: Q{veggi_tot-gas_veggi_t:,.0f}", expanded=True):
+        vv1, vv2 = st.columns(2)
+        vv1.markdown(f"**Ingresos Veggi:** Q{veggi_tot:,.0f}")
+        vv2.markdown(f"**Gastos reales:** Q{gas_veggi_t:,.0f}"
+                     + (f" · Proy Q{proy_veggi:,.0f}" if proy_veggi > 0 else ""))
+
+        # Desglose geográfico (colapsable)
         with st.expander(
-            f"**{cat}** — Ing: Q{inc_cat:,.0f} · Gas: Q{gas_tot:,.0f} · "
-            f"Gan: Q{gan_cat:,.0f}", expanded=True):
+                f"📍 Río (L01/L02): Q{veggi_rg_t:,.0f}  ·  "
+                f"Antigua + Chimal: Q{veggi_ac_t:,.0f}", expanded=False):
+            geo1, geo2 = st.columns(2)
+            if veggi_rg:
+                df_rg = pd.DataFrame([{"Cliente": k, "Q": f"Q{v:,.2f}"}
+                                       for k, v in sorted(veggi_rg.items(), key=lambda x:-x[1])])
+                geo1.markdown("**Río (L01/L02)**")
+                geo1.dataframe(df_rg, hide_index=True, use_container_width=True)
+            if veggi_ac:
+                df_ac = pd.DataFrame([{"Cliente": k, "Q": f"Q{v:,.2f}"}
+                                       for k, v in sorted(veggi_ac.items(), key=lambda x:-x[1])])
+                geo2.markdown("**Antigua + Chimal**")
+                geo2.dataframe(df_ac, hide_index=True, use_container_width=True)
 
-            cc1, cc2 = st.columns(2)
-            cc1.markdown(f"**Ingresos {cat}:** Q{inc_cat:,.0f}")
-            cc2.markdown(f"**Gastos reales:** Q{gas_tot:,.0f}"
-                         + (f" · Proyectado Q{proy_cat:,.0f} "
-                            f"({'▲' if gas_tot>proy_cat else '▼'}"
-                            f" Q{abs(gas_tot-proy_cat):,.0f})"
-                            if proy_cat > 0 else ""))
+        if gas_veggi:
+            df_gv = pd.DataFrame([{"Gasto": k, "Q": f"Q{v:,.2f}"}
+                                   for k, v in sorted(gas_veggi.items(), key=lambda x:-x[1])])
+            st.dataframe(df_gv, hide_index=True, use_container_width=True)
 
-            if gas_d:
-                df = pd.DataFrame([{"SubCategoría": k, "Monto": v}
-                                    for k, v in sorted(gas_d.items(),
-                                                        key=lambda x: -x[1])])
-                df["Monto"] = df["Monto"].apply(lambda x: f"Q{x:,.2f}")
-                st.dataframe(df, hide_index=True, use_container_width=True)
+    # ── Interno — visible siempre, no suma al P&L ────────────────────────────
+    interno = inc.get("Interno", {})
+    if interno:
+        interno_tot = sum(interno.values())
+        with st.expander(f"ⓘ Interno (excluido del total) — Q{interno_tot:,.0f}",
+                         expanded=False):
+            df_int = pd.DataFrame([{"Cliente": k, "Q": f"Q{v:,.2f}"}
+                                    for k, v in sorted(interno.items(), key=lambda x:-x[1])])
+            st.dataframe(df_int, hide_index=True, use_container_width=True)
 
     st.divider()
     col_g, col_n = st.columns(2)
@@ -502,17 +618,36 @@ def _tab_categorias(cfg: dict):
 
     # ── Clientes Campo ────────────────────────────────────────────────────────
     st.markdown("**Clientes Campo** *(sus pedidos se contabilizan como ingreso Campo)*")
+    st.caption("Sus pedidos generan ingresos de Campo (no Veggi). "
+               "Wilson y clientes Veggi/Chimalt se manejan automáticamente.")
+
+    # Tabla con botón de eliminar por fila
+    if campo_clis:
+        for idx_c, cli_c in enumerate(list(campo_clis)):
+            row_c1, row_c2 = st.columns([5, 1])
+            row_c1.markdown(f"**{cli_c}**")
+            if row_c2.button("🗑️", key=f"del_campo_{idx_c}",
+                             help=f"Eliminar {cli_c}"):
+                campo_clis = [x for x in campo_clis if x != cli_c]
+                _guardar_config(subcats, campo_clis, budgets)
+                st.success(f"'{cli_c}' eliminado de clientes Campo.")
+                st.rerun()
+    else:
+        st.info("Sin clientes Campo configurados.")
+
     with st.form("form_new_campo"):
         cc1, cc2 = st.columns([3, 1])
-        nuevo_cli = cc1.text_input("Nombre del cliente (parcial, minúsculas)")
+        nuevo_cli = cc1.text_input("Nuevo cliente Campo (en minúsculas)",
+                                    placeholder="ej: legume")
         if cc2.form_submit_button("➕ Agregar"):
-            if nuevo_cli.strip().lower() not in campo_clis:
-                campo_clis.append(nuevo_cli.strip().lower())
+            cli_norm = nuevo_cli.strip().lower()
+            if cli_norm and cli_norm not in campo_clis:
+                campo_clis.append(cli_norm)
                 _guardar_config(subcats, campo_clis, budgets)
-                st.success(f"'{nuevo_cli}' agregado como cliente Campo")
+                st.success(f"'{cli_norm}' agregado como cliente Campo")
                 st.rerun()
-
-    st.caption(", ".join(f"**{c}**" for c in campo_clis))
+            elif cli_norm in campo_clis:
+                st.warning(f"'{cli_norm}' ya existe.")
 
     st.divider()
 
