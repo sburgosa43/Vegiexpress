@@ -1,3 +1,96 @@
+
+def _tab_renombrar():
+    """Tab: renombrar clientes en Clientes + Pedidos históricos."""
+    st.markdown("#### 🔄 Renombrar Clientes")
+    st.caption("Actualiza el nombre en Clientes y en todos los Pedidos históricos de una sola vez.")
+
+    RENOMBRES = {
+        "martin":  "Tierra Fria",
+        "rodrigo": "Aldyk",
+    }
+
+    from gsheets     import get_all_rows, update_cells
+    from excel_helper import leer_pedidos
+    from data_helper  import cargar_clientes
+    import time
+
+    st.markdown("**Cambios a ejecutar:**")
+    for viejo, nuevo in RENOMBRES.items():
+        st.markdown(f"- `{viejo.capitalize()}` → **{nuevo}**")
+
+    st.divider()
+
+    if st.button("🔍 Vista previa — ver qué se cambia", key="ren_preview"):
+        with st.spinner("Buscando en Clientes y Pedidos..."):
+            rows_cli = get_all_rows("clientes")
+            hits_cli = [(i+2, str(row[0]).strip())
+                        for i, row in enumerate(rows_cli)
+                        if row and str(row[0]).strip().lower() in RENOMBRES]
+
+            todos    = leer_pedidos()
+            hits_ped = [(p["row_num"], p["cliente"])
+                        for p in todos
+                        if p["cliente"].strip().lower() in RENOMBRES]
+
+        st.session_state["ren_cli"] = hits_cli
+        st.session_state["ren_ped"] = hits_ped
+
+    hits_cli = st.session_state.get("ren_cli")
+    hits_ped = st.session_state.get("ren_ped")
+
+    if hits_cli is not None and hits_ped is not None:
+        st.markdown(f"**Clientes:** {len(hits_cli)} fila(s)")
+        for rn, nombre in hits_cli:
+            st.markdown(f"  └ Fila {rn}: `{nombre}` → **{RENOMBRES[nombre.lower()]}**")
+
+        st.markdown(f"**Pedidos:** {len(hits_ped)} línea(s)")
+        muestra = hits_ped[:5]
+        for rn, cli in muestra:
+            st.markdown(f"  └ Fila {rn}: `{cli}` → **{RENOMBRES[cli.strip().lower()]}**")
+        if len(hits_ped) > 5:
+            st.caption(f"... y {len(hits_ped)-5} más")
+
+        total = len(hits_cli) + len(hits_ped)
+        if total == 0:
+            st.info("No se encontraron registros con esos nombres.")
+            return
+
+        st.divider()
+        st.warning(f"⚠️ Se modificarán **{len(hits_cli)} cliente(s)** y "
+                   f"**{len(hits_ped)} línea(s) de pedidos**. No se puede deshacer.")
+
+        if st.button(f"✅ Confirmar y renombrar ({total} filas)",
+                     type="primary", key="ren_exec"):
+            upd_cli, upd_ped = [], []
+
+            for rn, nombre in hits_cli:
+                nuevo = RENOMBRES[nombre.lower()]
+                upd_cli.append({"range": f"A{rn}", "values": [[nuevo]]})
+
+            for rn, cli in hits_ped:
+                nuevo = RENOMBRES[cli.strip().lower()]
+                upd_ped.append({"range": f"A{rn}", "values": [[nuevo]]})
+
+            with st.spinner("Actualizando Clientes..."):
+                if upd_cli:
+                    update_cells("clientes", upd_cli)
+
+            with st.spinner(f"Actualizando {len(upd_ped)} líneas de Pedidos..."):
+                for i in range(0, len(upd_ped), 100):
+                    update_cells("pedidos", upd_ped[i:i+100])
+                    time.sleep(0.5)
+
+            leer_pedidos.clear()
+            cargar_clientes.clear()
+
+            st.success(f"✅ Renombrado completo — "
+                       f"{len(upd_cli)} cliente(s) y "
+                       f"{len(upd_ped)} pedido(s) actualizados.")
+            st.session_state.pop("ren_cli", None)
+            st.session_state.pop("ren_ped", None)
+            st.rerun()
+
+
 """
 modulo_mantenimiento.py — Herramientas de mantenimiento de datos
   Tab 1: Corrección masiva de precios y costos por cliente/producto/período
@@ -224,18 +317,20 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    t1, t2, t3, t4, t5 = st.tabs([
+    t1, t2, t3, t4, t5, t6 = st.tabs([
         "🔧 Corrección Masiva de Precios / Costos",
         "⚙️ Migración de Datos",
         "📋 Estructura del Excel",
         "🛒 Catálogo Cliente",
         "🔄 Caché",
+        "🔄 Renombrar Clientes",
     ])
     with t1: _tab_correccion()
     with t2: _tab_migracion()
     with t3: _tab_estructura()
     with t4: _tab_catalogo()
     with t5: _tab_cache()
+    with t6: _tab_renombrar()
 
 
 # ── TAB 3: ESTRUCTURA DEL EXCEL ──────────────────────────────────────────────
