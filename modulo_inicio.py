@@ -207,6 +207,31 @@ def mostrar():
                 + "</div>",
                 unsafe_allow_html=True)
 
+    # ── Flujo Neto Familiar ─────────────────────────────────────────────
+    try:
+        from modulo_gastos import _leer_gastos, _ingresos_campo_veggi, _cargar_config
+        _gcfg   = _cargar_config()
+        _all_g  = _leer_gastos()
+        _fn_gas = lambda g: g["semana"]==kpis["sem_act"] and g["año"]==kpis["año_act"]
+        _fn_ped = lambda p: p["semana"]==kpis["sem_act"] and p["año"]==kpis["año_act"]
+        _inc_op = _ingresos_campo_veggi(todos, _gcfg["campo_clis"], _fn_ped)
+        _gas_op = sum(g["monto"] for g in _all_g if _fn_gas(g) and g["categoria"]!="Casa")
+        _gas_cs = sum(g["monto"] for g in _all_g if _fn_gas(g) and g["categoria"]=="Casa")
+        _gan_op = sum(_inc_op.values()) - _gas_op
+        _flujo  = _gan_op - _gas_cs
+        _color  = "#2D7A2D" if _flujo >= 0 else "#c62828"
+        _icono  = "✅" if _flujo >= 0 else "⚠️"
+        st.markdown(
+            f"<div style='background:#f5f5f5;border-left:4px solid {_color};"
+            f"border-radius:6px;padding:8px 16px;margin:4px 0;"
+            f"display:flex;justify-content:space-between;align-items:center'>"
+            f"<span style='font-size:.75rem;color:#555'>💰 Flujo Neto Familiar — Semana actual</span>"
+            f"<span style='font-size:1.1rem;font-weight:bold;color:{_color}'>"
+            f"{_icono} Q{_flujo:,.0f}</span></div>",
+            unsafe_allow_html=True)
+    except Exception:
+        pass
+
     st.divider()
 
     # ── Cards de módulos ──────────────────────────────────────────────────────

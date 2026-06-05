@@ -16,6 +16,8 @@ HOJAS = {
     "antigua":    "Listado Productos Antigua",
     "config":     "Config",
     "historial":  "Historial Cambios",
+    "gastos":       "Gastos",
+    "gastosconfig": "GastosConfig",
 }
 
 SCOPES = [

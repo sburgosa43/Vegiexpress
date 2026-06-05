@@ -31,6 +31,7 @@ MENU = [
     "🧾 Facturación Mensual",
     "📦 Pedidos a Proveedores",
     "💰 Flujo de Caja",
+    "💳 Gastos",
     "📊 Dashboard",
     "🔧 Mantenimiento",
     "🧮 Cotizador",
