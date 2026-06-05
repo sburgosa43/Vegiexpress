@@ -20,29 +20,7 @@ COLORES_ZONA = {
     "Guatemala & Santiago": "#8DC63F",
     "Rio":                  "#4A4A4A",
 }
-MODULOS = {
-    "⚡ Operación": [
-        ("📥", "Pedidos Entrantes",  "Pedidos recibidos de clientes",      "📥 Pedidos Entrantes"),
-        ("🛒", "Nuevo Pedido",       "Ingresar pedidos de clientes",        "🛒 Nuevo Pedido"),
-        ("📋", "Gestión Pedidos",    "Revisar y editar pedidos",            "📋 Gestión Pedidos (Revisar y Editar)"),
-        ("🚚", "Envíos Semana",      "Gestionar envíos de la semana",       "🚚 Envíos y Facturación Semana"),
-        ("🧾", "Facturación",        "Resumen mensual por cliente",         "🧾 Facturación Mensual"),
-    ],
-    "📁 Catálogo": [
-        ("📦", "Productos",          "Gestionar catálogo y precios",        "📦 Productos (Nuevos y Mantenimiento)"),
-        ("👥", "Clientes",           "Gestionar cartera de clientes",       "👥 Clientes (Nuevos y Mantenimiento)"),
-    ],
-    "💰 Finanzas": [
-        ("📦", "Proveedores",        "Lista de compras semanal",            "📦 Pedidos a Proveedores"),
-        ("💰", "Flujo de Caja",      "Liquidez semanal y proyecciones",     "💰 Flujo de Caja"),
-        ("💳", "Gastos",             "Gastos operativos y personales",      "💳 Gastos"),
-        ("📊", "Dashboard",          "KPIs y análisis de negocio",          "📊 Dashboard"),
-    ],
-    "🔧 Herramientas": [
-        ("🔧", "Mantenimiento",      "Corrección de datos y migraciones",   "🔧 Mantenimiento"),
-        ("🧮", "Cotizador",          "Calcular precios y márgenes",         "🧮 Cotizador"),
-    ],
-}
+
 
 
 # ── Caché de metas (evita llamada a Sheets en cada carga) ────────────────────
@@ -242,26 +220,52 @@ def mostrar():
     st.divider()
 
     # ── Cards de módulos ───────────────────────────────────────────────────────
-    _btn_idx = 0
-    for categoria, modulos in MODULOS.items():
+    def _card(col, emoji, titulo, desc, nav_key, btn_key):
+        with col:
+            st.markdown(
+                f"<div style='background:#fafafa;border:1px solid #e8e8e8;"
+                f"border-left:4px solid #2D7A2D;border-radius:8px;"
+                f"padding:10px 14px;margin-bottom:4px'>"
+                f"<div style='font-size:.95rem;font-weight:bold'>{emoji} {titulo}</div>"
+                f"<div style='font-size:.75rem;color:#888;margin-top:2px'>{desc}</div></div>",
+                unsafe_allow_html=True)
+            if st.button("Abrir →", key=btn_key, use_container_width=True):
+                _nav(nav_key)
+
+    def _seccion(titulo, items):
         st.markdown(
             f"<div style='font-size:.78rem;font-weight:bold;color:#555;"
-            f"letter-spacing:.05rem;margin:8px 0 4px 0'>{categoria}</div>",
+            f"letter-spacing:.05rem;margin:8px 0 4px 0'>{titulo}</div>",
             unsafe_allow_html=True)
-        cols = st.columns(2)
-        for i, (emoji, titulo, desc, nav_key) in enumerate(modulos):
-            with cols[i % 2]:
-                st.markdown(
-                    f"<div style='background:#fafafa;border:1px solid #e8e8e8;"
-                    f"border-left:4px solid #2D7A2D;border-radius:8px;"
-                    f"padding:10px 14px;margin-bottom:4px'>"
-                    f"<div style='font-size:.95rem;font-weight:bold'>{emoji} {titulo}</div>"
-                    f"<div style='font-size:.75rem;color:#888;margin-top:2px'>{desc}</div></div>",
-                    unsafe_allow_html=True)
-                if st.button("Abrir →", key=f"hbtn_{_btn_idx}", use_container_width=True):
-                    _nav(nav_key)
-                _btn_idx += 1
+        # Render rows of 2
+        for row_start in range(0, len(items), 2):
+            row_items = items[row_start:row_start + 2]
+            cols = st.columns(2)
+            for j, (emoji, tit, desc, nk, bk) in enumerate(row_items):
+                _card(cols[j], emoji, tit, desc, nk, bk)
         st.markdown("&nbsp;", unsafe_allow_html=True)
+
+    _seccion("⚡ Operación", [
+        ("📥", "Pedidos Entrantes",  "Pedidos recibidos de clientes",      "📥 Pedidos Entrantes",                    "b00"),
+        ("🛒", "Nuevo Pedido",       "Ingresar pedidos de clientes",        "🛒 Nuevo Pedido",                          "b01"),
+        ("📋", "Gestión Pedidos",    "Revisar y editar pedidos",            "📋 Gestión Pedidos (Revisar y Editar)",    "b02"),
+        ("🚚", "Envíos Semana",      "Gestionar envíos de la semana",       "🚚 Envíos y Facturación Semana",           "b03"),
+        ("🧾", "Facturación",        "Resumen mensual por cliente",         "🧾 Facturación Mensual",                   "b04"),
+    ])
+    _seccion("📁 Catálogo", [
+        ("📦", "Productos",          "Gestionar catálogo y precios",        "📦 Productos (Nuevos y Mantenimiento)",    "b05"),
+        ("👥", "Clientes",           "Gestionar cartera de clientes",       "👥 Clientes (Nuevos y Mantenimiento)",     "b06"),
+    ])
+    _seccion("💰 Finanzas", [
+        ("📦", "Proveedores",        "Lista de compras semanal",            "📦 Pedidos a Proveedores",                 "b07"),
+        ("💰", "Flujo de Caja",      "Liquidez semanal y proyecciones",     "💰 Flujo de Caja",                         "b08"),
+        ("💳", "Gastos",             "Gastos operativos y personales",      "💳 Gastos",                                "b09"),
+        ("📊", "Dashboard",          "KPIs y análisis de negocio",          "📊 Dashboard",                             "b10"),
+    ])
+    _seccion("🔧 Herramientas", [
+        ("🔧", "Mantenimiento",      "Corrección de datos y migraciones",   "🔧 Mantenimiento",                         "b11"),
+        ("🧮", "Cotizador",          "Calcular precios y márgenes",         "🧮 Cotizador",                             "b12"),
+    ])
 
     # ── Pie ────────────────────────────────────────────────────────────────────
     st.divider()
