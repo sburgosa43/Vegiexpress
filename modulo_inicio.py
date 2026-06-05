@@ -3,9 +3,11 @@ modulo_inicio.py — Hub Principal / Página de Inicio VeggiExpress
 """
 import os
 import streamlit as st
-from datetime import date, timedelta
-from config import excluido_dashboard as _excluido
 from datetime import date
+from config import excluido_dashboard as _excluido
+from excel_helper import leer_pedidos, _sf
+from data_helper  import cargar_clientes
+from gsheets      import get_all_rows
 
 # Mapas de zonas locales (inicio usa claves sin emoji)
 ZONAS_MAP = {
@@ -20,27 +22,42 @@ COLORES_ZONA = {
 }
 MODULOS = {
     "⚡ Operación": [
-        ("📥", "Pedidos Entrantes", "Pedidos recibidos de clientes", "📥 Pedidos Entrantes"),
-
-        ("🛒", "Nuevo Pedido",    "Ingresar pedidos de clientes",    "🛒 Nuevo Pedido"),
-        ("📋", "Gestión Pedidos", "Revisar y editar pedidos",        "📋 Gestión Pedidos (Revisar y Editar)"),
-        ("🚚", "Envíos Semana",   "Gestionar envíos de la semana",   "🚚 Envíos y Facturación Semana"),
-        ("🧾", "Facturación",     "Resumen mensual por cliente",     "🧾 Facturación Mensual"),
+        ("📥", "Pedidos Entrantes",  "Pedidos recibidos de clientes",      "📥 Pedidos Entrantes"),
+        ("🛒", "Nuevo Pedido",       "Ingresar pedidos de clientes",        "🛒 Nuevo Pedido"),
+        ("📋", "Gestión Pedidos",    "Revisar y editar pedidos",            "📋 Gestión Pedidos (Revisar y Editar)"),
+        ("🚚", "Envíos Semana",      "Gestionar envíos de la semana",       "🚚 Envíos y Facturación Semana"),
+        ("🧾", "Facturación",        "Resumen mensual por cliente",         "🧾 Facturación Mensual"),
     ],
     "📁 Catálogo": [
-        ("📦", "Productos",       "Gestionar catálogo y precios",    "📦 Productos (Nuevos y Mantenimiento)"),
-        ("👥", "Clientes",        "Gestionar cartera de clientes",   "👥 Clientes (Nuevos y Mantenimiento)"),
+        ("📦", "Productos",          "Gestionar catálogo y precios",        "📦 Productos (Nuevos y Mantenimiento)"),
+        ("👥", "Clientes",           "Gestionar cartera de clientes",       "👥 Clientes (Nuevos y Mantenimiento)"),
     ],
     "💰 Finanzas": [
-        ("📦", "Proveedores",     "Lista de compras semanal",        "📦 Pedidos a Proveedores"),
-        ("💰", "Flujo de Caja",   "Liquidez semanal y proyecciones", "💰 Flujo de Caja"),
-        ("📊", "Dashboard",       "KPIs y análisis de negocio",      "📊 Dashboard"),
+        ("📦", "Proveedores",        "Lista de compras semanal",            "📦 Pedidos a Proveedores"),
+        ("💰", "Flujo de Caja",      "Liquidez semanal y proyecciones",     "💰 Flujo de Caja"),
+        ("💳", "Gastos",             "Gastos operativos y personales",      "💳 Gastos"),
+        ("📊", "Dashboard",          "KPIs y análisis de negocio",          "📊 Dashboard"),
     ],
     "🔧 Herramientas": [
-        ("🔧", "Mantenimiento",   "Corrección de datos y migraciones","🔧 Mantenimiento"),
-        ("🧮", "Cotizador",       "Calcular precios y márgenes",     "🧮 Cotizador"),
+        ("🔧", "Mantenimiento",      "Corrección de datos y migraciones",   "🔧 Mantenimiento"),
+        ("🧮", "Cotizador",          "Calcular precios y márgenes",         "🧮 Cotizador"),
     ],
 }
+
+
+# ── Caché de metas (evita llamada a Sheets en cada carga) ────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def _leer_metas_inicio() -> dict:
+    metas = {z: 0.0 for z in ZONAS_MAP}
+    try:
+        for row in get_all_rows("config"):
+            if row and len(row) > 1:
+                k = str(row[0]).strip()
+                if k in ZONAS_MAP:
+                    metas[k] = _sf(row[1])
+    except Exception:
+        pass
+    return metas
 
 
 def _nav(destino):
@@ -48,12 +65,9 @@ def _nav(destino):
     st.rerun()
 
 
-def _kpis():
-    """Carga KPIs de semana actual. Silencia errores si no hay datos."""
+def _kpis() -> dict | None:
+    """Carga todos los KPIs de semana actual en una sola pasada."""
     try:
-        from excel_helper import leer_pedidos
-        from data_helper  import cargar_clientes
-
         todos    = leer_pedidos()
         clientes = cargar_clientes()
         hoy      = date.today()
@@ -61,8 +75,10 @@ def _kpis():
         año_act  = hoy.year
         sem_ant  = sem_act - 1
         año_ant  = año_act
-        if sem_ant < 1: sem_ant = 52; año_ant -= 1
+        if sem_ant < 1:
+            sem_ant = 52; año_ant -= 1
 
+        # Mapa cliente → zona (en memoria, sin API)
         cli_zona = {}
         for c in clientes:
             for zona, cods in ZONAS_MAP.items():
@@ -70,41 +86,51 @@ def _kpis():
                     cli_zona[c["nombre"].lower()] = zona
                     break
 
-        def _excl(n): return _excluido(n)
-
+        # Filtrar pedidos semana actual y anterior
         ped_act = [p for p in todos
-                   if p["semana"]==sem_act and p["año"]==año_act
-                   and p["status"]!="Cancelado" and not _excl(p["cliente"])]
+                   if p["semana"] == sem_act and p["año"] == año_act
+                   and p["status"] != "Cancelado"
+                   and not _excluido(p["cliente"])]
         ped_ant = [p for p in todos
-                   if p["semana"]==sem_ant and p["año"]==año_ant
-                   and p["status"]!="Cancelado" and not _excl(p["cliente"])]
+                   if p["semana"] == sem_ant and p["año"] == año_ant
+                   and p["status"] != "Cancelado"
+                   and not _excluido(p["cliente"])]
 
+        # Ventas por zona
         ventas_zona     = {z: 0.0 for z in ZONAS_MAP}
         ventas_zona_ant = {z: 0.0 for z in ZONAS_MAP}
         for p in ped_act:
             z = cli_zona.get(p["cliente"].lower())
-            if z: ventas_zona[z] += p["total"] or 0
+            if z: ventas_zona[z] += p.get("total") or 0
         for p in ped_ant:
             z = cli_zona.get(p["cliente"].lower())
-            if z: ventas_zona_ant[z] += p["total"] or 0
+            if z: ventas_zona_ant[z] += p.get("total") or 0
 
-        # Metas — leer directo del Config sheet
-        # El sheet usa los mismos nombres que ZONAS_MAP: "Antigua & Chimal", etc.
-        from gsheets import get_all_rows as _gar
-        from excel_helper import _sf as _esf
-        metas_zona = {z: 0.0 for z in ZONAS_MAP}
-        try:
-            for _row in _gar("config"):
-                if _row and len(_row) > 1:
-                    _k = str(_row[0]).strip()
-                    if _k in ZONAS_MAP:
-                        metas_zona[_k] = _esf(_row[1])
-        except Exception:
-            pass
+        # Metas (cacheadas)
+        metas_zona = _leer_metas_inicio()
 
+        # Clientes sin pedido esta semana (compraron la anterior)
         clis_act = {p["cliente"].lower() for p in ped_act}
         sin_ped  = sorted({p["cliente"] for p in ped_ant
                            if p["cliente"].lower() not in clis_act})
+
+        # Flujo Neto Familiar — todo en memoria, sin API extra
+        flujo_neto = None
+        try:
+            from modulo_gastos import _leer_gastos, _ingresos_campo_veggi, _cargar_config
+            gcfg    = _cargar_config()
+            all_g   = _leer_gastos()
+            fn_gas  = lambda g: g["semana"] == sem_act and g["año"] == año_act
+            fn_ped  = lambda p: p["semana"] == sem_act and p["año"] == año_act
+            inc_op  = _ingresos_campo_veggi(todos, gcfg["campo_clis"], fn_ped)
+            gas_op  = sum(g["monto"] for g in all_g
+                          if fn_gas(g) and g["categoria"] != "Casa")
+            gas_cs  = sum(g["monto"] for g in all_g
+                          if fn_gas(g) and g["categoria"] == "Casa")
+            gan_op  = sum(inc_op.values()) - gas_op
+            flujo_neto = gan_op - gas_cs
+        except Exception:
+            pass
 
         return {
             "total":       sum(ventas_zona.values()),
@@ -112,6 +138,7 @@ def _kpis():
             "ant_zona":    ventas_zona_ant,
             "metas_zona":  metas_zona,
             "sin_pedido":  sin_ped,
+            "flujo_neto":  flujo_neto,
             "sem_act":     sem_act,
             "año_act":     año_act,
         }
@@ -120,7 +147,7 @@ def _kpis():
 
 
 def mostrar():
-    # ── Logo centrado ─────────────────────────────────────────────────────────
+    # ── Logo centrado ──────────────────────────────────────────────────────────
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         if os.path.exists("VeggiExpress-02.png"):
@@ -140,8 +167,8 @@ def mostrar():
 
     st.divider()
 
-    # ── KPIs ─────────────────────────────────────────────────────────────────
-    with st.spinner("Cargando resumen de la semana..."):
+    # ── KPIs (1 solo bloque, todo cacheado o en memoria) ──────────────────────
+    with st.spinner("Cargando resumen..."):
         kpis = _kpis()
         cola = st.session_state.get("cola_pedidos", [])
 
@@ -150,8 +177,7 @@ def mostrar():
         total_cola = sum(p["total"] for p in cola)
         col_w, col_btn = st.columns([5, 1])
         col_w.warning(
-            f"📋 **Cola: {len(cola)} pedido(s) sin grabar** — "
-            f"Q{total_cola:,.0f}")
+            f"📋 **Cola: {len(cola)} pedido(s) sin grabar** — Q{total_cola:,.0f}")
         if col_btn.button("📤 Ir a grabar", key="home_cola"):
             _nav("🛒 Nuevo Pedido")
 
@@ -165,7 +191,7 @@ def mostrar():
         if col_b.button("📋 Ver pedidos", key="home_sinped"):
             _nav("📋 Gestión Pedidos (Revisar y Editar)")
 
-    # Ventas por zona
+    # Ventas por zona + triangulitos
     if kpis:
         st.markdown(
             f"<div style='font-size:.75rem;font-weight:bold;color:#555;"
@@ -175,73 +201,52 @@ def mostrar():
 
         zcols = st.columns(len(ZONAS_MAP))
         for col, (zona, val) in zip(zcols, kpis["por_zona"].items()):
-            color   = COLORES_ZONA[zona]
-            meta    = kpis.get("metas_zona", {}).get(zona, 0.0)
-            ant     = kpis.get("ant_zona",   {}).get(zona, 0.0)
+            color = COLORES_ZONA[zona]
+            meta  = kpis["metas_zona"].get(zona, 0.0)
+            ant   = kpis["ant_zona"].get(zona, 0.0)
 
-            # Vs meta
-            if meta and meta > 0:
-                diff_meta = val - meta
-                tri_m  = "▲" if diff_meta >= 0 else "▼"
-                col_m  = "#2D7A2D" if diff_meta >= 0 else "#c62828"
-                lbl_m  = f"{tri_m} Q{abs(diff_meta):,.0f} vs meta (Q{meta:,.0f})"
+            if meta > 0:
+                diff_m = val - meta
+                lbl_m  = f"{'▲' if diff_m>=0 else '▼'} Q{abs(diff_m):,.0f} vs meta (Q{meta:,.0f})"
+                col_m  = "#2D7A2D" if diff_m >= 0 else "#c62828"
             else:
-                lbl_m  = "⚙️ meta no configurada"
-                col_m  = "#aaa"
+                lbl_m, col_m = "⚙️ meta no configurada", "#aaa"
 
-            # Vs semana anterior
-            diff_ant = val - ant
-            tri_a  = "▲" if diff_ant >= 0 else "▼"
-            col_a  = "#2D7A2D" if diff_ant >= 0 else "#c62828"
-            lbl_a  = f"{tri_a} Q{abs(diff_ant):,.0f} vs sem. ant."
+            diff_a = val - ant
+            lbl_a  = f"{'▲' if diff_a>=0 else '▼'} Q{abs(diff_a):,.0f} vs sem. ant."
+            col_a  = "#2D7A2D" if diff_a >= 0 else "#c62828"
 
             col.markdown(
                 f"<div style='background:#f5f5f5;border-left:4px solid {color};"
-                f"border-radius:6px;padding:8px 12px;text-align:center;"
-                f"margin-bottom:4px'>"
+                f"border-radius:6px;padding:8px 12px;text-align:center;margin-bottom:4px'>"
                 f"<div style='font-size:.62rem;color:#888'>{zona}</div>"
                 f"<div style='font-size:.95rem;font-weight:bold'>Q{val:,.0f}</div>"
-                + (f"<div style='font-size:.65rem;color:{col_m};font-style:italic'>"
-                   f"{lbl_m}</div>" if lbl_m else "")
-                + f"<div style='font-size:.65rem;color:{col_a};font-style:italic'>"
-                f"{lbl_a}</div>"
-                + "</div>",
+                f"<div style='font-size:.65rem;color:{col_m};font-style:italic'>{lbl_m}</div>"
+                f"<div style='font-size:.65rem;color:{col_a};font-style:italic'>{lbl_a}</div>"
+                f"</div>",
                 unsafe_allow_html=True)
 
-    # ── Flujo Neto Familiar ─────────────────────────────────────────────
-    try:
-        from modulo_gastos import _leer_gastos, _ingresos_campo_veggi, _cargar_config
-        _gcfg   = _cargar_config()
-        _all_g  = _leer_gastos()
-        _fn_gas = lambda g: g["semana"]==kpis["sem_act"] and g["año"]==kpis["año_act"]
-        _fn_ped = lambda p: p["semana"]==kpis["sem_act"] and p["año"]==kpis["año_act"]
-        _inc_op = _ingresos_campo_veggi(todos, _gcfg["campo_clis"], _fn_ped)
-        _gas_op = sum(g["monto"] for g in _all_g if _fn_gas(g) and g["categoria"]!="Casa")
-        _gas_cs = sum(g["monto"] for g in _all_g if _fn_gas(g) and g["categoria"]=="Casa")
-        _gan_op = sum(_inc_op.values()) - _gas_op
-        _flujo  = _gan_op - _gas_cs
-        _color  = "#2D7A2D" if _flujo >= 0 else "#c62828"
-        _icono  = "✅" if _flujo >= 0 else "⚠️"
-        st.markdown(
-            f"<div style='background:#f5f5f5;border-left:4px solid {_color};"
-            f"border-radius:6px;padding:8px 16px;margin:4px 0;"
-            f"display:flex;justify-content:space-between;align-items:center'>"
-            f"<span style='font-size:.75rem;color:#555'>💰 Flujo Neto Familiar — Semana actual</span>"
-            f"<span style='font-size:1.1rem;font-weight:bold;color:{_color}'>"
-            f"{_icono} Q{_flujo:,.0f}</span></div>",
-            unsafe_allow_html=True)
-    except Exception:
-        pass
+        # Flujo Neto Familiar
+        fn = kpis.get("flujo_neto")
+        if fn is not None:
+            _col = "#2D7A2D" if fn >= 0 else "#c62828"
+            st.markdown(
+                f"<div style='background:#f5f5f5;border-left:4px solid {_col};"
+                f"border-radius:6px;padding:8px 16px;margin:6px 0;"
+                f"display:flex;justify-content:space-between;align-items:center'>"
+                f"<span style='font-size:.75rem;color:#555'>💰 Flujo Neto Familiar — Semana actual</span>"
+                f"<span style='font-size:1.1rem;font-weight:bold;color:{_col}'>"
+                f"{'✅' if fn>=0 else '⚠️'} Q{fn:,.0f}</span></div>",
+                unsafe_allow_html=True)
 
     st.divider()
 
-    # ── Cards de módulos ──────────────────────────────────────────────────────
+    # ── Cards de módulos ───────────────────────────────────────────────────────
     for categoria, modulos in MODULOS.items():
         st.markdown(
             f"<div style='font-size:.78rem;font-weight:bold;color:#555;"
             f"letter-spacing:.05rem;margin:8px 0 4px 0'>{categoria}</div>",
             unsafe_allow_html=True)
-
         cols = st.columns(2)
         for i, (emoji, titulo, desc, nav_key) in enumerate(modulos):
             with cols[i % 2]:
@@ -249,18 +254,14 @@ def mostrar():
                     f"<div style='background:#fafafa;border:1px solid #e8e8e8;"
                     f"border-left:4px solid #2D7A2D;border-radius:8px;"
                     f"padding:10px 14px;margin-bottom:4px'>"
-                    f"<div style='font-size:.95rem;font-weight:bold'>"
-                    f"{emoji} {titulo}</div>"
-                    f"<div style='font-size:.75rem;color:#888;margin-top:2px'>"
-                    f"{desc}</div></div>",
+                    f"<div style='font-size:.95rem;font-weight:bold'>{emoji} {titulo}</div>"
+                    f"<div style='font-size:.75rem;color:#888;margin-top:2px'>{desc}</div></div>",
                     unsafe_allow_html=True)
-                if st.button("Abrir →", key=f"home_{nav_key}",
-                             use_container_width=True):
+                if st.button("Abrir →", key=f"home_{nav_key}", use_container_width=True):
                     _nav(nav_key)
-
         st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    # ── Pie ───────────────────────────────────────────────────────────────────
+    # ── Pie ────────────────────────────────────────────────────────────────────
     st.divider()
     st.markdown(
         "<div style='text-align:center;color:#aaa;font-size:.8rem'>"

@@ -80,6 +80,7 @@ def _guardar_config(subcats, campo_clis, budgets):
 
 
 # ── Gastos I/O ────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)
 def _leer_gastos() -> list[dict]:
     gastos = []
     try:
@@ -115,6 +116,7 @@ def _guardar_gasto_row(fecha: date, categoria: str, subcat: str,
         categoria, subcat, proveedor, concepto, monto
     ]
     append_rows(_K_G, [row])
+    _leer_gastos.clear()
 
 
 # ── Helpers financieros ───────────────────────────────────────────────────────
@@ -540,9 +542,8 @@ def _ensure_gastos_sheets():
             created.append(HOJAS["gastosconfig"])
         if created:
             st.info(f"✅ Hojas creadas automáticamente: {', '.join(created)}")
-    except Exception as e:
-        st.warning(f"No se pudieron crear las hojas automáticamente: {e}. "
-                   f"Creá manualmente 'Gastos' y 'GastosConfig' en tu Google Sheet.")
+    except Exception:
+        pass  # Las hojas se crearán manualmente si es necesario
 
 def mostrar():
     st.markdown("## 💰 Gastos")
@@ -551,7 +552,13 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    _ensure_gastos_sheets()
+    # Crear hojas solo una vez por sesión (evita rate limit 429)
+    if not st.session_state.get("_gastos_sheets_ok"):
+        try:
+            _ensure_gastos_sheets()
+            st.session_state["_gastos_sheets_ok"] = True
+        except Exception:
+            st.session_state["_gastos_sheets_ok"] = True  # no reintentar
     cfg = _cargar_config()
 
     from excel_helper import leer_pedidos

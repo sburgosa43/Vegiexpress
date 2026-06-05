@@ -39,22 +39,24 @@ def _gc():
 
 def _wb():
     """
-    Abre el Spreadsheet con retry automático.
+    Abre el Spreadsheet con retry automático y backoff para 429.
     NO se cachea para evitar tokens expirados — _gc() ya está cacheado.
     """
     last_err = None
-    for attempt in range(3):
+    for attempt in range(4):
         try:
             return _gc().open_by_key(SHEET_ID)
         except gspread.exceptions.APIError as e:
             last_err = e
-            if attempt < 2:
-                # Limpiar caché de credenciales y reintentar
+            status = getattr(e.response, "status_code", 0) if hasattr(e, "response") else 0
+            if attempt < 3:
                 _gc.clear()
-                time.sleep(2 ** attempt)
+                # 429 rate limit → esperar más
+                wait = 15 if status == 429 else 2 ** attempt
+                time.sleep(wait)
         except Exception as e:
             last_err = e
-            if attempt < 2:
+            if attempt < 3:
                 time.sleep(2 ** attempt)
     raise ConnectionError(f"No se pudo conectar a Google Sheets: {last_err}")
 
