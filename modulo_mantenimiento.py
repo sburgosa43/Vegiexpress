@@ -196,8 +196,10 @@ def _tab_renombrar():
     st.caption("Actualiza el nombre en Clientes y en todos los Pedidos historicos.")
 
     RENOMBRES = {
-        "martin":  "Tierra Fria",
-        "rodrigo": "Aldyk",
+        "martin":       "Tierra Fria",
+        "rodrigo":      "Aldyk",
+        "chimalt":      "Veggi Hogares",
+        "veggi":        "Veggi Hogares",
     }
 
     from gsheets     import get_all_rows, update_cells

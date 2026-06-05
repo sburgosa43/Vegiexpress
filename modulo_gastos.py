@@ -133,7 +133,7 @@ def _guardar_gasto_row(fecha: date, categoria: str, subcat: str,
 # ── Helpers financieros ───────────────────────────────────────────────────────
 # Clientes excluidos de financiero
 _EXCLUIR_FINANCIERO = {"wilson"}          # excluye totalmente
-_INTERNOS           = {"veggi", "chimalt"} # mostrar aparte, no sumar
+_INTERNOS           = {"veggi hogares"}     # mostrar aparte, no sumar
 
 def _ingresos_campo_veggi(pedidos: list, campo_clis: list,
                            filtro_fn) -> dict:
@@ -308,7 +308,7 @@ def _tab_operacion(pedidos: list, cfg: dict):
     gastos = _leer_gastos()
     campo_clis = cfg["campo_clis"]
 
-    # Mapa cliente → zona para desglose geográfico Veggi
+    # Mapa cliente → zona (keys con emoji, igual que ZONAS_MAP)
     from data_helper import cargar_clientes as _cc
     from config import ZONAS_MAP as _ZM
     _clis = _cc()
@@ -319,10 +319,12 @@ def _tab_operacion(pedidos: list, cfg: dict):
                 cli_zona[_c["nombre"].lower().strip()] = _z
                 break
 
-    # Ingresos detallados (con desglose geográfico)
-    inc     = _ingresos_detallado(pedidos, campo_clis, filtro_ped,  cli_zona)
-    inc_ant = _ingresos_detallado(pedidos, campo_clis, filtro_ped_ant, cli_zona)
-    inc_s   = _ingresos_campo_veggi(pedidos, campo_clis, filtro_ped)   # simple para KPIs
+    # Finanzas detalladas (ingreso + costo_producto por zona, una sola pasada)
+    fin     = _finanzas_detallado(pedidos, campo_clis, filtro_ped,     cli_zona)
+    fin_ant = _finanzas_detallado(pedidos, campo_clis, filtro_ped_ant, cli_zona)
+    inc     = fin["inc"]
+    costo_p = fin["costo"]
+    inc_s   = _ingresos_campo_veggi(pedidos, campo_clis, filtro_ped)
     inc_s_a = _ingresos_campo_veggi(pedidos, campo_clis, filtro_ped_ant)
     proy    = _costo_proyectado(pedidos, campo_clis, filtro_ped)
 
@@ -357,77 +359,106 @@ def _tab_operacion(pedidos: list, cfg: dict):
 
     st.divider()
 
-    # ── Detalle Campo ────────────────────────────────────────────────────────
-    campo_d   = inc.get("Campo", {})
-    campo_tot = sum(campo_d.values())
-    gas_campo = gas_cat.get("Campo", {})
-    gas_campo_tot = sum(gas_campo.values())
-    proy_campo = proy.get("Campo", 0)
+    # ── Helper para mostrar tabla de clientes ────────────────────────────────
+    def _tbl(d: dict, col_name="Cliente"):
+        if d:
+            df = pd.DataFrame([{col_name: k, "Q": f"Q{v:,.2f}"}
+                                for k, v in sorted(d.items(), key=lambda x: -x[1])])
+            st.dataframe(df, hide_index=True, use_container_width=True)
+
+    def _tbl_gas(d: dict):
+        if d:
+            df = pd.DataFrame([{"Gasto": k, "Q": f"Q{v:,.2f}"}
+                                for k, v in sorted(d.items(), key=lambda x: -x[1])])
+            st.dataframe(df, hide_index=True, use_container_width=True)
+
+    def _margen_row(ing, costo_prod, gas_op, label=""):
+        mb   = ing - costo_prod
+        mn   = mb  - gas_op
+        pct  = f"{mn/ing*100:.1f}%" if ing else "—"
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Ingresos",        f"Q{ing:,.0f}")
+        m2.metric("Costo Producto",  f"Q{costo_prod:,.0f}")
+        m3.metric("Margen Bruto",    f"Q{mb:,.0f}")
+        m4.metric("Margen Neto",     f"Q{mn:,.0f}", delta=pct)
+
+    # ── P&L CAMPO ─────────────────────────────────────────────────────────────
+    campo_inc    = inc["Campo"]
+    campo_costo  = costo_p["Campo"]
+    campo_inc_t  = sum(campo_inc.values())
+    campo_cost_t = sum(campo_costo.values())
+    gas_campo    = gas_cat.get("Campo", {})
+    gas_campo_t  = sum(gas_campo.values())
+    campo_mn     = campo_inc_t - campo_cost_t - gas_campo_t
 
     with st.expander(
-            f"**Campo** — Ing: Q{campo_tot:,.0f} · Gas: Q{gas_campo_tot:,.0f} · "
-            f"Gan: Q{campo_tot-gas_campo_tot:,.0f}", expanded=True):
-        cc1, cc2 = st.columns(2)
-        cc1.markdown(f"**Ingresos Campo:** Q{campo_tot:,.0f}")
-        cc2.markdown(f"**Gastos reales:** Q{gas_campo_tot:,.0f}"
-                     + (f" · Proy Q{proy_campo:,.0f}" if proy_campo > 0 else ""))
-        if campo_d:
-            df_c = pd.DataFrame([{"Cliente": k, "Q": f"Q{v:,.2f}"}
-                                  for k, v in sorted(campo_d.items(), key=lambda x: -x[1])])
-            st.dataframe(df_c, hide_index=True, use_container_width=True)
-        if gas_campo:
-            df_gc = pd.DataFrame([{"Gasto": k, "Q": f"Q{v:,.2f}"}
-                                   for k, v in sorted(gas_campo.items(), key=lambda x: -x[1])])
-            st.dataframe(df_gc, hide_index=True, use_container_width=True)
+            f"**Campo** — Ing Q{campo_inc_t:,.0f} · CostoProd Q{campo_cost_t:,.0f} · "
+            f"GasOp Q{gas_campo_t:,.0f} · **Neto Q{campo_mn:,.0f}**",
+            expanded=True):
+        _margen_row(campo_inc_t, campo_cost_t, gas_campo_t)
+        with st.expander("Detalle clientes y gastos", expanded=False):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.caption("Clientes")
+                _tbl(campo_inc)
+            with c2:
+                st.caption("Gastos operativos")
+                _tbl_gas(gas_campo)
 
-    # ── Detalle Veggi (con desglose geográfico colapsable) ───────────────────
-    veggi_rg   = inc.get("Veggi", {}).get("Rio", {})
-    veggi_ac   = inc.get("Veggi", {}).get("Antigua-Chimal", {})
-    veggi_rg_t = sum(veggi_rg.values())
-    veggi_ac_t = sum(veggi_ac.values())
-    veggi_tot  = veggi_rg_t + veggi_ac_t
-    gas_veggi  = gas_cat.get("Veggi", {})
-    gas_veggi_t= sum(gas_veggi.values())
-    proy_veggi = proy.get("Veggi", 0)
+    # ── P&L VEGGI (RÍO) ───────────────────────────────────────────────────────
+    vrio_inc    = inc["Veggi"]["Rio"]
+    vrio_costo  = costo_p["Veggi"]["Rio"]
+    vrio_inc_t  = sum(vrio_inc.values())
+    vrio_cost_t = sum(vrio_costo.values())
+    gas_veggi   = gas_cat.get("Veggi", {})
+    gas_veggi_t = sum(gas_veggi.values())
+    gas_vrio_t  = round(gas_veggi_t * _VEGGI_RIO_PCT, 2)
+    vrio_mn     = vrio_inc_t - vrio_cost_t - gas_vrio_t
 
     with st.expander(
-            f"**Veggi** — Ing: Q{veggi_tot:,.0f} · Gas: Q{gas_veggi_t:,.0f} · "
-            f"Gan: Q{veggi_tot-gas_veggi_t:,.0f}", expanded=True):
-        vv1, vv2 = st.columns(2)
-        vv1.markdown(f"**Ingresos Veggi:** Q{veggi_tot:,.0f}")
-        vv2.markdown(f"**Gastos reales:** Q{gas_veggi_t:,.0f}"
-                     + (f" · Proy Q{proy_veggi:,.0f}" if proy_veggi > 0 else ""))
+            f"**Veggi Río** — Ing Q{vrio_inc_t:,.0f} · "
+            f"CostoProd Q{vrio_cost_t:,.0f} · **Neto Q{vrio_mn:,.0f}**",
+            expanded=True):
+        _margen_row(vrio_inc_t, vrio_cost_t, gas_vrio_t)
+        st.caption(f"Gastos operativos Veggi prorrateados 60%: Q{gas_vrio_t:,.0f}")
+        with st.expander("Detalle clientes", expanded=False):
+            _tbl(vrio_inc)
 
-        # Desglose geográfico (colapsable)
+    # ── P&L VEGGI (ANTIGUA-CHIMAL) ────────────────────────────────────────────
+    vant_inc    = inc["Veggi"]["Antigua-Chimal"]
+    vant_costo  = costo_p["Veggi"]["Antigua-Chimal"]
+    vant_inc_t  = sum(vant_inc.values())
+    vant_cost_t = sum(vant_costo.values())
+    gas_vant_t  = round(gas_veggi_t * _VEGGI_ANT_PCT, 2)
+    vant_mn     = vant_inc_t - vant_cost_t - gas_vant_t
+
+    with st.expander(
+            f"**Veggi Antigua-Chimal** — Ing Q{vant_inc_t:,.0f} · "
+            f"CostoProd Q{vant_cost_t:,.0f} · **Neto Q{vant_mn:,.0f}**",
+            expanded=True):
+        _margen_row(vant_inc_t, vant_cost_t, gas_vant_t)
+        st.caption(f"Gastos operativos Veggi prorrateados 40%: Q{gas_vant_t:,.0f}")
+        with st.expander("Detalle clientes", expanded=False):
+            _tbl(vant_inc)
+
+    # Gastos Veggi (fuente del prorrateo)
+    with st.expander(f"Gastos operativos Veggi total: Q{gas_veggi_t:,.0f}", expanded=False):
+        _tbl_gas(gas_veggi)
+
+    # ── CLIENTE VEGGI (entregas a hogares) — inversión en producto ───────────
+    veggi_cli_inc   = inc["Interno"]
+    veggi_cli_costo = costo_p["Interno"]
+    if veggi_cli_inc or veggi_cli_costo:
+        vi_t  = sum(veggi_cli_inc.values())
+        vc_t  = sum(veggi_cli_costo.values())
+        v_mb  = vi_t - vc_t
         with st.expander(
-                f"📍 Río (L01/L02): Q{veggi_rg_t:,.0f}  ·  "
-                f"Antigua + Chimal: Q{veggi_ac_t:,.0f}", expanded=False):
-            geo1, geo2 = st.columns(2)
-            if veggi_rg:
-                df_rg = pd.DataFrame([{"Cliente": k, "Q": f"Q{v:,.2f}"}
-                                       for k, v in sorted(veggi_rg.items(), key=lambda x:-x[1])])
-                geo1.markdown("**Río (L01/L02)**")
-                geo1.dataframe(df_rg, hide_index=True, use_container_width=True)
-            if veggi_ac:
-                df_ac = pd.DataFrame([{"Cliente": k, "Q": f"Q{v:,.2f}"}
-                                       for k, v in sorted(veggi_ac.items(), key=lambda x:-x[1])])
-                geo2.markdown("**Antigua + Chimal**")
-                geo2.dataframe(df_ac, hide_index=True, use_container_width=True)
-
-        if gas_veggi:
-            df_gv = pd.DataFrame([{"Gasto": k, "Q": f"Q{v:,.2f}"}
-                                   for k, v in sorted(gas_veggi.items(), key=lambda x:-x[1])])
-            st.dataframe(df_gv, hide_index=True, use_container_width=True)
-
-    # ── Interno — visible siempre, no suma al P&L ────────────────────────────
-    interno = inc.get("Interno", {})
-    if interno:
-        interno_tot = sum(interno.values())
-        with st.expander(f"ⓘ Interno (excluido del total) — Q{interno_tot:,.0f}",
-                         expanded=False):
-            df_int = pd.DataFrame([{"Cliente": k, "Q": f"Q{v:,.2f}"}
-                                    for k, v in sorted(interno.items(), key=lambda x:-x[1])])
-            st.dataframe(df_int, hide_index=True, use_container_width=True)
+                f"ⓘ Veggi Hogares — "
+                f"Ing Q{vi_t:,.0f} · CostoProd Q{vc_t:,.0f} · MB Q{v_mb:,.0f}",
+                expanded=False):
+            st.caption("Negocio de entregas a hogares. Excluido del P&L principal.")
+            _margen_row(vi_t, vc_t, 0)
+            _tbl(veggi_cli_inc)
 
     st.divider()
     col_g, col_n = st.columns(2)

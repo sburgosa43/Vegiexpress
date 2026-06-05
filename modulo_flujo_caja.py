@@ -281,7 +281,7 @@ def mostrar():
     # ── Veggi ─────────────────────────────────────────────────────────────────
     st.divider()
     st.markdown("#### 🌿 Veggi — Esposa")
-    st.info("Fase 2 en desarrollo — ciclos mensuales (Antigua, Chimal, Chimalt)")
+    st.info("Fase 2 en desarrollo — ciclos mensuales (Antigua, Chimal, Veggi Hogares)")
 
     # ── Leyenda ISR ───────────────────────────────────────────────────────────
     st.divider()

@@ -7,7 +7,7 @@ Todas las constantes de negocio en un solo lugar.
 ZONAS_MAP = {
     "🔖 Antigua & Chimal":     ["L03", "L04", "L10"],
     "🏙️ Guatemala & Santiago": ["L05", "L06"],
-    "🌊 Río":                  ["L01"],
+    "🌊 Río":                  ["L01", "L02"],
 }
 
 COLORES_ZONA = {
@@ -18,9 +18,9 @@ COLORES_ZONA = {
 
 # Para Dashboard (análisis)
 ZONAS_DASH = {
-    "Todas":            ["L01", "L03", "L04", "L05", "L06"],
+    "Todas":            ["L01", "L02", "L03", "L04", "L05", "L06"],
     "GT + Santiago":    ["L05", "L06"],
-    "Río":              ["L01"],
+    "Río":              ["L01", "L02"],
     "Antigua + Chimal": ["L03", "L04"],
 }
 
@@ -35,7 +35,8 @@ ZONA_GT_RIO = ["L01", "L05", "L06"]   # Sergio
 ZONA_VEGGI  = ["L03", "L04", "L10"]    # Esposa
 
 # ── Clientes a excluir de reportes ───────────────────────────────────────────
-EXCLUIR_DASHBOARD   = ["veggi", "chimalt", "wilson"]
+# "veggi" captura "veggi hogares" por substring
+EXCLUIR_DASHBOARD   = ["veggi hogares", "wilson"]
 EXCLUIR_PROVEEDORES = ["wilson"]
 
 def excluido_dashboard(nombre: str) -> bool:

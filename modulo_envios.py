@@ -119,11 +119,11 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
 
 AREAS_LIST = {
     "Río":      lambda cli, z: z == "L01",
-    "Guate":    lambda cli, z: z == "L05" and "chimalt" not in cli.lower(),
-    "Santiago": lambda cli, z: z == "L06" and "chimalt" not in cli.lower(),
+    "Guate":    lambda cli, z: z == "L05" and "veggi hogares" not in cli.lower(),
+    "Santiago": lambda cli, z: z == "L06" and "veggi hogares" not in cli.lower(),
     "Antigua":  lambda cli, z: z == "L03",
-    "Chimal":   lambda cli, z: z == "L04" and "chimalt" not in cli.lower(),
-    "Chimalt":  lambda cli, z: "chimalt" in cli.lower(),
+    "Chimal":   lambda cli, z: z == "L04" and "veggi hogares" not in cli.lower(),
+    "Veggi Hogares": lambda cli, z: "veggi hogares" in cli.lower(),
 }
 
 

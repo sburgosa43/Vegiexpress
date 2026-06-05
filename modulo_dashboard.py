@@ -32,7 +32,7 @@ COLORES_PERIODO = {
 }
 PERIODOS_CORTO = ["Sem Actual", "Sem Ant.", "MTD"]
 PERIODOS_LARGO = ["YTD", "PYTD"]
-EXCLUIR = ["veggi", "chimalt", "wilson"]
+EXCLUIR = ["veggi hogares", "wilson"]
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
