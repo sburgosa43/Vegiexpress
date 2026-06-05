@@ -242,6 +242,7 @@ def mostrar():
     st.divider()
 
     # ── Cards de módulos ───────────────────────────────────────────────────────
+    _btn_idx = 0
     for categoria, modulos in MODULOS.items():
         st.markdown(
             f"<div style='font-size:.78rem;font-weight:bold;color:#555;"
@@ -257,8 +258,9 @@ def mostrar():
                     f"<div style='font-size:.95rem;font-weight:bold'>{emoji} {titulo}</div>"
                     f"<div style='font-size:.75rem;color:#888;margin-top:2px'>{desc}</div></div>",
                     unsafe_allow_html=True)
-                if st.button("Abrir →", key=f"home_{nav_key}", use_container_width=True):
+                if st.button("Abrir →", key=f"hbtn_{_btn_idx}", use_container_width=True):
                     _nav(nav_key)
+                _btn_idx += 1
         st.markdown("&nbsp;", unsafe_allow_html=True)
 
     # ── Pie ────────────────────────────────────────────────────────────────────
