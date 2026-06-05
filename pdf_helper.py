@@ -774,7 +774,7 @@ def generar_lista_compras_proveedor(prov: str, items: list,
             ("LEFTPADDING",   (0, 0), (-1, -1), 2),
             ("RIGHTPADDING",  (0, 0), (-1, -1), 2),
             ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
-            ("ROWBACKGROUNDS",(0, 1), (-1, -1), [rc.white, rc.Color(0.96, 0.96, 0.96)]),
+
         ])
 
     def page_header(page_num, total_pages):
