@@ -217,6 +217,11 @@ def mostrar():
                 f"{'✅' if fn>=0 else '⚠️'} Q{fn:,.0f}</span></div>",
                 unsafe_allow_html=True)
 
+    # ── Último backup ──────────────────────────────────────────────
+    _bk = st.session_state.get("_backup_info", {})
+    if _bk:
+        st.caption(f"💾 Último backup: {_bk.get('ts','—')} · {_bk.get('filas',0)} filas")
+
     st.divider()
 
     # ── Cards de módulos ───────────────────────────────────────────────────────

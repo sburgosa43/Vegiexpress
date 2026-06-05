@@ -1,8 +1,199 @@
+"""
+modulo_mantenimiento.py — Herramientas de mantenimiento y administracion.
+"""
+import streamlit as st
+from datetime import date
 
+
+# ── TAB 1: Correccion masiva ──────────────────────────────────────────────────
+def _tab_correccion():
+    st.markdown("#### Correccion Masiva de Precios / Costos")
+    from excel_helper import leer_pedidos, actualizar_precio_semana
+    from data_helper  import cargar_productos
+
+    hoy     = date.today()
+    sem_def = hoy.isocalendar()[1]
+
+    c1, c2 = st.columns(2)
+    semana = c1.number_input("Semana", 1, 53, sem_def, key="mc_sem")
+    anio   = c2.number_input("Año",  2020, 2030, hoy.year, key="mc_anio")
+
+    todos = leer_pedidos()
+    prods_map = {p["nombre"]: p for p in cargar_productos()}
+
+    pedidos_sem = [p for p in todos
+                   if p["semana"] == semana and p["año"] == anio
+                   and p["status"] != "Cancelado"]
+
+    if not pedidos_sem:
+        st.info(f"Sin pedidos activos en semana {semana}/{anio}.")
+        return
+
+    prods_sem = sorted({p["producto"] for p in pedidos_sem})
+    st.caption(f"{len(pedidos_sem)} lineas · {len(prods_sem)} productos distintos")
+
+    import pandas as pd
+    rows = []
+    for prod in prods_sem:
+        lineas = [p for p in pedidos_sem if p["producto"] == prod]
+        precio_actual = lineas[0]["precio"] if lineas else 0
+        costo_actual  = lineas[0].get("costo", 0) or 0
+        rows.append({
+            "Producto":   prod,
+            "Precio Act": precio_actual,
+            "Nuevo Precio": precio_actual,
+            "Costo Act":  costo_actual,
+            "Nuevo Costo": costo_actual,
+        })
+
+    df = pd.DataFrame(rows)
+    edited = st.data_editor(
+        df,
+        column_config={
+            "Producto":   st.column_config.TextColumn(disabled=True),
+            "Precio Act": st.column_config.NumberColumn(format="Q%.2f", disabled=True),
+            "Nuevo Precio": st.column_config.NumberColumn(format="Q%.2f", step=0.25),
+            "Costo Act":  st.column_config.NumberColumn(format="Q%.2f", disabled=True),
+            "Nuevo Costo": st.column_config.NumberColumn(format="Q%.2f", step=0.25),
+        },
+        hide_index=True, use_container_width=True, key="mc_editor"
+    )
+
+    cambios = []
+    for _, row in edited.iterrows():
+        p_cambia = abs(row["Nuevo Precio"] - row["Precio Act"]) > 0.001
+        c_cambia = abs(row["Nuevo Costo"]  - row["Costo Act"])  > 0.001
+        if p_cambia or c_cambia:
+            cambios.append({
+                "producto":    row["Producto"],
+                "precio_ant":  row["Precio Act"],
+                "precio_nuevo": row["Nuevo Precio"],
+                "costo_ant":   row["Costo Act"],
+                "costo_nuevo": row["Nuevo Costo"],
+                "p_cambia": p_cambia,
+                "c_cambia": c_cambia,
+            })
+
+    if not cambios:
+        st.info("Sin cambios detectados.")
+        return
+
+    st.warning(f"{len(cambios)} producto(s) con cambios")
+    upd_cat = st.checkbox("Actualizar en catalogo (aplica a pedidos futuros)",
+                          value=True, key="mc_cat")
+
+    if st.button(f"Aplicar {len(cambios)} cambio(s)", type="primary", key="mc_guardar"):
+        with st.spinner("Actualizando..."):
+            res = actualizar_precio_semana(cambios, semana, anio,
+                                           actualizar_catalogo=upd_cat)
+        st.success(f"{res['filas_pedidos']} lineas actualizadas"
+                   + (f" + catalogo ({res['prods_catalogo']} campos)" if upd_cat else ""))
+        st.rerun()
+
+
+# ── TAB 2: Migracion ──────────────────────────────────────────────────────────
+def _tab_migracion():
+    st.markdown("#### Migracion de Datos")
+    st.caption("Herramientas para correccion y migracion de datos historicos.")
+
+    from gsheets import get_all_rows, update_cells
+    from excel_helper import leer_pedidos
+
+    # Verificar columna semana
+    st.markdown("**Verificar y completar columna Semana/Año en Pedidos**")
+    if st.button("Analizar pedidos sin semana", key="mig_sem"):
+        todos = leer_pedidos()
+        sin_semana = [p for p in todos if not p.get("semana")]
+        st.info(f"{len(sin_semana)} pedidos sin semana registrada")
+
+    st.divider()
+    st.markdown("**Agregar columna Unico si falta**")
+    if st.button("Verificar columna Unico", key="mig_uni"):
+        rows = get_all_rows("pedidos")
+        headers = rows[0] if rows else []
+        st.info(f"Columnas detectadas: {len(headers)}")
+
+
+# ── TAB 3: Estructura ─────────────────────────────────────────────────────────
+def _tab_estructura():
+    st.markdown("#### Verificar Google Sheets")
+    from gsheets import HOJAS
+
+    if st.button("Verificar conexion a Sheets", key="est_ver"):
+        from gsheets import ws as _ws
+        hojas_ok = []
+        for k, nombre in HOJAS.items():
+            try:
+                _ws(k)
+                hojas_ok.append(f"OK: {nombre}")
+            except Exception as e:
+                hojas_ok.append(f"ERROR {nombre}: {e}")
+        for h in hojas_ok:
+            if h.startswith("OK"):
+                st.success(h)
+            else:
+                st.error(h)
+
+
+# ── TAB 4: Catalogo cliente ───────────────────────────────────────────────────
+def _tab_catalogo():
+    st.markdown("#### Catalogo de Clientes")
+    from data_helper import cargar_clientes
+    import pandas as pd
+
+    clientes = cargar_clientes()
+    if not clientes:
+        st.info("Sin clientes en el catalogo.")
+        return
+
+    df = pd.DataFrame([{
+        "Nombre":        c.get("nombre",""),
+        "Empresa":       c.get("empresa",""),
+        "Codigo":        c.get("codigo_lugar",""),
+        "Zona":          c.get("zona",""),
+    } for c in clientes])
+    st.dataframe(df, hide_index=True, use_container_width=True)
+    st.caption(f"{len(clientes)} clientes en el catalogo")
+
+
+# ── TAB 5: Cache ─────────────────────────────────────────────────────────────
+def _tab_cache():
+    st.markdown("#### Limpiar Cache")
+    st.caption("Fuerza recarga de datos desde Google Sheets en la proxima accion.")
+
+    col1, col2, col3 = st.columns(3)
+
+    if col1.button("Limpiar Pedidos", key="cc_ped"):
+        from excel_helper import leer_pedidos
+        leer_pedidos.clear()
+        st.success("Cache de pedidos limpiado.")
+
+    if col2.button("Limpiar Clientes", key="cc_cli"):
+        from data_helper import cargar_clientes
+        cargar_clientes.clear()
+        st.success("Cache de clientes limpiado.")
+
+    if col3.button("Limpiar Productos", key="cc_prod"):
+        from data_helper import cargar_productos
+        cargar_productos.clear()
+        st.success("Cache de productos limpiado.")
+
+    st.divider()
+    if st.button("Limpiar TODO el cache", type="primary", key="cc_all"):
+        from excel_helper import leer_pedidos
+        from data_helper  import cargar_clientes, cargar_productos
+        from gsheets      import _gc
+        leer_pedidos.clear()
+        cargar_clientes.clear()
+        cargar_productos.clear()
+        _gc.clear()
+        st.success("Todo el cache limpiado. La proxima accion lee datos frescos.")
+
+
+# ── TAB 6: Renombrar clientes ─────────────────────────────────────────────────
 def _tab_renombrar():
-    """Tab: renombrar clientes en Clientes + Pedidos históricos."""
-    st.markdown("#### 🔄 Renombrar Clientes")
-    st.caption("Actualiza el nombre en Clientes y en todos los Pedidos históricos de una sola vez.")
+    st.markdown("#### Renombrar Clientes")
+    st.caption("Actualiza el nombre en Clientes y en todos los Pedidos historicos.")
 
     RENOMBRES = {
         "martin":  "Tierra Fria",
@@ -14,24 +205,22 @@ def _tab_renombrar():
     from data_helper  import cargar_clientes
     import time
 
-    st.markdown("**Cambios a ejecutar:**")
+    st.markdown("**Cambios configurados:**")
     for viejo, nuevo in RENOMBRES.items():
         st.markdown(f"- `{viejo.capitalize()}` → **{nuevo}**")
 
     st.divider()
 
-    if st.button("🔍 Vista previa — ver qué se cambia", key="ren_preview"):
-        with st.spinner("Buscando en Clientes y Pedidos..."):
+    if st.button("Ver filas a cambiar", key="ren_preview"):
+        with st.spinner("Buscando..."):
             rows_cli = get_all_rows("clientes")
             hits_cli = [(i+2, str(row[0]).strip())
                         for i, row in enumerate(rows_cli)
                         if row and str(row[0]).strip().lower() in RENOMBRES]
-
             todos    = leer_pedidos()
             hits_ped = [(p["row_num"], p["cliente"])
                         for p in todos
                         if p["cliente"].strip().lower() in RENOMBRES]
-
         st.session_state["ren_cli"] = hits_cli
         st.session_state["ren_ped"] = hits_ped
 
@@ -41,14 +230,12 @@ def _tab_renombrar():
     if hits_cli is not None and hits_ped is not None:
         st.markdown(f"**Clientes:** {len(hits_cli)} fila(s)")
         for rn, nombre in hits_cli:
-            st.markdown(f"  └ Fila {rn}: `{nombre}` → **{RENOMBRES[nombre.lower()]}**")
-
-        st.markdown(f"**Pedidos:** {len(hits_ped)} línea(s)")
-        muestra = hits_ped[:5]
-        for rn, cli in muestra:
-            st.markdown(f"  └ Fila {rn}: `{cli}` → **{RENOMBRES[cli.strip().lower()]}**")
+            st.markdown(f"  Fila {rn}: `{nombre}` → **{RENOMBRES.get(nombre.lower(), '?')}**")
+        st.markdown(f"**Pedidos:** {len(hits_ped)} linea(s)")
+        for rn, cli in hits_ped[:5]:
+            st.markdown(f"  Fila {rn}: `{cli}` → **{RENOMBRES.get(cli.strip().lower(), '?')}**")
         if len(hits_ped) > 5:
-            st.caption(f"... y {len(hits_ped)-5} más")
+            st.caption(f"... y {len(hits_ped)-5} mas")
 
         total = len(hits_cli) + len(hits_ped)
         if total == 0:
@@ -56,274 +243,212 @@ def _tab_renombrar():
             return
 
         st.divider()
-        st.warning(f"⚠️ Se modificarán **{len(hits_cli)} cliente(s)** y "
-                   f"**{len(hits_ped)} línea(s) de pedidos**. No se puede deshacer.")
+        st.warning(f"Se van a modificar {len(hits_cli)} cliente(s) y "
+                   f"{len(hits_ped)} linea(s) de pedidos.")
 
-        if st.button(f"✅ Confirmar y renombrar ({total} filas)",
+        if st.button(f"Confirmar y renombrar ({total} filas)",
                      type="primary", key="ren_exec"):
+            # Auto-backup antes de ejecutar
+            with st.spinner("Creando backup previo..."):
+                try:
+                    from backup_helper import backup_silencioso
+                    backup_silencioso(motivo="auto antes de renombrar")
+                except Exception:
+                    pass
+
             upd_cli, upd_ped = [], []
-
             for rn, nombre in hits_cli:
-                nuevo = RENOMBRES[nombre.lower()]
-                upd_cli.append({"range": f"A{rn}", "values": [[nuevo]]})
-
+                nuevo = RENOMBRES.get(nombre.lower(), nombre)
+                upd_cli.append({"range": f"B{rn}", "values": [[nuevo]]})
             for rn, cli in hits_ped:
-                nuevo = RENOMBRES[cli.strip().lower()]
-                upd_ped.append({"range": f"A{rn}", "values": [[nuevo]]})
+                nuevo = RENOMBRES.get(cli.strip().lower(), cli)
+                upd_ped.append({"range": f"B{rn}", "values": [[nuevo]]})
 
             with st.spinner("Actualizando Clientes..."):
                 if upd_cli:
                     update_cells("clientes", upd_cli)
-
-            with st.spinner(f"Actualizando {len(upd_ped)} líneas de Pedidos..."):
+            with st.spinner(f"Actualizando {len(upd_ped)} lineas de Pedidos..."):
                 for i in range(0, len(upd_ped), 100):
                     update_cells("pedidos", upd_ped[i:i+100])
                     time.sleep(0.5)
 
             leer_pedidos.clear()
             cargar_clientes.clear()
-
-            st.success(f"✅ Renombrado completo — "
-                       f"{len(upd_cli)} cliente(s) y "
+            st.success(f"Renombrado completo: {len(upd_cli)} cliente(s) + "
                        f"{len(upd_ped)} pedido(s) actualizados.")
             st.session_state.pop("ren_cli", None)
             st.session_state.pop("ren_ped", None)
             st.rerun()
 
 
-"""
-modulo_mantenimiento.py — Herramientas de mantenimiento de datos
-  Tab 1: Corrección masiva de precios y costos por cliente/producto/período
-  Tab 2: Migración de fórmulas → valores en la hoja Pedidos
-"""
-import streamlit as st
-from datetime import date
-from excel_helper import (leer_pedidos, preview_correccion_masiva,
-                           aplicar_correccion_masiva, migrar_pedidos_a_valores,
-                           agregar_col_para_cotizar_antigua, limpiar_para_cotizar)
-from data_helper  import cargar_clientes, cargar_productos
+# ── TAB 7: Recuperar fechas ────────────────────────────────────────────────────
+def _tab_recuperar_fechas():
+    st.markdown("#### Recuperar Fechas Sobreescritas")
+    st.error("Este tab corrige el error de renombrado: restaura fechas en columna A "
+             "y escribe los nombres nuevos en columna B.")
 
-MESES_ES = {
-    1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril",
-    5:"Mayo", 6:"Junio", 7:"Julio", 8:"Agosto",
-    9:"Septiembre", 10:"Octubre", 11:"Noviembre", 12:"Diciembre",
-}
+    MAPA = {
+        "aldyk":       ("Aldyk",       "Rodrigo"),
+        "tierra fria": ("Tierra Fria", "Martin"),
+    }
+
+    from gsheets import update_cells, ws as _ws
+    from datetime import date as _date
+    import time
+
+    if st.button("Ver filas a recuperar", key="rec_preview"):
+        sheet = _ws("pedidos")
+        all_rows = sheet.get_all_values()
+        hits = []
+        for i, row in enumerate(all_rows[1:], start=2):
+            if not row: continue
+            col_a = str(row[0]).strip().lower()
+            if col_a in MAPA:
+                hits.append({
+                    "row_num": i,
+                    "col_a":   str(row[0]).strip(),
+                    "col_b":   str(row[1]).strip() if len(row) > 1 else "",
+                    "semana":  str(row[14]).strip() if len(row) > 14 else "",
+                    "anio":    str(row[15]).strip() if len(row) > 15 else "",
+                })
+        st.session_state["rec_hits"] = hits
+
+    hits = st.session_state.get("rec_hits")
+    if hits is not None:
+        st.markdown(f"**{len(hits)} fila(s) con fecha sobreescrita:**")
+        for h in hits[:8]:
+            st.markdown(f"  Fila {h['row_num']}: ColA={h['col_a']} "
+                        f"Sem={h['semana']} Anio={h['anio']}")
+        if len(hits) > 8:
+            st.caption(f"... y {len(hits)-8} mas")
+
+        if not hits:
+            st.success("No se encontraron filas con fechas sobreescritas.")
+            return
+
+        st.divider()
+        st.warning(f"Se van a restaurar {len(hits)} fechas y corregir nombres.")
+
+        if st.button(f"Recuperar {len(hits)} filas", type="primary", key="rec_exec"):
+            upd = []
+            for h in hits:
+                nombre_en_a = h["col_a"].lower()
+                if nombre_en_a not in MAPA: continue
+                nuevo_nombre, _ = MAPA[nombre_en_a]
+                try:
+                    sem = int(h["semana"])
+                    anio = int(h["anio"])
+                    fecha_rec = _date.fromisocalendar(anio, sem, 1).strftime("%d/%m/%Y")
+                except Exception:
+                    fecha_rec = "01/01/2025"
+                rn = h["row_num"]
+                upd.append({"range": f"A{rn}", "values": [[fecha_rec]]})
+                upd.append({"range": f"B{rn}", "values": [[nuevo_nombre]]})
+
+            with st.spinner(f"Restaurando {len(upd)} celdas..."):
+                for i in range(0, len(upd), 100):
+                    update_cells("pedidos", upd[i:i+100])
+                    time.sleep(0.3)
+
+            from excel_helper import leer_pedidos
+            leer_pedidos.clear()
+            st.success(f"{len(hits)} filas recuperadas.")
+            st.session_state.pop("rec_hits", None)
+            st.caption("Las fechas son el lunes de cada semana (aproximacion).")
+            st.rerun()
 
 
-# ── TAB 1: CORRECCIÓN MASIVA ──────────────────────────────────────────────────
-def _tab_correccion():
-    st.markdown("""
-    Corrige el precio y/o costo de un producto específico para un cliente,
-    en un rango de fechas determinado. Recalcula automáticamente todas las
-    columnas financieras (Total, Margen, IVA, ISR) en cada fila afectada.
-    """)
-    st.divider()
+# ── TAB 8: Backup ─────────────────────────────────────────────────────────────
+def _tab_backup():
+    st.markdown("#### Backup a Google Drive")
 
-    # ── Paso 1: Parámetros ────────────────────────────────────────────────────
-    st.markdown("#### 1️⃣ Definir el cambio")
-
-    clientes_list = cargar_clientes()
-    prods_list    = cargar_productos(False)
-    cli_nombres   = sorted([c["nombre"] for c in clientes_list])
-    prod_nombres  = sorted([p["nombre"] for p in prods_list])
-
-    c1, c2 = st.columns(2)
-    with c1:
-        cliente_sel = st.selectbox("Cliente", cli_nombres,
-                                    index=None, placeholder="Seleccioná...",
-                                    key="mant_cli")
-    with c2:
-        producto_sel = st.selectbox("Producto", prod_nombres,
-                                     index=None, placeholder="Seleccioná...",
-                                     key="mant_prod")
-
-    # Checkboxes precio / costo
-    st.markdown("**¿Qué querés cambiar?**")
-    chk1, chk2 = st.columns(2)
-    with chk1:
-        cambiar_precio = st.checkbox("Cambiar Precio", key="mant_chk_precio")
-        if cambiar_precio:
-            nuevo_precio = st.number_input("Nuevo Precio (Q)", min_value=0.01,
-                                            step=0.25, key="mant_precio")
-        else:
-            nuevo_precio = 0.0
-            st.caption("Sin Cambio de precio")
-    with chk2:
-        cambiar_costo = st.checkbox("Cambiar Costo", key="mant_chk_costo")
-        if cambiar_costo:
-            nuevo_costo = st.number_input("Nuevo Costo (Q)", min_value=0.01,
-                                           step=0.25, key="mant_costo")
-        else:
-            nuevo_costo = 0.0
-            st.caption("Sin Cambio de costo")
-
-    # Rango de fechas
-    st.markdown("**Rango de fechas (fecha de entrega):**")
-    hoy = date.today()
-    años_disp = list(range(hoy.year, hoy.year - 5, -1))
-    meses_ops = [f"{m:02d} - {MESES_ES[m]}" for m in range(1, 13)]
-
-    rf1, rf2, rf3, rf4 = st.columns(4)
-    with rf1:
-        desde_mes_lbl = st.selectbox("Desde Mes", meses_ops,
-                                      index=0, key="mant_dmes")
-        desde_mes = int(desde_mes_lbl[:2])
-    with rf2:
-        desde_año = st.selectbox("Desde Año", años_disp,
-                                  index=1, key="mant_daño")
-    with rf3:
-        hasta_mes_lbl = st.selectbox("Hasta Mes", meses_ops,
-                                      index=11, key="mant_hmes")
-        hasta_mes = int(hasta_mes_lbl[:2])
-    with rf4:
-        hasta_año = st.selectbox("Hasta Año", años_disp,
-                                  index=0, key="mant_haño")
-
-    st.divider()
-
-    # ── Paso 2: Preview ───────────────────────────────────────────────────────
-    st.markdown("#### 2️⃣ Resumen del impacto")
-
-    if not cliente_sel or not producto_sel:
-        st.info("Seleccioná cliente y producto para ver el resumen.")
-        return
-    if not cambiar_precio and not cambiar_costo:
-        st.info("Seleccioná al menos una opción: Cambiar Precio o Cambiar Costo.")
+    try:
+        from backup_helper import crear_backup, backup_info, BACKUP_FILENAME
+    except Exception as e:
+        st.error(f"Error cargando backup_helper: {e}")
         return
 
-    if st.button("🔍 Ver resumen del impacto", type="secondary"):
-        with st.spinner("Analizando pedidos históricos..."):
-            preview = preview_correccion_masiva(
-                cliente_sel, producto_sel,
-                desde_mes, desde_año, hasta_mes, hasta_año,
-                nuevo_precio, nuevo_costo,
-                cambiar_precio, cambiar_costo,
-            )
-        st.session_state["mant_preview"] = preview
-        st.session_state.pop("mant_confirmar", None)
-
-    preview = st.session_state.get("mant_preview")
-    if not preview:
-        return
-
-    if preview["total_filas"] == 0:
-        st.warning("No se encontraron filas que coincidan con los criterios.")
-        st.session_state.pop("mant_preview", None)
-        return
-
-    # Mostrar resumen
-    dv = preview["delta_ventas"]
-    dm = preview["delta_margen"]
-
-    col_r1, col_r2, col_r3 = st.columns(3)
-    col_r1.metric("Filas a modificar",  preview["total_filas"])
-    col_r2.metric("Impacto en Ventas",
-                   f"Q{abs(dv):,.2f}",
-                   f"{'▼' if dv<0 else '▲'} {abs(dv):,.2f}",
-                   delta_color="inverse" if dv < 0 else "normal")
-    col_r3.metric("Impacto en Margen",
-                   f"Q{abs(dm):,.2f}",
-                   f"{'▼' if dm<0 else '▲'} {abs(dm):,.2f}",
-                   delta_color="inverse" if dm < 0 else "normal")
-
-    # Resumen de cambios aplicados
-    f0 = preview["filas"][0] if preview["filas"] else {}
-    cambios_txt = []
-    if cambiar_precio:
-        cambios_txt.append(f"Precio: Q{f0.get('p_act',0):,.2f} → Q{nuevo_precio:,.2f}")
-    if cambiar_costo:
-        cambios_txt.append(f"Costo: Q{f0.get('c_act',0):,.2f} → Q{nuevo_costo:,.2f}")
-    st.info(f"**{cliente_sel}** · **{producto_sel}** · "
-            f"{MESES_ES[desde_mes]} {desde_año} → {MESES_ES[hasta_mes]} {hasta_año}\n\n"
-            f"Cambios: {' | '.join(cambios_txt)}")
-
-    st.divider()
-
-    # ── Paso 3: Confirmar ─────────────────────────────────────────────────────
-    st.markdown("#### 3️⃣ Confirmar y aplicar")
-    st.error(
-        "⚠️ Esta operación **modifica datos históricos** del Excel de forma permanente. "
-        "Asegurate de tener un backup antes de continuar.")
-
-    if not st.session_state.get("mant_confirmar"):
-        if st.button("🔄 Quiero aplicar esta corrección", type="secondary"):
-            st.session_state["mant_confirmar"] = True; st.rerun()
+    info = backup_info()
+    if info:
+        st.success(f"Ultimo backup: {info.get('ts','?')} "
+                   f"- {info.get('filas',0)} filas "
+                   f"- Motivo: {info.get('motivo','?')}")
     else:
-        st.warning("¿Confirmás la corrección masiva? No se puede deshacer.")
-        ca, cb = st.columns(2)
-        with ca:
-            if st.button("✅ Sí, aplicar corrección", type="primary"):
-                with st.spinner("Aplicando corrección y registrando en Historial..."):
-                    n = aplicar_correccion_masiva(
-                        preview, cliente_sel, producto_sel,
-                        nuevo_precio, nuevo_costo,
-                        cambiar_precio, cambiar_costo,
-                        desde_mes, desde_año, hasta_mes, hasta_año,
-                    )
-                st.session_state.pop("mant_preview", None)
-                st.session_state.pop("mant_confirmar", None)
-                st.success(
-                    f"✅ {n} fila(s) corregidas. "
-                    f"Cambios registrados en la hoja 'Historial Cambios'.")
-                st.balloons()
-        with cb:
-            if st.button("❌ Cancelar"):
-                st.session_state.pop("mant_confirmar", None); st.rerun()
+        st.info(f"El archivo se guarda como {BACKUP_FILENAME} en tu carpeta de Drive.")
 
-
-# ── TAB 2: MIGRACIÓN ──────────────────────────────────────────────────────────
-def _tab_migracion():
-    st.markdown("""
-    Convierte todas las fórmulas de la hoja **Pedidos** a valores estáticos.
-    Equivalente a *Copiar → Pegado Especial → Solo Valores* en Excel.
-
-    **Resultado:** el Excel queda 100% libre de fórmulas en la hoja Pedidos.
-    Todos los cálculos futuros los hace la app directamente.
-
-    **⚠️ Importante:** realizá esta operación solo si tenés un backup del Excel.
-    """)
+    st.caption("El backup sobreescribe siempre el mismo archivo. "
+               "Se ejecuta automaticamente antes de operaciones destructivas.")
     st.divider()
 
-    confirm_key = "mant_confirm_migracion"
-    if not st.session_state.get(confirm_key):
-        if st.button("🔄 Quiero convertir fórmulas a valores", type="secondary"):
-            st.session_state[confirm_key] = True; st.rerun()
-    else:
-        st.warning("⚠️ ¿Confirmás? Se modificará la hoja Pedidos de tu Excel.")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("✅ Sí, ejecutar migración", type="primary"):
-                with st.spinner("Migrando... puede tardar 30-60 segundos..."):
-                    try:
-                        resultado = migrar_pedidos_a_valores()
-                        st.success(
-                            f"✅ Migración completada: "
-                            f"**{resultado['filas']} filas** procesadas, "
-                            f"**{resultado['celdas']} fórmulas** convertidas.")
-                        st.session_state.pop(confirm_key, None)
-                    except Exception as e:
-                        st.error(f"❌ Error: {e}")
-                        st.session_state.pop(confirm_key, None)
-        with c2:
-            if st.button("❌ Cancelar"):
-                st.session_state.pop(confirm_key, None); st.rerun()
+    if st.button("Crear Backup Ahora", type="primary", key="bk_crear"):
+        with st.spinner("Subiendo a Drive..."):
+            res = crear_backup(motivo="manual desde Mantenimiento")
+        if res.get("ok"):
+            st.success(f"Backup guardado - {res['filas']} filas - {res['ts']}")
+        else:
+            st.error(f"Error: {res.get('error','desconocido')}")
+        st.rerun()
+
+    st.divider()
+    st.markdown("**Restaurar desde backup**")
+    st.error("PELIGROSO: sobreescribe todos los pedidos actuales.")
+
+    import io
+    import pandas as pd
+
+    uploaded = st.file_uploader(
+        "Subi el CSV de backup para restaurar",
+        type=["csv"], key="bk_upload",
+        help=f"Descarga {BACKUP_FILENAME} de tu Drive y subilo aqui"
+    )
+
+    if uploaded:
+        try:
+            content = uploaded.read().decode("utf-8-sig")
+            lines   = content.splitlines()
+            data_lines = [l for l in lines if not l.startswith("#")]
+            joined  = "\n".join(data_lines)
+            df      = pd.read_csv(io.StringIO(joined),
+                                  header=0, dtype=str).fillna("")
+            st.info(f"Archivo: {len(df)} filas")
+
+            if st.checkbox("Entiendo que se sobreescriben todos los pedidos",
+                           key="bk_confirm"):
+                if st.button("Restaurar", type="secondary", key="bk_restore"):
+                    from gsheets import ws as _ws
+                    import time
+                    sheet = _ws("pedidos")
+                    sheet.clear()
+                    rows = [df.columns.tolist()] + df.values.tolist()
+                    for i in range(0, len(rows), 200):
+                        sheet.append_rows(rows[i:i+200],
+                                          value_input_option="USER_ENTERED")
+                        time.sleep(0.3)
+                    from excel_helper import leer_pedidos
+                    leer_pedidos.clear()
+                    st.success(f"{len(df)} filas restauradas.")
+                    st.rerun()
+        except Exception as e:
+            st.error(f"Error leyendo CSV: {e}")
 
 
-# ── ENTRY POINT ───────────────────────────────────────────────────────────────
+# ── MOSTRAR ────────────────────────────────────────────────────────────────────
 def mostrar():
-    st.markdown("## 🔧 Mantenimiento")
-    if st.button("🏠 Inicio", key="btn_home_mant", type="secondary"):
-        st.session_state["_nav_target"] = "🏠 Inicio"
+    st.markdown("## Mantenimiento")
+    if st.button("Inicio", key="btn_home_mant", type="secondary"):
+        st.session_state["_nav_target"] = "Inicio"
         st.rerun()
     st.divider()
 
-    t1, t2, t3, t4, t5, t6 = st.tabs([
-        "🔧 Corrección Masiva de Precios / Costos",
-        "⚙️ Migración de Datos",
-        "📋 Estructura del Excel",
-        "🛒 Catálogo Cliente",
-        "🔄 Caché",
-        "🔄 Renombrar Clientes",
+    t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
+        "Correccion Masiva",
+        "Migracion de Datos",
+        "Estructura Sheets",
+        "Catalogo Cliente",
+        "Cache",
+        "Renombrar Clientes",
+        "Recuperar Fechas",
+        "Backup Drive",
     ])
     with t1: _tab_correccion()
     with t2: _tab_migracion()
@@ -331,184 +456,5 @@ def mostrar():
     with t4: _tab_catalogo()
     with t5: _tab_cache()
     with t6: _tab_renombrar()
-
-
-# ── TAB 3: ESTRUCTURA DEL EXCEL ──────────────────────────────────────────────
-def _tab_estructura():
-    st.markdown("""
-    Lee la estructura completa del Excel: hojas, tablas, columnas y tipo de contenido
-    (valores estáticos vs fórmulas). Útil para planificar la separación de datos.
-    """)
-    st.divider()
-
-    if st.button("📖 Leer estructura del Excel", type="primary"):
-        from gsheets import HOJAS
-        with st.spinner("Verificando Google Sheets..."):
-            from gsheets import ws as _ws_check
-            hojas_ok = []
-            for k, nombre in HOJAS.items():
-                try:
-                    _ws_check(k)
-                    hojas_ok.append(f"✅ {nombre}")
-                except Exception as e:
-                    hojas_ok.append(f"❌ {nombre}: {e}")
-        st.success(f"Sheets verificadas: {len([h for h in hojas_ok if '✅' in h])}/{len(hojas_ok)}")
-        for h in hojas_ok:
-            st.caption(h)
-        st.divider()
-
-        for hoja in wb.sheetnames:
-            ws = wb[hoja]
-            n_filas = ws.max_row
-            n_cols  = ws.max_column
-
-            # Tablas en la hoja
-            tablas = []
-            try:
-                for t in ws.tables:
-                    nombre_t = getattr(t, "name", None) or \
-                               getattr(t, "displayName", None) or str(t)
-                    tablas.append(nombre_t)
-            except Exception:
-                tablas = []
-
-            # Encabezados (fila 1)
-            headers = []
-            for col in range(1, n_cols + 1):
-                val = ws.cell(row=1, column=col).value
-                if val:
-                    headers.append(str(val))
-
-            # Detectar qué columnas tienen fórmulas (muestra de fila 2)
-            cols_formula = []
-            cols_valor   = []
-            if n_filas > 1:
-                for col in range(1, n_cols + 1):
-                    cell = ws.cell(row=2, column=col)
-                    if isinstance(cell.value, str) and cell.value.startswith("="):
-                        h = headers[col-1] if col-1 < len(headers) else f"Col{col}"
-                        cols_formula.append(h)
-                    elif cell.value is not None:
-                        h = headers[col-1] if col-1 < len(headers) else f"Col{col}"
-                        cols_valor.append(h)
-
-            with st.expander(
-                f"**{hoja}** — {n_filas:,} filas × {n_cols} cols"
-                + (f" — Tablas: {', '.join(tablas)}" if tablas else ""),
-                expanded=False,
-            ):
-                if headers:
-                    st.markdown("**Columnas:**")
-                    st.code(", ".join(headers), language=None)
-                if tablas:
-                    st.markdown(f"**Tablas Excel:** `{'`, `'.join(tablas)}`")
-                if cols_valor:
-                    st.markdown(
-                        f"**✅ Valores estáticos ({len(cols_valor)}):** "
-                        f"{', '.join(cols_valor[:15])}"
-                        + (" ..." if len(cols_valor) > 15 else ""))
-                if cols_formula:
-                    st.markdown(
-                        f"**⚙️ Columnas con fórmulas ({len(cols_formula)}):** "
-                        f"{', '.join(cols_formula[:15])}"
-                        + (" ..." if len(cols_formula) > 15 else ""))
-                if not headers:
-                    st.caption("Hoja vacía o sin encabezados en fila 1.")
-
-        wb.close()
-
-
-
-def _tab_catalogo():
-    """Utilidades para el catálogo de la app del cliente."""
-    st.markdown("""
-    Herramientas para preparar el catálogo que ven los clientes en la app pública.
-    Antes de activar productos individualmente (desde 📦 Productos), preparar la base.
-    """)
-    st.divider()
-
-    st.markdown("#### 1️⃣ Preparar columna 'Para Cotizar' en Listado Antigua")
-    st.caption("Solo necesario si aún no existe esa columna en tu Excel.")
-    if st.button("➕ Agregar columna a Listado Antigua", key="add_col_ant"):
-        with st.spinner("Modificando Excel..."):
-            ok, res = agregar_col_para_cotizar_antigua()
-        if ok:
-            st.success(f"✅ Columna agregada — {res} filas preparadas.")
-        else:
-            st.info(f"ℹ️ {res}")
-
-    st.divider()
-
-    st.markdown("#### 2️⃣ Limpiar 'En Catálogo' para empezar desde cero")
-    st.caption("Borra todos los checkmarks actuales. Luego los llenás manualmente en 📦 Productos.")
-
-    confirm_key = "confirm_limpiar_cat"
-    which = st.radio("¿Cuál lista limpiar?",
-                     ["Listado General", "Listado Antigua", "Ambos"],
-                     key="which_limpiar", horizontal=True)
-
-    if not st.session_state.get(confirm_key):
-        if st.button("🗑 Limpiar 'En Catálogo'", type="secondary", key="btn_limpiar_cat"):
-            st.session_state[confirm_key] = True; st.rerun()
-    else:
-        st.warning(f"⚠️ ¿Confirmás limpiar '{which}'? No se puede deshacer.")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("✅ Sí, limpiar", type="primary", key="ok_limpiar_cat"):
-                with st.spinner("Limpiando..."):
-                    n = 0
-                    if which in ["Listado General", "Ambos"]:
-                        n += limpiar_para_cotizar(False)
-                    if which in ["Listado Antigua", "Ambos"]:
-                        n += limpiar_para_cotizar(True)
-                st.session_state.pop(confirm_key, None)
-                st.success(f"✅ {n} productos limpiados.")
-        with c2:
-            if st.button("❌ Cancelar", key="cancel_limpiar_cat"):
-                st.session_state.pop(confirm_key, None); st.rerun()
-
-
-def _tab_cache():
-    """Limpieza de caché de datos para forzar recarga desde Google Sheets."""
-    st.markdown("### 🔄 Caché de datos")
-    st.markdown("""
-    La app guarda los datos en memoria para ser más rápida.
-    Si acabás de hacer cambios directo en el Excel o necesitás forzar
-    una recarga, usá estos botones.
-    """)
-    st.divider()
-
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        st.markdown("**📦 Pedidos**")
-        st.caption("15,000+ filas — la más pesada")
-        if st.button("🔄 Limpiar caché pedidos",
-                     use_container_width=True, key="clr_ped"):
-            leer_pedidos.clear()
-            st.success("✅ Caché de pedidos limpiado.")
-
-    with c2:
-        st.markdown("**👥 Clientes**")
-        st.caption("Tabla de clientes")
-        if st.button("🔄 Limpiar caché clientes",
-                     use_container_width=True, key="clr_cli"):
-            cargar_clientes.clear()
-            st.success("✅ Caché de clientes limpiado.")
-
-    with c3:
-        st.markdown("**📋 Productos**")
-        st.caption("Listado de precios")
-        if st.button("🔄 Limpiar caché productos",
-                     use_container_width=True, key="clr_prod"):
-            cargar_productos.clear()
-            st.success("✅ Caché de productos limpiado.")
-
-    st.divider()
-    if st.button("🔄 Limpiar TODO el caché", type="primary",
-                 use_container_width=True, key="clr_all"):
-        leer_pedidos.clear()
-        cargar_clientes.clear()
-        cargar_productos.clear()
-        st.success("✅ Todo el caché limpiado. "
-                   "La próxima acción leerá datos frescos de Google Sheets.")
+    with t7: _tab_recuperar_fechas()
+    with t8: _tab_backup()
