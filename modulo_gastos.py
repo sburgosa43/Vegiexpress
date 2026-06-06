@@ -169,54 +169,51 @@ def _ingresos_campo_veggi(pedidos: list, campo_clis: list,
     return inc
 
 
-def _ingresos_detallado(pedidos: list, campo_clis: list,
+def _finanzas_detallado(pedidos: list, campo_clis: list,
                          filtro_fn, cli_zona: dict = None) -> dict:
     """
-    Version detallada para tab Operacion de Gastos.
-    Retorna:
-      Campo:   {cliente: total}
-      Veggi:   {Rio-Guate: {cli:total}, Antigua-Chimal: {cli:total}}
-      Interno: {cliente: total}   — visible pero fuera del P&L
+    Una sola pasada: calcula ingreso Y costo_producto por area.
+    cli_zona debe usar los keys de _GASTOS_VEGGI_MAP: Rio, Antigua, Chimaltenango.
+    Retorna: {"inc": {...}, "costo": {...}}
     """
-    campo_set  = {c.lower().strip() for c in campo_clis}
-    cli_zona   = cli_zona or {}
-    ANTIGUA    = {"Antigua & Chimal"}   # zona que va a Antigua-Chimal
-    ZONAS_RIO     = {"Rio"}              # L01, L02
-    ZONAS_ANTIGUA = {"Antigua & Chimal"} # L03, L04, L10
-    # Guatemala & Santiago (L05/L06) ya están en campo_clis — no deben llegar aquí
+    campo_set = {c.lower().strip() for c in campo_clis}
+    cli_zona  = cli_zona or {}
 
-    inc = {
-        "Campo":   {},
-        "Veggi":   {"Rio": {}, "Antigua-Chimal": {}},
-        "Interno": {},
-    }
+    def _mk():
+        return {
+            "Campo":   {},
+            "Veggi":   {"Rio": {}, "Antigua": {}, "Chimaltenango": {}},
+            "Interno": {},
+        }
+
+    inc   = _mk()
+    costo = _mk()
+
     for p in pedidos:
         if not filtro_fn(p): continue
         if p["status"] == "Cancelado": continue
-        total = _sf(p.get("total", 0))
-        cli   = p["cliente"].lower().strip()
-        nom   = p["cliente"]
+
+        total      = _sf(p.get("total", 0))
+        costo_prod = round(_sf(p.get("costo", 0)) * _sf(p.get("cantidad", 0)), 2)
+        cli        = p["cliente"].lower().strip()
+        nom        = p["cliente"]
 
         if any(x in cli for x in _EXCLUIR_FINANCIERO):
-            continue                               # Wilson: invisible
+            continue  # Wilson: invisible
+
         if any(x in cli for x in _INTERNOS):
-            inc["Interno"][nom] = inc["Interno"].get(nom, 0) + total
-            continue
-        if cli in campo_set:
-            inc["Campo"][nom] = inc["Campo"].get(nom, 0) + total
+            inc["Interno"][nom]   = inc["Interno"].get(nom, 0)   + total
+            costo["Interno"][nom] = costo["Interno"].get(nom, 0) + costo_prod
+        elif cli in campo_set:
+            inc["Campo"][nom]   = inc["Campo"].get(nom, 0)   + total
+            costo["Campo"][nom] = costo["Campo"].get(nom, 0) + costo_prod
         else:
             zona = cli_zona.get(cli, "")
-            if zona in ZONAS_ANTIGUA:
-                inc["Veggi"]["Antigua-Chimal"][nom] = (
-                    inc["Veggi"]["Antigua-Chimal"].get(nom, 0) + total)
-            elif zona in ZONAS_RIO:
-                inc["Veggi"]["Rio"][nom] = (
-                    inc["Veggi"]["Rio"].get(nom, 0) + total)
-            else:
-                # Zona desconocida: va a Río por defecto
-                inc["Veggi"]["Rio"][nom] = (
-                    inc["Veggi"]["Rio"].get(nom, 0) + total)
-    return inc
+            sub  = zona if zona in ("Rio", "Antigua", "Chimaltenango") else "Rio"
+            inc["Veggi"][sub][nom]   = inc["Veggi"][sub].get(nom, 0)   + total
+            costo["Veggi"][sub][nom] = costo["Veggi"][sub].get(nom, 0) + costo_prod
+
+    return {"inc": inc, "costo": costo}
 
 
 def _costo_proyectado(pedidos: list, campo_clis: list, filtro_fn) -> dict:
