@@ -140,8 +140,8 @@ _INTERNOS           = {"veggi hogares"}     # mostrar aparte, no sumar
 # Mapa zonas para Gastos: separa Antigua (L03/L04) de Chimaltenango (L10)
 _GASTOS_VEGGI_MAP = {
     "Rio":           ["L01", "L02"],
-    "Antigua":       ["L03", "L04"],
-    "Chimaltenango": ["L10"],
+    "Antigua":       ["L03"],
+    "Chimaltenango": ["L04"],
 }
 _VEGGI_RIO_PCT  = 0.60
 _VEGGI_ANT_PCT  = 0.20
@@ -333,8 +333,6 @@ def _tab_operacion(pedidos: list, cfg: dict):
     inc     = fin["inc"]
     costo_p = fin["costo"]
     inc_s   = _ingresos_campo_veggi(pedidos, campo_clis, filtro_ped)
-    inc_s_a = _ingresos_campo_veggi(pedidos, campo_clis, filtro_ped_ant)
-    proy    = _costo_proyectado(pedidos, campo_clis, filtro_ped)
 
     # Gastos reales por categoría (sin Casa)
     gas_op  = [g for g in gastos if filtro_gas(g) and g["categoria"] != "Casa"]
@@ -347,25 +345,7 @@ def _tab_operacion(pedidos: list, cfg: dict):
             gas_cat[g["categoria"]].get(g["subcat"], 0) + g["monto"]
 
     total_inc   = sum(inc_s.values())
-    total_gas   = sum(g["monto"] for g in gas_op)
-    total_ant   = sum(g["monto"] for g in gas_ant)
-    ganancia    = total_inc - total_gas
-    margen_pct  = (ganancia / total_inc * 100) if total_inc > 0 else 0
-
-    st.divider()
     st.markdown(f"**{periodo_lbl}**")
-
-    # KPI row
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Ingresos", f"Q{total_inc:,.0f}",
-               delta=f"Q{total_inc-sum(inc_s_a.values()):+,.0f} vs ant.")
-    k2.metric("Gastos", f"Q{total_gas:,.0f}",
-               delta=f"Q{total_gas-total_ant:+,.0f} vs ant.",
-               delta_color="inverse")
-    k3.metric("Ganancia", f"Q{ganancia:,.0f}")
-    k4.metric("Margen", f"{margen_pct:.1f}%")
-
-    st.divider()
 
     # ── Totales por area ──────────────────────────────────────────────────────
     gas_veggi   = gas_cat.get("Veggi", {})
@@ -421,7 +401,7 @@ def _tab_operacion(pedidos: list, cfg: dict):
     st.divider()
 
     # ── Helper: sección detallada por área ────────────────────────────────────
-    def _seccion(title, cli_inc, cli_costo, inc_t, cc_t, gas_op, mn, pct_str="",
+    def _seccion(title, cli_inc, cli_costo, inc_t, cc_t, gas_op_val, mn, pct_str="",
                  show_cc=True):
         st.markdown(f"#### {title}")
         rows = []
@@ -441,9 +421,9 @@ def _tab_operacion(pedidos: list, cfg: dict):
         rows.append(sub)
         if rows[:-1]:
             st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-        if gas_op:
+        if gas_op_val:
             ga, _, gc = st.columns([3, 2, 2])
-            ga.caption(f"(-) Gastos Operativos{pct_str}: Q{gas_op:,.0f}")
+            ga.caption(f"(-) Gastos Operativos{pct_str}: Q{gas_op_val:,.0f}")
             gc.metric("Margen Neto", f"Q{mn:,.0f}",
                       delta=f"{mn/inc_t*100:.1f}%" if inc_t else "—")
         elif inc_t:
@@ -487,12 +467,6 @@ def _tab_operacion(pedidos: list, cfg: dict):
         {"Área": "TOTAL GENERAL",       "Ingreso": _fq(tot_gen_it),"Costo Compra":_fq(tot_gen_cc),"Gastos Op": _fq(tot_gen_gas), "Margen Neto": _fq(tot_gen_mn)},
     ]
     st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True)
-    st.divider()
-    col_g, col_n = st.columns(2)
-    col_g.markdown(f"**Total Gastos Operativos:** Q{total_gas:,.2f}")
-    col_n.markdown(f"**Ganancia Neta Operacional:** Q{ganancia:,.2f} "
-                   f"({margen_pct:.1f}%)")
-
     # Proyección próximas 4 semanas
     if modo == "Semana":
         ult4 = [g["monto"] for g in gastos
