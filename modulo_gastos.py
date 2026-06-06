@@ -97,7 +97,7 @@ def _leer_gastos() -> list[dict]:
     try:
         rows = get_all_rows(_K_G)
         for i, row in enumerate(rows, start=2):
-            while len(row) < 8: row.append("")
+            while len(row) < 9: row.append("")
             fecha = None
             try: fecha = datetime.strptime(str(row[0]).strip(), "%d/%m/%Y").date()
             except: pass
@@ -112,6 +112,7 @@ def _leer_gastos() -> list[dict]:
                 "proveedor":  str(row[5] or ""),
                 "concepto":   str(row[6] or ""),
                 "monto":      _sf(row[7]),
+                "area":        str(row[8] or "").strip(),
             })
     except Exception:
         pass
@@ -119,12 +120,13 @@ def _leer_gastos() -> list[dict]:
 
 
 def _guardar_gasto_row(fecha: date, categoria: str, subcat: str,
-                        proveedor: str, concepto: str, monto: float):
+                        proveedor: str, concepto: str, monto: float,
+                        area: str = ""):
     sem = fecha.isocalendar()[1]
     año = fecha.year
     row = [
         fecha.strftime("%d/%m/%Y"), sem, año,
-        categoria, subcat, proveedor, concepto, monto
+        categoria, subcat, proveedor, concepto, monto, area
     ]
     append_rows(_K_G, [row])
     _leer_gastos.clear()
@@ -308,13 +310,12 @@ def _tab_operacion(pedidos: list, cfg: dict):
     gastos = _leer_gastos()
     campo_clis = cfg["campo_clis"]
 
-    # Mapa cliente → zona (keys con emoji, igual que ZONAS_MAP)
+    # Mapa cliente → zona usando mapa Gastos (separa Antigua de Chimal)
     from data_helper import cargar_clientes as _cc
-    from config import ZONAS_MAP as _ZM
     _clis = _cc()
     cli_zona = {}
     for _c in _clis:
-        for _z, _cods in _ZM.items():
+        for _z, _cods in _GASTOS_VEGGI_MAP.items():
             if _c.get("codigo_lugar","") in _cods:
                 cli_zona[_c["nombre"].lower().strip()] = _z
                 break
