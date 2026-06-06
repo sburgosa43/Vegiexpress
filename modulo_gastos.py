@@ -367,111 +367,126 @@ def _tab_operacion(pedidos: list, cfg: dict):
 
     st.divider()
 
-    # ── Calcular totales por area ─────────────────────────────────────────────
+    # ── Totales por area ──────────────────────────────────────────────────────
     gas_veggi   = gas_cat.get("Veggi", {})
     gas_veggi_t = sum(gas_veggi.values())
-    gas_campo   = gas_cat.get("Campo", {})
-    gas_campo_t = sum(gas_campo.values())
+    gas_campo_d = gas_cat.get("Campo", {})
+    gas_campo_t = sum(gas_campo_d.values())
 
     gas_vrio_t  = round(gas_veggi_t * _VEGGI_RIO_PCT,  2)
     gas_vant_t  = round(gas_veggi_t * _VEGGI_ANT_PCT,  2)
     gas_vchim_t = round(gas_veggi_t * _VEGGI_CHIM_PCT, 2)
 
-    def _area_totals(area_inc, area_costo, gas_op):
-        it = sum(area_inc.values())
-        ct = sum(area_costo.values())
-        return it, ct, it - ct, it - ct - gas_op
+    # Ingreso / CostoCompra por área (de pedidos)
+    campo_it   = sum(inc["Campo"].values())
+    campo_cc   = 0   # Campo no tiene costo de compra — usa gastos reales
+    campo_mn   = campo_it - gas_campo_t
 
-    campo_it, campo_ct, campo_mb, campo_mn = _area_totals(
-        inc["Campo"], costo_p["Campo"], gas_campo_t)
-    vrio_it, vrio_ct, vrio_mb, vrio_mn = _area_totals(
-        inc["Veggi"]["Rio"], costo_p["Veggi"]["Rio"], gas_vrio_t)
-    vant_it, vant_ct, vant_mb, vant_mn = _area_totals(
-        inc["Veggi"]["Antigua"], costo_p["Veggi"]["Antigua"], gas_vant_t)
-    vchim_it, vchim_ct, vchim_mb, vchim_mn = _area_totals(
-        inc["Veggi"]["Chimaltenango"], costo_p["Veggi"]["Chimaltenango"], gas_vchim_t)
+    vrio_it    = sum(inc["Veggi"]["Rio"].values())
+    vrio_cc    = sum(costo_p["Veggi"]["Rio"].values())
+    vrio_mn    = vrio_it - vrio_cc - gas_vrio_t
 
-    tot_it = campo_it + vrio_it + vant_it + vchim_it
-    tot_ct = campo_ct + vrio_ct + vant_ct + vchim_ct
-    tot_gas = gas_campo_t + gas_veggi_t
-    tot_mn  = tot_it - tot_ct - tot_gas
+    vant_it    = sum(inc["Veggi"]["Antigua"].values())
+    vant_cc    = sum(costo_p["Veggi"]["Antigua"].values())
+    vant_mn    = vant_it - vant_cc - gas_vant_t
 
-    # ── RESUMEN OPERACIÓN (4 métricas) ────────────────────────────────────────
+    vchim_it   = sum(inc["Veggi"]["Chimaltenango"].values())
+    vchim_cc   = sum(costo_p["Veggi"]["Chimaltenango"].values())
+    vchim_mn   = vchim_it - vchim_cc - gas_vchim_t
+
+    vh_it      = sum(inc["Interno"].values())
+    vh_cc      = sum(costo_p["Interno"].values())
+    vh_mn      = vh_it - vh_cc
+
+    # Totales operativos (sin Hogares)
+    tot_op_it  = campo_it + vrio_it + vant_it + vchim_it
+    tot_op_cc  = vrio_cc  + vant_cc  + vchim_cc          # Campo no tiene CC
+    tot_op_gas = gas_campo_t + gas_veggi_t
+    tot_op_mn  = campo_mn + vrio_mn + vant_mn + vchim_mn
+
+    # Gran total (incluyendo Hogares)
+    tot_gen_it  = tot_op_it  + vh_it
+    tot_gen_cc  = tot_op_cc  + vh_cc
+    tot_gen_gas = tot_op_gas                              # Hogares sin gastos op
+    tot_gen_mn  = tot_op_mn  + vh_mn
+
+    # ── RESUMEN 4 MÉTRICAS ────────────────────────────────────────────────────
     st.markdown("### Resumen Operación")
     r1, r2, r3, r4 = st.columns(4)
-    r1.metric("Ingresos Totales",  f"Q{tot_it:,.0f}")
-    r2.metric("Costo Productos",   f"Q{tot_ct:,.0f}")
-    r3.metric("Gastos Operativos", f"Q{tot_gas:,.0f}")
-    r4.metric("Margen Neto",       f"Q{tot_mn:,.0f}",
-              delta=f"{tot_mn/tot_it*100:.1f}%" if tot_it else "—")
+    r1.metric("Ingresos",      f"Q{tot_gen_it:,.0f}")
+    r2.metric("Costo Compra",  f"Q{tot_gen_cc:,.0f}")
+    r3.metric("Gastos Op.",    f"Q{tot_gen_gas:,.0f}")
+    r4.metric("Margen Neto",   f"Q{tot_gen_mn:,.0f}",
+              delta=f"{tot_gen_mn/tot_gen_it*100:.1f}%" if tot_gen_it else "—")
     st.divider()
 
-    # ── Helper para tabla de clientes con sub-total ───────────────────────────
-    def _render_area(title, area_inc, area_costo, inc_t, costo_t, mb_t, mn_t, gas_op, pct_str=""):
+    # ── Helper: sección detallada por área ────────────────────────────────────
+    def _seccion(title, cli_inc, cli_costo, inc_t, cc_t, gas_op, mn, pct_str="",
+                 show_cc=True):
         st.markdown(f"#### {title}")
         rows = []
-        for cli in sorted(area_inc, key=lambda x: -area_inc[x]):
-            ic = area_inc[cli]
-            cc = area_costo.get(cli, 0)
-            rows.append({
-                "Cliente":  cli,
-                "Ingreso":  f"Q{ic:,.0f}",
-                "Costo":    f"Q{cc:,.0f}",
-                "M. Bruto": f"Q{ic-cc:,.0f}",
-            })
-        # subtotal row
-        rows.append({
-            "Cliente":  "── Sub Total",
-            "Ingreso":  f"Q{inc_t:,.0f}",
-            "Costo":    f"Q{costo_t:,.0f}",
-            "M. Bruto": f"Q{mb_t:,.0f}",
-        })
+        for cli in sorted(cli_inc, key=lambda x: -cli_inc[x]):
+            ic = cli_inc[cli]
+            cc = cli_costo.get(cli, 0) if show_cc else None
+            row = {"Cliente": cli, "Ingreso": f"Q{ic:,.0f}"}
+            if show_cc:
+                row["Costo Compra"] = f"Q{cc:,.0f}"
+                row["M. Bruto"]     = f"Q{ic-cc:,.0f}"
+            rows.append(row)
+        # Sub total
+        sub = {"Cliente": "── Sub Total", "Ingreso": f"Q{inc_t:,.0f}"}
+        if show_cc:
+            sub["Costo Compra"] = f"Q{cc_t:,.0f}"
+            sub["M. Bruto"]     = f"Q{inc_t-cc_t:,.0f}"
+        rows.append(sub)
         if rows[:-1]:
             st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
         if gas_op:
-            ga, gb, gc = st.columns([3,2,2])
+            ga, _, gc = st.columns([3, 2, 2])
             ga.caption(f"(-) Gastos Operativos{pct_str}: Q{gas_op:,.0f}")
-            gc.metric("Margen Neto", f"Q{mn_t:,.0f}",
-                      delta=f"{mn_t/inc_t*100:.1f}%" if inc_t else "—")
+            gc.metric("Margen Neto", f"Q{mn:,.0f}",
+                      delta=f"{mn/inc_t*100:.1f}%" if inc_t else "—")
+        elif inc_t:
+            st.caption(f"Margen: Q{mn:,.0f}"
+                       + (f" ({mn/inc_t*100:.1f}%)" if inc_t else ""))
         st.divider()
 
-    # ── DETALLE POR AREA ──────────────────────────────────────────────────────
-    _render_area("Campo", inc["Campo"], costo_p["Campo"],
-                 campo_it, campo_ct, campo_mb, campo_mn, gas_campo_t)
+    # ── SECCIONES POR ÁREA ────────────────────────────────────────────────────
+    _seccion("Campo",
+             inc["Campo"], costo_p["Campo"],
+             campo_it, 0, gas_campo_t, campo_mn,
+             show_cc=False)
 
-    _render_area("Veggi — Río", inc["Veggi"]["Rio"], costo_p["Veggi"]["Rio"],
-                 vrio_it, vrio_ct, vrio_mb, vrio_mn, gas_vrio_t, " (60%)")
+    _seccion("Veggi — Río",
+             inc["Veggi"]["Rio"], costo_p["Veggi"]["Rio"],
+             vrio_it, vrio_cc, gas_vrio_t, vrio_mn, " (60%)")
 
-    _render_area("Veggi — Antigua", inc["Veggi"]["Antigua"], costo_p["Veggi"]["Antigua"],
-                 vant_it, vant_ct, vant_mb, vant_mn, gas_vant_t, " (20%)")
+    _seccion("Veggi — Antigua",
+             inc["Veggi"]["Antigua"], costo_p["Veggi"]["Antigua"],
+             vant_it, vant_cc, gas_vant_t, vant_mn, " (20%)")
 
-    _render_area("Veggi — Chimaltenango", inc["Veggi"]["Chimaltenango"],
-                 costo_p["Veggi"]["Chimaltenango"],
-                 vchim_it, vchim_ct, vchim_mb, vchim_mn, gas_vchim_t, " (20%)")
+    _seccion("Veggi — Chimaltenango",
+             inc["Veggi"]["Chimaltenango"], costo_p["Veggi"]["Chimaltenango"],
+             vchim_it, vchim_cc, gas_vchim_t, vchim_mn, " (20%)")
 
-    # ── TABLA RESUMEN TOTAL ────────────────────────────────────────────────────
-    st.markdown("#### Total General")
-    tot_rows = [
-        {"Área": "Campo",               "Ingreso": f"Q{campo_it:,.0f}", "Costo": f"Q{campo_ct:,.0f}", "Gas. Op": f"Q{gas_campo_t:,.0f}", "Margen Neto": f"Q{campo_mn:,.0f}"},
-        {"Área": "Veggi Río",           "Ingreso": f"Q{vrio_it:,.0f}",  "Costo": f"Q{vrio_ct:,.0f}",  "Gas. Op": f"Q{gas_vrio_t:,.0f}",  "Margen Neto": f"Q{vrio_mn:,.0f}"},
-        {"Área": "Veggi Antigua",       "Ingreso": f"Q{vant_it:,.0f}",  "Costo": f"Q{vant_ct:,.0f}",  "Gas. Op": f"Q{gas_vant_t:,.0f}",  "Margen Neto": f"Q{vant_mn:,.0f}"},
-        {"Área": "Veggi Chimaltenango", "Ingreso": f"Q{vchim_it:,.0f}", "Costo": f"Q{vchim_ct:,.0f}", "Gas. Op": f"Q{gas_vchim_t:,.0f}", "Margen Neto": f"Q{vchim_mn:,.0f}"},
-        {"Área": "── TOTAL",            "Ingreso": f"Q{tot_it:,.0f}",   "Costo": f"Q{tot_ct:,.0f}",   "Gas. Op": f"Q{tot_gas:,.0f}",     "Margen Neto": f"Q{tot_mn:,.0f}"},
+    # ── TABLA RESUMEN ─────────────────────────────────────────────────────────
+    st.markdown("#### Resumen por Área")
+
+    def _fq(v): return f"Q{v:,.0f}"
+    def _fd(v): return "—"
+
+    filas = [
+        {"Área": "Campo",               "Ingreso": _fq(campo_it), "Costo Compra": _fd(0),    "Gastos Op": _fq(gas_campo_t), "Margen Neto": _fq(campo_mn)},
+        {"Área": "Veggi Río",           "Ingreso": _fq(vrio_it),  "Costo Compra": _fq(vrio_cc),  "Gastos Op": _fq(gas_vrio_t),  "Margen Neto": _fq(vrio_mn)},
+        {"Área": "Veggi Antigua",       "Ingreso": _fq(vant_it),  "Costo Compra": _fq(vant_cc),  "Gastos Op": _fq(gas_vant_t),  "Margen Neto": _fq(vant_mn)},
+        {"Área": "Veggi Chimaltenango", "Ingreso": _fq(vchim_it), "Costo Compra": _fq(vchim_cc), "Gastos Op": _fq(gas_vchim_t), "Margen Neto": _fq(vchim_mn)},
+        {"Área": "── TOTAL Op.",        "Ingreso": _fq(tot_op_it),"Costo Compra": _fq(tot_op_cc),"Gastos Op": _fq(tot_op_gas),  "Margen Neto": _fq(tot_op_mn)},
+        {"Área": "",                    "Ingreso": "",             "Costo Compra": "",             "Gastos Op": "",               "Margen Neto": ""},
+        {"Área": "Veggi Hogares",       "Ingreso": _fq(vh_it),    "Costo Compra": _fq(vh_cc),     "Gastos Op": _fd(0),           "Margen Neto": _fq(vh_mn)},
+        {"Área": "",                    "Ingreso": "",             "Costo Compra": "",             "Gastos Op": "",               "Margen Neto": ""},
+        {"Área": "TOTAL GENERAL",       "Ingreso": _fq(tot_gen_it),"Costo Compra":_fq(tot_gen_cc),"Gastos Op": _fq(tot_gen_gas), "Margen Neto": _fq(tot_gen_mn)},
     ]
-    st.dataframe(pd.DataFrame(tot_rows), hide_index=True, use_container_width=True)
-
-    # ── VEGGI HOGARES — solo seguimiento producto ─────────────────────────────
-    vh_inc   = inc["Interno"]
-    vh_costo = costo_p["Interno"]
-    if vh_inc or vh_costo:
-        vi_t = sum(vh_inc.values()); vc_t = sum(vh_costo.values())
-        st.divider()
-        _render_area(
-            "ⓘ Veggi Hogares (excluido del P&L)",
-            vh_inc, vh_costo,
-            vi_t, vc_t, vi_t - vc_t, vi_t - vc_t, 0
-        )
-        st.caption("Negocio de entregas a hogares — solo seguimiento de inversión en producto.")
+    st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True)
     st.divider()
     col_g, col_n = st.columns(2)
     col_g.markdown(f"**Total Gastos Operativos:** Q{total_gas:,.2f}")
