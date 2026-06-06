@@ -433,15 +433,15 @@ def _tab_operacion(pedidos: list, cfg: dict):
             _tbl(vrio_inc)
 
     # ── P&L VEGGI (ANTIGUA-CHIMAL) ────────────────────────────────────────────
-    vant_inc    = inc["Veggi"]["Antigua-Chimal"]
-    vant_costo  = costo_p["Veggi"]["Antigua-Chimal"]
+    vant_inc    = inc["Veggi"]["Antigua"]
+    vant_costo  = costo_p["Veggi"]["Antigua"]
     vant_inc_t  = sum(vant_inc.values())
     vant_cost_t = sum(vant_costo.values())
     gas_vant_t  = round(gas_veggi_t * _VEGGI_ANT_PCT, 2)
     vant_mn     = vant_inc_t - vant_cost_t - gas_vant_t
 
     with st.expander(
-            f"**Veggi Antigua-Chimal** — Ing Q{vant_inc_t:,.0f} · "
+            f"**Veggi Antigua** — Ing Q{vant_inc_t:,.0f} · "
             f"CostoProd Q{vant_cost_t:,.0f} · **Neto Q{vant_mn:,.0f}**",
             expanded=True):
         _margen_row(vant_inc_t, vant_cost_t, gas_vant_t)
