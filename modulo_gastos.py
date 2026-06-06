@@ -137,6 +137,16 @@ def _guardar_gasto_row(fecha: date, categoria: str, subcat: str,
 _EXCLUIR_FINANCIERO = {"wilson"}          # excluye totalmente
 _INTERNOS           = {"veggi hogares"}     # mostrar aparte, no sumar
 
+# Mapa zonas para Gastos: separa Antigua (L03/L04) de Chimaltenango (L10)
+_GASTOS_VEGGI_MAP = {
+    "Rio":           ["L01", "L02"],
+    "Antigua":       ["L03", "L04"],
+    "Chimaltenango": ["L10"],
+}
+_VEGGI_RIO_PCT  = 0.60
+_VEGGI_ANT_PCT  = 0.20
+_VEGGI_CHIM_PCT = 0.20
+
 def _ingresos_campo_veggi(pedidos: list, campo_clis: list,
                            filtro_fn) -> dict:
     """
