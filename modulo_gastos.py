@@ -497,35 +497,115 @@ def _tab_casa(cfg: dict):
 
 
 # ── TAB 4: Historial ──────────────────────────────────────────────────────────
-def _tab_historial():
+def _tab_historial(cfg: dict):
     gastos = _leer_gastos()
     if not gastos:
         st.info("Sin gastos registrados.")
         return
 
-    df = pd.DataFrame([{
-        "Fecha":      g["fecha"].strftime("%d/%m/%Y") if g["fecha"] else "",
-        "Semana":     g["semana"],
-        "Categoria":  g["categoria"],
-        "SubCategoria": g["subcat"],
-        "Area":       g["area"],
-        "Frecuencia": g["frecuencia"],
-        "Proveedor":  g["proveedor"],
-        "Concepto":   g["concepto"],
-        "Monto (Q)":  g["monto"],
-    } for g in reversed(gastos)])
-
+    # ── Filtros ───────────────────────────────────────────────────────────────
     c1, c2, c3 = st.columns(3)
-    cats_hist = ["Todas"] + CATS
-    f_cat  = c1.selectbox("Categoria", cats_hist, key="hi_cat")
+    f_cat  = c1.selectbox("Categoria", ["Todas"] + CATS, key="hi_cat")
     f_año  = c2.number_input("Año", 2020, 2030, date.today().year, key="hi_año")
     f_frec = c3.selectbox("Frecuencia", ["Todas","Semanal","Mensual"], key="hi_frec")
 
-    if f_cat != "Todas":  df = df[df["Categoria"] == f_cat]
-    if f_frec != "Todas": df = df[df["Frecuencia"] == f_frec]
+    filtrados = [g for g in gastos
+                 if (f_cat == "Todas" or g["categoria"] == f_cat)
+                 and (g["año"] == f_año)
+                 and (f_frec == "Todas" or g["frecuencia"] == f_frec)]
+
+    df = pd.DataFrame([{
+        "Fecha":        g["fecha"].strftime("%d/%m/%Y") if g["fecha"] else "",
+        "Semana":       g["semana"],
+        "Categoria":    g["categoria"],
+        "SubCategoria": g["subcat"],
+        "Area":         g["area"],
+        "Frecuencia":   g["frecuencia"],
+        "Proveedor":    g["proveedor"],
+        "Concepto":     g["concepto"],
+        "Monto (Q)":    g["monto"],
+    } for g in reversed(filtrados)])
 
     st.dataframe(df, hide_index=True, use_container_width=True)
-    st.caption(f"{len(df)} registros · Total: Q{df['Monto (Q)'].sum():,.2f}")
+    if not df.empty:
+        st.caption(f"{len(df)} registros · Total: Q{df['Monto (Q)'].sum():,.2f}")
+
+    # ── Editar / Eliminar ─────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("#### Editar / Eliminar registro")
+
+    if not filtrados:
+        st.info("Sin registros para el filtro seleccionado.")
+        return
+
+    opciones = {
+        f"Fila {g['row_num']} | {g['fecha'].strftime('%d/%m/%Y') if g['fecha'] else '?'}"
+        f" | {g['categoria']} / {g['subcat']} | Q{g['monto']:,.0f}": g
+        for g in filtrados
+    }
+    sel_label = st.selectbox("Selecciona registro", list(opciones.keys()), key="hi_sel")
+    sel = opciones[sel_label]
+
+    with st.form("form_edit_gasto"):
+        e1, e2 = st.columns(2)
+        fecha_e = e1.date_input("Fecha", value=sel["fecha"] or date.today(), key="he_fecha")
+        cat_e   = e2.selectbox("Categoria", CATS,
+                                index=CATS.index(sel["categoria"]) if sel["categoria"] in CATS else 0,
+                                key="he_cat")
+
+        subs_e  = cfg["subcats"].get(cat_e, [])
+        subcat_e = st.selectbox("SubCategoria", subs_e,
+                                 index=subs_e.index(sel["subcat"]) if sel["subcat"] in subs_e else 0,
+                                 key="he_sub") if subs_e else                    st.text_input("SubCategoria", value=sel["subcat"], key="he_sub_txt")
+
+        area_e = ""
+        if cat_e == "Veggi":
+            areas = ["Rio","Antigua","Chimaltenango","Hogares"]
+            area_e = st.selectbox("Area", areas,
+                                   index=areas.index(sel["area"]) if sel["area"] in areas else 0,
+                                   key="he_area")
+
+        frec_opts = ["Semanal","Mensual"]
+        frec_e = st.selectbox("Frecuencia", frec_opts,
+                               index=frec_opts.index(sel["frecuencia"]) if sel["frecuencia"] in frec_opts else 0,
+                               key="he_frec")
+
+        f1, f2 = st.columns(2)
+        prov_e  = f1.text_input("Proveedor", value=sel["proveedor"], key="he_prov")
+        conc_e  = f2.text_input("Concepto",  value=sel["concepto"],  key="he_conc")
+        monto_e = st.number_input("Monto (Q)", value=float(sel["monto"]),
+                                   min_value=0.0, step=5.0, key="he_monto")
+
+        b1, b2 = st.columns(2)
+        guardar  = b1.form_submit_button("💾 Actualizar", type="primary")
+        eliminar = b2.form_submit_button("🗑️ Eliminar", type="secondary")
+
+    if guardar:
+        sem_e = fecha_e.isocalendar()[1]
+        año_e = fecha_e.year
+        upd = [
+            {"range": f"A{sel['row_num']}", "values": [[fecha_e.strftime("%d/%m/%Y")]]},
+            {"range": f"B{sel['row_num']}", "values": [[sem_e]]},
+            {"range": f"C{sel['row_num']}", "values": [[año_e]]},
+            {"range": f"D{sel['row_num']}", "values": [[cat_e]]},
+            {"range": f"E{sel['row_num']}", "values": [[subcat_e]]},
+            {"range": f"F{sel['row_num']}", "values": [[area_e]]},
+            {"range": f"G{sel['row_num']}", "values": [[prov_e]]},
+            {"range": f"H{sel['row_num']}", "values": [[conc_e]]},
+            {"range": f"I{sel['row_num']}", "values": [[monto_e]]},
+            {"range": f"J{sel['row_num']}", "values": [[frec_e]]},
+        ]
+        update_cells(_K_G, upd)
+        _leer_gastos.clear()
+        st.success("Registro actualizado.")
+        st.rerun()
+
+    if eliminar:
+        from gsheets import delete_rows
+        delete_rows(_K_G, [sel["row_num"]])
+        _leer_gastos.clear()
+        st.success("Registro eliminado.")
+        st.rerun()
 
 
 # ── TAB 5: Categorias ─────────────────────────────────────────────────────────
@@ -635,5 +715,5 @@ def mostrar():
     with t1: _tab_registrar(cfg)
     with t2: _tab_operacion(pedidos, cfg)
     with t3: _tab_casa(cfg)
-    with t4: _tab_historial()
+    with t4: _tab_historial(cfg)
     with t5: _tab_categorias()
