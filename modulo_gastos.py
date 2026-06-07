@@ -525,7 +525,7 @@ def _tab_historial():
     if f_frec != "Todas": df = df[df["Frecuencia"] == f_frec]
 
     st.dataframe(df, hide_index=True, use_container_width=True)
-    st.caption(f"{len(df)} registros · Total: Q{df['Monto'].sum():,.2f}")
+    st.caption(f"{len(df)} registros · Total: Q{df['Monto (Q)'].sum():,.2f}")
 
 
 # ── TAB 5: Categorias ─────────────────────────────────────────────────────────
