@@ -233,6 +233,15 @@ def _finanzas_detallado(pedidos: list, campo_clis: list,
     return {"inc": inc, "costo": costo}
 
 
+def _setup_gastos_headers():
+    """Escribe los encabezados correctos en la fila 1 del Sheet Gastos."""
+    from gsheets import update_cells
+    headers = [["Fecha","Semana","Año","Categoria","SubCategoria",
+                 "Area","Proveedor","Concepto","Monto","Frecuencia"]]
+    sheet = _ws(_K_G)
+    sheet.update("A1:J1", headers)
+
+
 # ── TAB 1: Registrar ──────────────────────────────────────────────────────────
 def _tab_registrar(cfg: dict):
     st.markdown("#### Registrar Gasto")
@@ -496,14 +505,14 @@ def _tab_historial():
 
     df = pd.DataFrame([{
         "Fecha":      g["fecha"].strftime("%d/%m/%Y") if g["fecha"] else "",
-        "Sem":        g["semana"],
+        "Semana":     g["semana"],
         "Categoria":  g["categoria"],
-        "SubCat":     g["subcat"],
+        "SubCategoria": g["subcat"],
         "Area":       g["area"],
+        "Frecuencia": g["frecuencia"],
         "Proveedor":  g["proveedor"],
         "Concepto":   g["concepto"],
-        "Monto":      g["monto"],
-        "Frecuencia": g["frecuencia"],
+        "Monto (Q)":  g["monto"],
     } for g in reversed(gastos)])
 
     c1, c2, c3 = st.columns(3)
@@ -578,6 +587,17 @@ def _tab_categorias():
                 _guardar_config(subcats, campo_clis, budgets)
                 st.success(f"'{nc}' agregado.")
                 st.rerun()
+    st.divider()
+
+    # ── Encabezados Sheet ────────────────────────────────────────────────────
+    st.markdown("**Encabezados del Sheet de Gastos**")
+    st.caption("Si las columnas en Google Sheets no coinciden con los datos, "
+               "ejecuta esto una vez para corregir la fila de encabezados.")
+    if st.button("Actualizar encabezados en Sheet Gastos", key="fix_headers"):
+        _setup_gastos_headers()
+        st.success("Encabezados actualizados: "
+                   "Fecha | Semana | Año | Categoria | SubCategoria | "
+                   "Area | Proveedor | Concepto | Monto | Frecuencia")
     st.divider()
 
     # ── Presupuestos Casa ─────────────────────────────────────────────────────
