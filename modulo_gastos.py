@@ -540,13 +540,19 @@ def _tab_historial(cfg: dict):
         st.info("Sin registros para el filtro seleccionado.")
         return
 
-    opciones = {
+    PLACEHOLDER = "— Seleccionar registro —"
+    opciones = {PLACEHOLDER: None} | {
         f"Fila {g['row_num']} | {g['fecha'].strftime('%d/%m/%Y') if g['fecha'] else '?'}"
         f" | {g['categoria']} / {g['subcat']} | Q{g['monto']:,.0f}": g
         for g in filtrados
     }
-    sel_label = st.selectbox("Selecciona registro", list(opciones.keys()), key="hi_sel")
+    sel_label = st.selectbox("Selecciona registro para editar / eliminar",
+                              list(opciones.keys()), key="hi_sel")
     sel = opciones[sel_label]
+
+    if sel is None:
+        st.caption("Selecciona un registro arriba para ver el formulario de edición.")
+        return
 
     with st.form("form_edit_gasto"):
         e1, e2 = st.columns(2)
@@ -601,6 +607,7 @@ def _tab_historial(cfg: dict):
         ]
         update_cells(_K_G, upd)
         _leer_gastos.clear()
+        st.session_state.pop("hi_sel", None)
         st.success("Registro actualizado.")
         st.rerun()
 
@@ -608,6 +615,7 @@ def _tab_historial(cfg: dict):
         from gsheets import delete_rows
         delete_rows(_K_G, [sel["row_num"]])
         _leer_gastos.clear()
+        st.session_state.pop("hi_sel", None)
         st.success("Registro eliminado.")
         st.rerun()
 
