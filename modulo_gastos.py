@@ -506,14 +506,16 @@ def _tab_historial(cfg: dict):
         return
 
     # ── Filtros ───────────────────────────────────────────────────────────────
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     f_cat  = c1.selectbox("Categoria", ["Todas"] + CATS, key="hi_cat")
     f_año  = c2.number_input("Año", 2020, 2030, date.today().year, key="hi_año")
-    f_frec = c3.selectbox("Frecuencia", ["Todas","Semanal","Mensual"], key="hi_frec")
+    f_sem  = c3.number_input("Semana (0=todas)", 0, 53, 0, key="hi_sem")
+    f_frec = c4.selectbox("Frecuencia", ["Todas","Semanal","Mensual"], key="hi_frec")
 
     filtrados = [g for g in gastos
                  if (f_cat == "Todas" or g["categoria"] == f_cat)
                  and (g["año"] == f_año)
+                 and (f_sem == 0 or g["semana"] == f_sem)
                  and (f_frec == "Todas" or g["frecuencia"] == f_frec)]
 
     df = pd.DataFrame([{
