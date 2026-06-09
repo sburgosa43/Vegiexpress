@@ -37,8 +37,8 @@ _MENSUAL_SUBCATS = {
 # ── Subcategorias default por categoria ──────────────────────────────────────
 SUBCATS_DEFAULT = {
     "Campo":   ["MO Campo","Agroquimicos","Fertilizantes","Semilla",
-                "Transporte Campo","Riego/Agua Campo","Energia Campo",
-                "Herramientas/Equipo","Otros Campo"],
+                "Transporte Campo","Alquiler Campo","Riego/Agua Campo",
+                "Energia Campo","Herramientas/Equipo","Otros Campo"],
     "Veggi":   ["MO Veggi","Empaque","Transporte Veggi",
                 "Energia Veggi","Agua Veggi","Comunicaciones",
                 "Mantenimiento","Alquiler","Otros Veggi"],
@@ -46,9 +46,11 @@ SUBCATS_DEFAULT = {
     "Casa":    ["Colegios","Transporte Casa","Ocio",
                 "Energia Casa","Agua Casa","Celulares",
                 "Seguros","Otros Casa"],
+    "Financiero": ["Prestamo Capital","Credito Capital",
+                   "Credito Interes","Otros Financiero"],
 }
 
-CATS = ["Campo","Veggi","Compras","Casa"]
+CATS = ["Campo","Veggi","Compras","Casa","Financiero"]
 CAMPO_CLIENTS_DEFAULT = ["aldyk","tierra fria","legume","4 pinos","cebollines"]
 PROVEEDORES = ["CENMA","Patojas","El Huerto","Productor Directo",
                "Importado","Otro","Sin Proveedor"]
@@ -558,12 +560,14 @@ def _tab_historial(cfg: dict):
                                  index=subs_e.index(sel["subcat"]) if sel["subcat"] in subs_e else 0,
                                  key="he_sub") if subs_e else                    st.text_input("SubCategoria", value=sel["subcat"], key="he_sub_txt")
 
-        area_e = ""
-        if cat_e == "Veggi":
-            areas = ["Rio","Antigua","Chimaltenango","Hogares"]
-            area_e = st.selectbox("Area", areas,
-                                   index=areas.index(sel["area"]) if sel["area"] in areas else 0,
-                                   key="he_area")
+        areas  = ["","Rio","Antigua","Chimaltenango","Hogares"]
+        area_e = st.selectbox(
+            "Area (solo para Veggi)",
+            areas,
+            index=areas.index(sel["area"]) if sel["area"] in areas else 0,
+            key="he_area",
+            help="Selecciona el area si es un gasto Veggi"
+        )
 
         frec_opts = ["Semanal","Mensual"]
         frec_e = st.selectbox("Frecuencia", frec_opts,
@@ -705,15 +709,13 @@ def mostrar():
     from excel_helper import leer_pedidos
     pedidos = leer_pedidos()
 
-    t1, t2, t3, t4, t5 = st.tabs([
+    t1, t2, t3, t4 = st.tabs([
         "Registrar",
         "Operacion",
-        "Casa",
         "Historial",
         "Categorias",
     ])
     with t1: _tab_registrar(cfg)
     with t2: _tab_operacion(pedidos, cfg)
-    with t3: _tab_casa(cfg)
-    with t4: _tab_historial(cfg)
-    with t5: _tab_categorias()
+    with t3: _tab_historial(cfg)
+    with t4: _tab_categorias()

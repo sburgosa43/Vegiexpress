@@ -32,6 +32,7 @@ MENU = [
     "📦 Pedidos a Proveedores",
     "💰 Flujo de Caja",
     "💳 Gastos",
+    "🏠 Casa / Personal",
     "📊 Dashboard",
     "🔧 Mantenimiento",
     "🧮 Cotizador",
@@ -72,6 +73,10 @@ elif pagina.startswith("🏠"):
 elif pagina.startswith("💳"):
     import modulo_gastos
     modulo_gastos.mostrar()
+
+elif pagina == "🏠 Casa / Personal":
+    import modulo_casa
+    modulo_casa.mostrar()
 
 elif pagina.startswith("💰"):
     import modulo_flujo_caja
