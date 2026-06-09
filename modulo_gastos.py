@@ -509,7 +509,8 @@ def _tab_historial(cfg: dict):
     c1, c2, c3, c4 = st.columns(4)
     f_cat  = c1.selectbox("Categoria", ["Todas"] + CATS, key="hi_cat")
     f_año  = c2.number_input("Año", 2020, 2030, date.today().year, key="hi_año")
-    f_sem  = c3.number_input("Semana (0=todas)", 0, 53, 0, key="hi_sem")
+    sem_def = date.today().isocalendar()[1]
+    f_sem  = c3.number_input("Semana (0=todas)", 0, 53, sem_def, key="hi_sem")
     f_frec = c4.selectbox("Frecuencia", ["Todas","Semanal","Mensual"], key="hi_frec")
 
     filtrados = [g for g in gastos
