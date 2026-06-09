@@ -27,8 +27,13 @@ UNIDADES   = ["Libra","Unidad","Manojo","Caja","Kilo","Onza","Docena","Bandeja",
 SEGMENTOS  = ["Vegetales","Frutas","Hierbas","Congelados","Especias","Flores","Otros"]
 TIPOS_PROD = ["Fresco","Proceso","Seco","Congelado","Envasado","Otro"]
 TIPOS_P2   = ["Premium","Alto","Media Alta","Media","Media Baja","Baja","Sin Segmento"]
-PROVEEDORES= ["CENMA","Patojas","El Huerto","Productor Directo",
-               "Importado","Otro","Sin Proveedor"]
+def _proveedores():
+    try:
+        from data_helper import get_proveedores
+        return get_proveedores()
+    except Exception:
+        return ["CENMA","Patojas","El Huerto","Productor Directo",
+                "Importado","Otro","Sin Proveedor"]
 COTIZAR_OPC= ["","Si","No"]
 
 SEGS_PCT   = {"Premium":50,"Alto":40,"Media Alta":35,"Media":30,
@@ -84,8 +89,8 @@ def _form_producto(prefill: dict = None, key_prefix: str = "new",
                 index=SEGMENTOS.index(pf["segmento"]) if pf.get("segmento") in SEGMENTOS else 0)
             unidad_despacho = st.number_input("Unidad despacho",
                 value=int(pf.get("unidad_despacho", 1)), min_value=1)
-            proveedor = st.selectbox("Proveedor", PROVEEDORES,
-                index=PROVEEDORES.index(pf["proveedor"]) if pf.get("proveedor") in PROVEEDORES else 0)
+            proveedor = st.selectbox("Proveedor", _proveedores(),
+                index=_proveedores().index(pf["proveedor"]) if pf.get("proveedor") in _proveedores() else 0)
         with col2:
             tipo2 = st.selectbox("Segmentación de margen", TIPOS_P2,
                 index=TIPOS_P2.index(pf["tipo_producto2"]) if pf.get("tipo_producto2") in TIPOS_P2 else 3)

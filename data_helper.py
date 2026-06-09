@@ -70,3 +70,15 @@ def cargar_productos(es_antigua: bool = False,
             "tipo_producto2": str(row[20] if not es_antigua else row[10] or "").strip(),
         })
     return prods
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_proveedores() -> list[str]:
+    """Lista dinamica de proveedores unicos del catalogo de productos."""
+    from excel_helper import leer_productos_con_fila
+    prods = leer_productos_con_fila(False) + leer_productos_con_fila(True)
+    found = sorted({p.get("proveedor","").strip()
+                    for p in prods if p.get("proveedor","").strip()})
+    if "Sin Proveedor" not in found:
+        found.append("Sin Proveedor")
+    return found

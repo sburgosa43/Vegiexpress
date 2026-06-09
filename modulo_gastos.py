@@ -52,8 +52,13 @@ SUBCATS_DEFAULT = {
 
 CATS = ["Campo","Veggi","Compras","Casa","Financiero"]
 CAMPO_CLIENTS_DEFAULT = ["aldyk","tierra fria","legume","4 pinos","cebollines"]
-PROVEEDORES = ["CENMA","Patojas","El Huerto","Productor Directo",
-               "Importado","Otro","Sin Proveedor"]
+def _proveedores():
+    try:
+        from data_helper import get_proveedores
+        return get_proveedores()
+    except Exception:
+        return ["CENMA","Patojas","El Huerto","Productor Directo",
+                "Importado","Otro","Sin Proveedor"]
 
 
 # ── Helpers numericos ─────────────────────────────────────────────────────────
@@ -270,7 +275,8 @@ def _tab_registrar(cfg: dict):
                               key="gr_frec",
                               help="Mensual: se prorratea por semanas del mes al ver por semana")
 
-    proveedor = st.text_input("Proveedor / Pagado a", key="gr_prov")
+    proveedor = st.selectbox("Proveedor / Pagado a",
+                          [""] + _proveedores(), key="gr_prov")
     concepto  = st.text_input("Concepto", key="gr_conc")
     monto     = st.number_input("Monto (Q)", min_value=0.0, step=5.0, key="gr_monto")
 
@@ -584,7 +590,9 @@ def _tab_historial(cfg: dict):
                                key="he_frec")
 
         f1, f2 = st.columns(2)
-        prov_e  = f1.text_input("Proveedor", value=sel["proveedor"], key="he_prov")
+        _provs_e = [""] + _proveedores()
+        _pi      = _provs_e.index(sel["proveedor"]) if sel["proveedor"] in _provs_e else 0
+        prov_e   = f1.selectbox("Proveedor", _provs_e, index=_pi, key="he_prov")
         conc_e  = f2.text_input("Concepto",  value=sel["concepto"],  key="he_conc")
         monto_e = st.number_input("Monto (Q)", value=float(sel["monto"]),
                                    min_value=0.0, step=5.0, key="he_monto")

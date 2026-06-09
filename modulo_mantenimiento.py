@@ -369,6 +369,83 @@ def _tab_backup():
 
 
 # ── MOSTRAR ────────────────────────────────────────────────────────────────────
+def _tab_proveedores():
+    """Tab: mantenimiento de proveedores — ver, renombrar."""
+    st.markdown("#### Proveedores")
+    st.caption("Lista dinamica leida del catalogo de productos. "
+               "Para agregar un proveedor nuevo, asignalo a un producto en "
+               "Productos → Actualizar.")
+
+    from excel_helper import leer_productos_con_fila
+    from gsheets      import update_cells
+    from data_helper  import get_proveedores
+    import time
+
+    # Leer todos los productos de ambos catalogos
+    prods_gen = leer_productos_con_fila(False)
+    prods_ant = leer_productos_con_fila(True)
+    todos_prods = prods_gen + prods_ant
+
+    proveedores = get_proveedores()
+
+    if not proveedores or proveedores == ["Sin Proveedor"]:
+        st.info("No hay proveedores en el catalogo todavia.")
+        return
+
+    # Tabla de proveedores con conteo de productos
+    from collections import Counter
+    conteo = Counter(
+        p.get("proveedor","").strip()
+        for p in todos_prods
+        if p.get("proveedor","").strip()
+    )
+    import pandas as pd
+    df_prov = pd.DataFrame([
+        {"Proveedor": prov, "Productos asignados": conteo.get(prov, 0)}
+        for prov in sorted(proveedores)
+    ])
+    st.dataframe(df_prov, hide_index=True, use_container_width=True)
+
+    st.divider()
+    st.markdown("**Renombrar proveedor**")
+    st.caption("Actualiza el nombre en todos los productos del catalogo General y Antigua.")
+
+    p1, p2 = st.columns(2)
+    viejo = p1.selectbox("Proveedor a renombrar", proveedores, key="ren_prov_viejo")
+    nuevo = p2.text_input("Nuevo nombre", key="ren_prov_nuevo",
+                           placeholder="Nombre correcto del proveedor")
+
+    affected_gen = [p for p in prods_gen
+                    if p.get("proveedor","").strip().lower() == viejo.strip().lower()]
+    affected_ant = [p for p in prods_ant
+                    if p.get("proveedor","").strip().lower() == viejo.strip().lower()]
+    total = len(affected_gen) + len(affected_ant)
+
+    if total > 0:
+        st.caption(f"{total} producto(s) seran actualizados "
+                   f"({len(affected_gen)} General · {len(affected_ant)} Antigua)")
+
+    if st.button("Renombrar proveedor", type="primary", key="ren_prov_exec",
+                 disabled=not nuevo.strip() or not total):
+        nuevo_n = nuevo.strip()
+        upd_gen = [{"range": f"O{p['row_num']}", "values": [[nuevo_n]]}
+                   for p in affected_gen]
+        upd_ant = [{"range": f"I{p['row_num']}", "values": [[nuevo_n]]}
+                   for p in affected_ant]
+
+        with st.spinner(f"Actualizando {total} productos..."):
+            if upd_gen:
+                update_cells("productos", upd_gen)
+                time.sleep(0.3)
+            if upd_ant:
+                update_cells("antigua", upd_ant)
+
+        get_proveedores.clear()
+        st.success(f"'{viejo}' renombrado a '{nuevo_n}' "
+                   f"en {total} producto(s).")
+        st.rerun()
+
+
 def mostrar():
     st.markdown("## Mantenimiento")
     if st.button("Inicio", key="btn_home_mant", type="secondary"):
@@ -376,13 +453,14 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    t1, t2, t3, t4, t5, t6, t7 = st.tabs([
+    t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
         "Correccion Masiva",
         "Migracion de Datos",
         "Estructura Sheets",
         "Catalogo Cliente",
         "Cache",
         "Renombrar Clientes",
+        "Proveedores",
         "Backup Drive",
     ])
     with t1: _tab_correccion()
@@ -391,4 +469,5 @@ def mostrar():
     with t4: _tab_catalogo()
     with t5: _tab_cache()
     with t6: _tab_renombrar()
-    with t7: _tab_backup()
+    with t7: _tab_proveedores()
+    with t8: _tab_backup()
