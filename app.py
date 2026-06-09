@@ -2,6 +2,7 @@
 app.py — VeggiExpress | Sistema de Gestión
 """
 import os
+import importlib
 import streamlit as st
 
 st.set_page_config(
@@ -19,25 +20,33 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── NAVEGACIÓN ────────────────────────────────────────────────────────────────
-MENU = [
-    "🏠 Inicio",
-    "📥 Pedidos Entrantes",
-    "📦 Productos (Nuevos y Mantenimiento)",
-    "👥 Clientes (Nuevos y Mantenimiento)",
-    "🛒 Nuevo Pedido",
-    "📋 Gestión Pedidos (Revisar y Editar)",
-    "🚚 Envíos y Facturación Semana",
-    "🧾 Facturación Mensual",
-    "📦 Pedidos a Proveedores",
-    "💰 Flujo de Caja",
-    "💳 Gastos",
-    "🏠 Casa / Personal",
-    "📊 Dashboard",
-    "🔧 Mantenimiento",
-    "🧮 Cotizador",
+# ── MENÚ Y RUTAS ──────────────────────────────────────────────────────────────
+# Cada entry: (label visible en sidebar, nombre del módulo Python)
+# Separar display de lógica evita bugs por emojis o cambios de nombre.
+
+PAGES = [
+    ("🏠 Inicio",                               "modulo_inicio"),
+    ("📥 Pedidos Entrantes",                    "modulo_pedidos_entrantes"),
+    ("📦 Productos (Nuevos y Mantenimiento)",   "modulo_productos"),
+    ("👥 Clientes (Nuevos y Mantenimiento)",    "modulo_clientes"),
+    ("🛒 Nuevo Pedido",                         "modulo_pedidos"),
+    ("📋 Gestión Pedidos (Revisar y Editar)",   "modulo_gestion"),
+    ("🚚 Envíos y Facturación Semana",          "modulo_envios"),
+    ("🧾 Facturación Mensual",                  "modulo_facturacion"),
+    ("📦 Pedidos a Proveedores",                "modulo_proveedores"),
+    ("💰 Flujo de Caja",                        "modulo_flujo_caja"),
+    ("💳 Gastos",                               "modulo_gastos"),
+    ("🏡 Casa / Personal",                      "modulo_casa"),
+    ("📊 Dashboard",                            "modulo_dashboard"),
+    ("🔧 Mantenimiento",                        "modulo_mantenimiento"),
+    ("🧮 Cotizador",                            "modulo_cotizador"),
 ]
 
+# Diccionario label → módulo para routing exacto y sin ambigüedad
+MENU   = [label  for label, _      in PAGES]
+ROUTES = {label: modulo for label, modulo in PAGES}
+
+# ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     if os.path.exists("VeggiExpress-02.png"):
         st.image("VeggiExpress-02.png", use_container_width=True)
@@ -45,7 +54,7 @@ with st.sidebar:
         st.markdown("## 🥬 VeggiExpress")
     st.divider()
 
-    # Interceptar navegación programática antes de renderizar el radio
+    # Navegación programática (botones "Inicio" dentro de cada módulo)
     if "_nav_target" in st.session_state:
         target = st.session_state.pop("_nav_target")
         if target in MENU:
@@ -62,63 +71,7 @@ with st.sidebar:
     st.caption("VeggiExpress · Más fresco, imposible.")
 
 # ── ROUTER ────────────────────────────────────────────────────────────────────
-if pagina.startswith("📥"):
-    import modulo_pedidos_entrantes
-    modulo_pedidos_entrantes.mostrar()
-
-elif pagina.startswith("🏠"):
-    import modulo_inicio
-    modulo_inicio.mostrar()
-
-elif pagina.startswith("💳"):
-    import modulo_gastos
-    modulo_gastos.mostrar()
-
-elif pagina == "🏠 Casa / Personal":
-    import modulo_casa
-    modulo_casa.mostrar()
-
-elif pagina.startswith("💰"):
-    import modulo_flujo_caja
-    modulo_flujo_caja.mostrar()
-
-elif pagina == "📦 Pedidos a Proveedores":
-    import modulo_proveedores
-    modulo_proveedores.mostrar()
-
-elif pagina.startswith("📦"):
-    import modulo_productos
-    modulo_productos.mostrar()
-
-elif pagina.startswith("👥"):
-    import modulo_clientes
-    modulo_clientes.mostrar()
-
-elif pagina.startswith("🛒"):
-    import modulo_pedidos
-    modulo_pedidos.mostrar()
-
-elif pagina.startswith("📋"):
-    import modulo_gestion
-    modulo_gestion.mostrar()
-
-elif pagina.startswith("🚚"):
-    import modulo_envios
-    modulo_envios.mostrar()
-
-elif pagina.startswith("📊"):
-    import modulo_dashboard
-    modulo_dashboard.mostrar()
-
-elif pagina.startswith("🧾"):
-    import modulo_facturacion
-    modulo_facturacion.mostrar()
-
-
-elif pagina.startswith("🔧"):
-    import modulo_mantenimiento
-    modulo_mantenimiento.mostrar()
-
-elif pagina.startswith("🧮"):
-    import modulo_cotizador
-    modulo_cotizador.mostrar()
+# Lookup exacto por label — ningún emoji ni startswith puede causar ambigüedad.
+modulo_nombre = ROUTES.get(pagina)
+if modulo_nombre:
+    importlib.import_module(modulo_nombre).mostrar()

@@ -121,9 +121,9 @@ def _get_data(sem_or_mes: int, año: int, modo: str):
 
 
 def mostrar():
-    st.markdown("## 🏠 Casa / Personal")
+    st.markdown("## 🏡 Casa / Personal")
     if st.button("Inicio", key="btn_home_casa", type="secondary"):
-        st.session_state["_nav_target"] = "Inicio"
+        st.session_state["_nav_target"] = "🏠 Inicio"
         st.rerun()
     st.divider()
 
