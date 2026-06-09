@@ -21,28 +21,25 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── MENÚ Y RUTAS ──────────────────────────────────────────────────────────────
-# Cada entry: (label visible en sidebar, nombre del módulo Python)
-# Separar display de lógica evita bugs por emojis o cambios de nombre.
-
 PAGES = [
     ("🏠 Inicio",                               "modulo_inicio"),
-    ("📥 Pedidos Entrantes",                    "modulo_pedidos_entrantes"),
-    ("📦 Productos (Nuevos y Mantenimiento)",   "modulo_productos"),
-    ("👥 Clientes (Nuevos y Mantenimiento)",    "modulo_clientes"),
     ("🛒 Nuevo Pedido",                         "modulo_pedidos"),
     ("📋 Gestión Pedidos (Revisar y Editar)",   "modulo_gestion"),
+    ("📦 Productos (Nuevos y Mantenimiento)",   "modulo_productos"),
+    ("📦 Pedidos a Proveedores",                "modulo_proveedores"),
     ("🚚 Envíos y Facturación Semana",          "modulo_envios"),
     ("🧾 Facturación Mensual",                  "modulo_facturacion"),
-    ("📦 Pedidos a Proveedores",                "modulo_proveedores"),
-    ("💰 Flujo de Caja",                        "modulo_flujo_caja"),
     ("💳 Gastos",                               "modulo_gastos"),
-    ("🏡 Casa / Personal",                      "modulo_casa"),
     ("📊 Dashboard",                            "modulo_dashboard"),
+    ("🏡 Casa / Personal",                      "modulo_casa"),
+    ("💰 Flujo de Caja",                        "modulo_flujo_caja"),
+    ("📥 Pedidos Entrantes",                    "modulo_pedidos_entrantes"),
     ("🔧 Mantenimiento",                        "modulo_mantenimiento"),
+    ("👥 Clientes (Nuevos y Mantenimiento)",    "modulo_clientes"),
     ("🧮 Cotizador",                            "modulo_cotizador"),
+    ("🔍 Precios La Torre",                     "modulo_scraper"),
 ]
 
-# Diccionario label → módulo para routing exacto y sin ambigüedad
 MENU   = [label  for label, _      in PAGES]
 ROUTES = {label: modulo for label, modulo in PAGES}
 
@@ -54,7 +51,6 @@ with st.sidebar:
         st.markdown("## 🥬 VeggiExpress")
     st.divider()
 
-    # Navegación programática (botones "Inicio" dentro de cada módulo)
     if "_nav_target" in st.session_state:
         target = st.session_state.pop("_nav_target")
         if target in MENU:
@@ -71,7 +67,6 @@ with st.sidebar:
     st.caption("VeggiExpress · Más fresco, imposible.")
 
 # ── ROUTER ────────────────────────────────────────────────────────────────────
-# Lookup exacto por label — ningún emoji ni startswith puede causar ambigüedad.
 modulo_nombre = ROUTES.get(pagina)
 if modulo_nombre:
     importlib.import_module(modulo_nombre).mostrar()
