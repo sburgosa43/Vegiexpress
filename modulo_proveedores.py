@@ -160,12 +160,14 @@ def mostrar():
             base_dfs[prov] = pd.DataFrame(rows)
 
         st.session_state[base_key]                        = base_dfs
+        st.session_state[f"prov_prodmap_v3_{semana}_{año}"] = prod_map
         st.session_state[f"prov_areas_v3_{semana}_{año}"]   = todas_areas
         st.session_state[f"prov_resumen_v3_{semana}_{año}"] = resumen_tp
         st.session_state[f"prov_alerta_v3_{semana}_{año}"]  = sin_detalle
 
     # ── Recuperar del estado ──────────────────────────────────────────────────
     base_dfs    = st.session_state[base_key]
+    prod_map    = st.session_state.get(f"prov_prodmap_v3_{semana}_{año}", {})
     todas_areas = st.session_state.get(f"prov_areas_v3_{semana}_{año}", [])
     resumen_tp  = st.session_state.get(f"prov_resumen_v3_{semana}_{año}", {})
     sin_detalle = st.session_state.get(f"prov_alerta_v3_{semana}_{año}", [])
