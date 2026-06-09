@@ -125,38 +125,57 @@ def _form_producto(prefill: dict = None, key_prefix: str = "new",
 
 
 def _actualizar_producto(es_antigua: bool):
-    """Tab Actualización: buscá un producto y editá todos sus campos."""
+    """Tab Actualizacion: busca un producto y edita todos sus campos."""
     lbl      = "Antigua" if es_antigua else "General"
+    sk_busq  = f"busq_confirmada_{lbl}"
+    sk_sel   = f"upd_sel_{lbl}"
     productos = leer_productos_con_fila(es_antigua=es_antigua)
 
-    busqueda = st.text_input(f"🔍 Buscar producto a actualizar",
-                              placeholder="Escribí el nombre...",
-                              key=f"upd_busq_{lbl}")
-    filtrados = [p for p in productos
-                 if busqueda.lower() in p["nombre"].lower()] if busqueda else []
+    # ── Paso 1: Busqueda en form propio ───────────────────────────────────────
+    # Al usar st.form aqui, presionar Enter en la busqueda NO interfiere
+    # con el formulario de edicion que viene despues.
+    with st.form(key=f"form_busq_{lbl}"):
+        b1, b2 = st.columns([4, 1])
+        txt = b1.text_input("Buscar producto",
+                             placeholder="Escribi el nombre...",
+                             value=st.session_state.get(sk_busq, ""))
+        buscar = b2.form_submit_button("🔍 Buscar", use_container_width=True)
 
+    if buscar:
+        st.session_state[sk_busq] = txt.strip()
+        st.session_state.pop(sk_sel, None)   # reset seleccion al buscar de nuevo
+        st.rerun()
+
+    busqueda = st.session_state.get(sk_busq, "")
     if not busqueda:
-        st.info("Escribí el nombre del producto para buscarlo.")
+        st.info("Escribi el nombre del producto para buscarlo.")
         return
 
+    filtrados = [p for p in productos if busqueda.lower() in p["nombre"].lower()]
     if not filtrados:
-        st.warning("No se encontraron productos con ese nombre.")
+        st.warning(f"No se encontraron productos con '{busqueda}'.")
         return
 
+    # ── Paso 2: Seleccion del producto ────────────────────────────────────────
     nombres = [p["nombre"] for p in filtrados]
-    sel     = st.selectbox("Seleccioná el producto:", nombres, key=f"upd_sel_{lbl}")
+    sel     = st.selectbox("Selecciona el producto:", nombres, key=sk_sel)
     prod    = next(p for p in filtrados if p["nombre"] == sel)
 
-    st.caption(f"Fila {prod['row_num']} · Costo actual: Q{prod['costo']:.2f} · "
-               f"Precio actual: Q{prod['precio']:.2f}")
+    st.caption(f"Fila {prod['row_num']} · "
+               f"Costo: Q{prod['costo']:.2f} · Precio: Q{prod['precio']:.2f}")
     st.divider()
 
+    # ── Paso 3: Formulario de edicion ─────────────────────────────────────────
+    # key_prefix incluye row_num para que cada producto tenga su propio form
     datos = _form_producto(prefill=prod, key_prefix=f"upd_{prod['row_num']}",
                            es_antigua=es_antigua)
     if datos:
         with st.spinner("Guardando..."):
             editar_producto(prod["row_num"], datos, es_antigua)
-        _conf("prod_upd", f"✅ Producto guardado — {datos['nombre']} actualizado.")
+        # Limpiar busqueda para que el usuario empiece de cero
+        st.session_state.pop(sk_busq, None)
+        st.session_state.pop(sk_sel,  None)
+        _conf("prod_upd", f"Producto actualizado: {datos['nombre']}")
         st.rerun()
 
 
