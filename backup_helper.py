@@ -59,7 +59,9 @@ def _find_existing_file(service, folder_id: str) -> str | None:
          f"and '{folder_id}' in parents "
          f"and trashed=false")
     res = service.files().list(q=q, spaces="drive",
-                                fields="files(id,name)").execute()
+                                fields="files(id,name)",
+                                includeItemsFromAllDrives=True,
+                                supportsAllDrives=True).execute()
     files = res.get("files", [])
     return files[0]["id"] if files else None
 
@@ -83,7 +85,8 @@ def crear_backup(motivo: str = "manual") -> dict:
             # Actualizar archivo existente
             service.files().update(
                 fileId=file_id,
-                media_body=media
+                media_body=media,
+                supportsAllDrives=True
             ).execute()
         else:
             # Crear nuevo archivo
@@ -94,7 +97,8 @@ def crear_backup(motivo: str = "manual") -> dict:
             result = service.files().create(
                 body=meta,
                 media_body=media,
-                fields="id"
+                fields="id",
+                supportsAllDrives=True
             ).execute()
             file_id = result["id"]
 
@@ -129,3 +133,19 @@ def backup_silencioso(motivo: str = "auto") -> None:
         crear_backup(motivo=motivo)
     except Exception:
         pass  # backup silencioso nunca bloquea la operación principal
+
+
+def get_drive_link() -> str | None:
+    """
+    Retorna el link directo al archivo de backup en Drive.
+    None si no existe todavia.
+    """
+    try:
+        service   = _drive_service()
+        folder_id = _folder_id()
+        file_id   = _find_existing_file(service, folder_id)
+        if file_id:
+            return f"https://drive.google.com/file/d/{file_id}/view"
+        return None
+    except Exception:
+        return None

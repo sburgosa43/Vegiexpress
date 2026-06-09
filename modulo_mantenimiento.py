@@ -307,11 +307,20 @@ def _tab_backup():
                "Se ejecuta automaticamente antes de operaciones destructivas.")
     st.divider()
 
+    # Link directo al archivo en Drive
+    from backup_helper import get_drive_link
+    drive_link = get_drive_link()
+    if drive_link:
+        st.markdown(f"[📂 Ver archivo en Drive]({drive_link})", unsafe_allow_html=False)
+
     if st.button("Crear Backup Ahora", type="primary", key="bk_crear"):
         with st.spinner("Subiendo a Drive..."):
             res = crear_backup(motivo="manual desde Mantenimiento")
         if res.get("ok"):
             st.success(f"Backup guardado - {res['filas']} filas - {res['ts']}")
+            link = get_drive_link()
+            if link:
+                st.markdown(f"[📂 Abrir en Drive]({link})")
         else:
             st.error(f"Error: {res.get('error','desconocido')}")
         st.rerun()
