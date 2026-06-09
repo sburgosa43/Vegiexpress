@@ -248,10 +248,24 @@ def mostrar():
                 base_df = base_dfs[prov]
                 color   = "#E65100" if "SIN PROVEEDOR" in prov else "#2D7A2D"
 
+                # Total potencial: costo × cantidad_total de todos los items
+                total_col_name = "Total" if "Total" in base_df.columns else "Pedido"
+                total_costo_prov = sum(
+                    prod_map.get(str(r.get("Producto","")).lower(), {}).get("costo", 0)
+                    * float(r.get(total_col_name, 0) or 0)
+                    for _, r in base_df.iterrows()
+                )
+                costo_lbl = (f" &nbsp;·&nbsp; Total potencial: "
+                             f"<span style='background:rgba(255,255,255,.25);"
+                             f"padding:2px 8px;border-radius:4px'>"
+                             f"Q{total_costo_prov:,.0f}</span>"
+                             if total_costo_prov > 0 else "")
+
                 st.markdown(
                     f"<div style='background:{color};color:white;"
                     f"padding:6px 12px;border-radius:6px;font-weight:bold;"
-                    f"font-size:.9rem;margin:10px 0 4px 0'>📦 {prov}</div>",
+                    f"font-size:.9rem;margin:10px 0 4px 0'>"
+                    f"📦 {prov}{costo_lbl}</div>",
                     unsafe_allow_html=True)
 
                 # Columnas visibles: areas + Total/Pedido + A Comprar
