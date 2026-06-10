@@ -250,6 +250,12 @@ def _actualizar_precio_catalogo(precio_map: dict,
         if upd:
             update_cells(k_hoja, upd)
             total += len(upd)
+    leer_productos_con_fila.clear()
+    try:
+        from data_helper import cargar_productos
+        cargar_productos.clear()
+    except Exception:
+        pass
     return total
 
 
@@ -366,7 +372,14 @@ def agregar_cliente(data: dict) -> str:
         data.get("codigo_lugar","L05"),
     ]
     append_rows(_K_CLI, [row])
-    st.cache_data.clear()
+    # Limpieza dirigida: solo caches de productos (no todo el cache global)
+    leer_productos_con_fila.clear()
+    try:
+        from data_helper import cargar_productos, get_proveedores
+        cargar_productos.clear()
+        get_proveedores.clear()
+    except Exception:
+        pass
     return codigo
 
 
@@ -384,12 +397,26 @@ def editar_cliente(row_num: int, data: dict) -> None:
             upd.append({"range": f"{col}{row_num}", "values": [[val]]})
     if upd:
         update_cells(_K_CLI, upd)
-    st.cache_data.clear()
+    # Limpieza dirigida: solo caches de productos (no todo el cache global)
+    leer_productos_con_fila.clear()
+    try:
+        from data_helper import cargar_productos, get_proveedores
+        cargar_productos.clear()
+        get_proveedores.clear()
+    except Exception:
+        pass
 
 
 def eliminar_cliente(row_num: int) -> None:
     delete_rows(_K_CLI, [row_num])
-    st.cache_data.clear()
+    # Limpieza dirigida: solo caches de productos (no todo el cache global)
+    leer_productos_con_fila.clear()
+    try:
+        from data_helper import cargar_productos, get_proveedores
+        cargar_productos.clear()
+        get_proveedores.clear()
+    except Exception:
+        pass
 
 
 # ── PRODUCTOS ──────────────────────────────────────────────────────────────────
@@ -408,6 +435,7 @@ _PROD_COLS = {
 }
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def leer_productos_con_fila(es_antigua: bool = False) -> list[dict]:
     k     = _K_ANT if es_antigua else _K_PROD
     rows  = get_all_rows(k)
@@ -448,7 +476,14 @@ def agregar_producto(data: dict, es_antigua: bool = False) -> None:
         if campo == "unidad_despacho": val = int(val or 1)
         row[idx] = val
     append_rows(k, [row])
-    st.cache_data.clear()
+    # Limpieza dirigida: solo caches de productos (no todo el cache global)
+    leer_productos_con_fila.clear()
+    try:
+        from data_helper import cargar_productos, get_proveedores
+        cargar_productos.clear()
+        get_proveedores.clear()
+    except Exception:
+        pass
 
 
 def editar_producto(row_num: int, data: dict, es_antigua: bool = False) -> None:
@@ -461,13 +496,27 @@ def editar_producto(row_num: int, data: dict, es_antigua: bool = False) -> None:
             upd.append({"range": f"{col_letter}{row_num}", "values": [[val]]})
     if upd:
         update_cells(k, upd)
-    st.cache_data.clear()
+    # Limpieza dirigida: solo caches de productos (no todo el cache global)
+    leer_productos_con_fila.clear()
+    try:
+        from data_helper import cargar_productos, get_proveedores
+        cargar_productos.clear()
+        get_proveedores.clear()
+    except Exception:
+        pass
 
 
 def eliminar_producto(row_num: int, es_antigua: bool = False) -> None:
     k = _K_ANT if es_antigua else _K_PROD
     delete_rows(k, [row_num])
-    st.cache_data.clear()
+    # Limpieza dirigida: solo caches de productos (no todo el cache global)
+    leer_productos_con_fila.clear()
+    try:
+        from data_helper import cargar_productos, get_proveedores
+        cargar_productos.clear()
+        get_proveedores.clear()
+    except Exception:
+        pass
 
 
 def guardar_para_cotizar_batch(cambios: dict, es_antigua: bool) -> None:
@@ -479,6 +528,12 @@ def guardar_para_cotizar_batch(cambios: dict, es_antigua: bool) -> None:
         upd.append({"range": f"{col}{row_num}", "values": [[cell_val]]})
     if upd:
         update_cells(k, upd)
+    leer_productos_con_fila.clear()
+    try:
+        from data_helper import cargar_productos
+        cargar_productos.clear()
+    except Exception:
+        pass
 
 
 # ── METAS (Config sheet) ───────────────────────────────────────────────────────

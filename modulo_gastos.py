@@ -450,59 +450,6 @@ def _tab_operacion(pedidos: list, cfg: dict):
                delta_color="normal")
 
 
-# ── TAB 3: Casa ───────────────────────────────────────────────────────────────
-def _tab_casa(cfg: dict):
-    hoy     = date.today()
-    sem_def = hoy.isocalendar()[1]
-
-    c1, c2 = st.columns(2)
-    mes = c1.selectbox("Mes", list(range(1,13)),
-                        index=hoy.month-1,
-                        format_func=lambda m: ["Ene","Feb","Mar","Abr","May","Jun",
-                                               "Jul","Ago","Sep","Oct","Nov","Dic"][m-1],
-                        key="ca_mes")
-    año = c2.number_input("Año", 2020, 2030, hoy.year, key="ca_año")
-
-    gastos_all = _leer_gastos()
-    gas_casa   = [g for g in gastos_all
-                  if g["categoria"] == "Casa"
-                  and g["fecha"] and g["fecha"].month == mes
-                  and g["fecha"].year == año]
-
-    budgets = cfg["budgets"]
-    gas_by_sub: dict = {}
-    for g in gas_casa:
-        gas_by_sub[g["subcat"]] = gas_by_sub.get(g["subcat"], 0) + g["monto"]
-
-    total_gas  = sum(gas_by_sub.values())
-    total_bud  = sum(budgets.values())
-
-    MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
-                "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
-    st.markdown(f"### Gastos Casa — {MESES_ES[mes-1]} {año}")
-
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Gastado",     f"Q{total_gas:,.0f}")
-    k2.metric("Presupuesto", f"Q{total_bud:,.0f}")
-    k3.metric("Diferencia",  f"Q{total_bud-total_gas:,.0f}",
-              delta="dentro" if total_gas <= total_bud else "excedido",
-              delta_color="normal" if total_gas <= total_bud else "inverse")
-
-    st.divider()
-    subs = cfg["subcats"].get("Casa", [])
-    rows = []
-    for s in subs:
-        g_val = gas_by_sub.get(s, 0)
-        b_val = budgets.get(s, 0)
-        rows.append({
-            "Categoria": s,
-            "Gastado":   f"Q{g_val:,.0f}",
-            "Presupuesto": f"Q{b_val:,.0f}",
-            "Diferencia":  f"Q{b_val-g_val:,.0f}",
-        })
-    if rows:
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-
 
 # ── TAB 4: Historial ──────────────────────────────────────────────────────────
 def _tab_historial(cfg: dict):
