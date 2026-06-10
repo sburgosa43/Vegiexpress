@@ -10,7 +10,8 @@ from excel_helper import (leer_pedidos, cancelar_pedido,
                           restaurar_pedido, guardar_cambios_precio)
 from data_helper  import cargar_clientes
 from pdf_helper   import generar_envio, nombre_archivo
-from config       import ZONAS_MAP as _ZONAS_CFG, excluido_dashboard
+from config       import (ZONAS_MAP as _ZONAS_CFG, excluido_dashboard,
+                           calcular_liquido)
 
 ZONAS_ENVIO = _ZONAS_CFG   # Fuente única: config.py
 
@@ -35,12 +36,38 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
     fecha_ped = l0["fecha"] if l0["fecha"] else date.today()
     total_orig = sum(l["total"] or 0 for l in lineas)
 
+    # Margen Bruto: (precio - costo) x cantidad  |  Margen Neto: formula margen_q
+    mb_ped = sum((float(l.get("precio") or 0) - float(l.get("costo") or 0))
+                 * float(l.get("cantidad") or 0) for l in lineas)
+    mn_ped = sum(float(l.get("margen_q") or 0) for l in lineas)
+
+    # Desglose fiscal sobre el total ORIGINAL (referencia de factura)
+    # Mismas reglas que Facturacion Mensual: calcular_liquido maneja ISR/descuento
+    liq_ped, isr_ped, desc_ped = calcular_liquido(l0["cliente"], total_orig)
+    base_iva = round(total_orig / 1.12, 2)
+
     with st.expander(
         f"{'🔴' if cancelado else '🟢'}  **{l0['cliente']}**  ·  "
         f"{fecha_ped.strftime('%d/%m/%Y')}  ·  "
         f"{len(lineas)} productos  ·  Q{total_orig:,.2f}",
         expanded=False,
     ):
+        extra_txt = ""
+        if isr_ped > 0:
+            extra_txt = f"ISR: Q{isr_ped:,.2f}  ·  "
+        elif desc_ped > 0:
+            extra_txt = f"Descuento: Q{desc_ped:,.2f}  ·  "
+        st.markdown(
+            f"<div style='background:#2D7A2D;color:white;padding:6px 10px;"
+            f"border-radius:4px;font-size:.82rem;font-weight:bold;"
+            f"margin:0 0 8px 0'>"
+            f"Total: Q{total_orig:,.2f}  ·  Base IVA: Q{base_iva:,.2f}"
+            f"<br><span style='font-weight:normal;font-size:.78rem;opacity:.95'>"
+            f"{extra_txt}"
+            f"Líquido: Q{liq_ped:,.2f}  ·  "
+            f"MB: Q{mb_ped:,.0f}  ·  MN: Q{mn_ped:,.0f}</span></div>",
+            unsafe_allow_html=True)
+
         st.caption("Ajustá precios si hay descuentos. "
                    "'Guardar' actualiza el Excel y registra en historial.")
 

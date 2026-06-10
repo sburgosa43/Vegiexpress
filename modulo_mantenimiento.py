@@ -425,24 +425,57 @@ def _tab_proveedores():
         st.caption(f"{total} producto(s) seran actualizados "
                    f"({len(affected_gen)} General · {len(affected_ant)} Antigua)")
 
+    # Tambien contar pedidos historicos con ese proveedor (columna R)
+    from excel_helper import leer_pedidos
+    pedidos_all  = leer_pedidos()
+    affected_ped = [p for p in pedidos_all
+                    if p.get("proveedor","").strip().lower() == viejo.strip().lower()]
+    if affected_ped:
+        st.caption(f"+ {len(affected_ped)} linea(s) de pedidos historicos "
+                   f"tambien seran actualizadas")
+
+    incluir_hist = st.checkbox(
+        "Actualizar tambien el historial de Pedidos",
+        value=True, key="ren_prov_hist",
+        help="Renombra el proveedor en todas las lineas historicas de pedidos")
+
     if st.button("Renombrar proveedor", type="primary", key="ren_prov_exec",
-                 disabled=not nuevo.strip() or not total):
+                 disabled=not nuevo.strip() or not (total or affected_ped)):
         nuevo_n = nuevo.strip()
+
+        # Backup automatico antes de tocar Pedidos
+        if incluir_hist and affected_ped:
+            try:
+                from backup_helper import backup_silencioso
+                backup_silencioso(motivo="auto antes de renombrar proveedor")
+            except Exception:
+                pass
+
         upd_gen = [{"range": f"O{p['row_num']}", "values": [[nuevo_n]]}
                    for p in affected_gen]
         upd_ant = [{"range": f"M{p['row_num']}", "values": [[nuevo_n]]}
                    for p in affected_ant]
+        upd_ped = [{"range": f"R{p['row_num']}", "values": [[nuevo_n]]}
+                   for p in affected_ped] if incluir_hist else []
 
-        with st.spinner(f"Actualizando {total} productos..."):
+        with st.spinner(f"Actualizando {total} productos"
+                        + (f" y {len(upd_ped)} pedidos..." if upd_ped else "...")):
             if upd_gen:
                 update_cells("productos", upd_gen)
                 time.sleep(0.3)
             if upd_ant:
                 update_cells("antigua", upd_ant)
+                time.sleep(0.3)
+            for i in range(0, len(upd_ped), 100):
+                update_cells("pedidos", upd_ped[i:i+100])
+                time.sleep(0.5)
 
         get_proveedores.clear()
-        st.success(f"'{viejo}' renombrado a '{nuevo_n}' "
-                   f"en {total} producto(s).")
+        if upd_ped:
+            leer_pedidos.clear()
+        st.success(f"'{viejo}' renombrado a '{nuevo_n}' — "
+                   f"{total} producto(s)"
+                   + (f" + {len(upd_ped)} pedido(s) historicos." if upd_ped else "."))
         st.rerun()
 
 
