@@ -240,6 +240,9 @@ def mostrar():
         else:
             if st.button("🗑 Limpiar todo lo ingresado",
                          type="secondary", key="limpiar_arriba"):
+                for _p, _df in base_dfs.items():
+                    if "A Comprar" in _df.columns:
+                        _df["A Comprar"] = ""
                 st.session_state[reset_key] = reset_n + 1
                 st.rerun()
 
@@ -301,6 +304,12 @@ def mostrar():
                 )
                 edited_results[prov] = edited
 
+                # ── Persistir ediciones a session_state ──────────────────────
+                # base_dfs vive en session_state; al mutar el DataFrame aqui,
+                # los valores de "A Comprar" sobreviven reruns y navegacion.
+                if "A Comprar" in edited.columns:
+                    base_df["A Comprar"] = edited["A Comprar"].values
+
                 # Total estimado (pantalla)
                 est_prov = 0.0
                 for i, row in base_df.iterrows():
@@ -333,6 +342,9 @@ def mostrar():
             st.divider()
             if st.button("🗑 Limpiar todo", type="secondary",
                          key="limpiar_abajo"):
+                for _p, _df in base_dfs.items():
+                    if "A Comprar" in _df.columns:
+                        _df["A Comprar"] = ""
                 st.session_state[reset_key] = reset_n + 1
                 st.rerun()
 

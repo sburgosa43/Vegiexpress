@@ -79,36 +79,47 @@ def _ref_precios(costo: float, tipo2: str):
 def _form_producto(prefill: dict = None, key_prefix: str = "new",
                    es_antigua: bool = False) -> dict | None:
     pf = prefill or {}
-    with st.form(key=f"form_prod_{key_prefix}"):
+    kp = key_prefix   # keys explicitos: evita contaminacion de estado entre productos
+    with st.form(key=f"form_prod_{kp}"):
         col1, col2 = st.columns(2)
         with col1:
-            nombre = st.text_input("Producto *", value=pf.get("nombre",""))
+            nombre = st.text_input("Producto *", value=pf.get("nombre",""),
+                                    key=f"{kp}_nombre")
             unidad = st.selectbox("Unidad de venta", UNIDADES,
-                index=UNIDADES.index(pf["unidad"]) if pf.get("unidad") in UNIDADES else 0)
+                index=UNIDADES.index(pf["unidad"]) if pf.get("unidad") in UNIDADES else 0,
+                key=f"{kp}_unidad")
             segmento = st.selectbox("Segmento", SEGMENTOS,
-                index=SEGMENTOS.index(pf["segmento"]) if pf.get("segmento") in SEGMENTOS else 0)
+                index=SEGMENTOS.index(pf["segmento"]) if pf.get("segmento") in SEGMENTOS else 0,
+                key=f"{kp}_segmento")
             unidad_despacho = st.number_input("Unidad despacho",
-                value=int(pf.get("unidad_despacho", 1)), min_value=1)
+                value=int(pf.get("unidad_despacho", 1)), min_value=1,
+                key=f"{kp}_udesp")
             proveedor = st.selectbox("Proveedor", _proveedores(),
-                index=_proveedores().index(pf["proveedor"]) if pf.get("proveedor") in _proveedores() else 0)
+                index=_proveedores().index(pf["proveedor"]) if pf.get("proveedor") in _proveedores() else 0,
+                key=f"{kp}_prov")
         with col2:
             tipo2 = st.selectbox("Segmentación de margen", TIPOS_P2,
-                index=TIPOS_P2.index(pf["tipo_producto2"]) if pf.get("tipo_producto2") in TIPOS_P2 else 3)
+                index=TIPOS_P2.index(pf["tipo_producto2"]) if pf.get("tipo_producto2") in TIPOS_P2 else 3,
+                key=f"{kp}_tipo2")
             costo  = st.number_input("Costo (Q)", value=float(pf.get("costo", 0)),
-                                      min_value=0.0, step=0.5)
+                                      min_value=0.0, step=0.5, key=f"{kp}_costo")
             _ref_precios(costo, tipo2)
             precio = st.number_input("Precio (Q)", value=float(pf.get("precio", 0)),
-                                      min_value=0.0, step=0.5)
+                                      min_value=0.0, step=0.5, key=f"{kp}_precio")
             pesos  = st.number_input("Pesos/Costo referencia",
                                       value=float(pf.get("pesos", 0)),
-                                      min_value=0.0, step=0.1)
+                                      min_value=0.0, step=0.1, key=f"{kp}_pesos")
             if not es_antigua:
                 tipo1    = st.selectbox("Tipo de producto", TIPOS_PROD,
-                    index=TIPOS_PROD.index(pf["tipo_producto"]) if pf.get("tipo_producto") in TIPOS_PROD else 0)
+                    index=TIPOS_PROD.index(pf["tipo_producto"]) if pf.get("tipo_producto") in TIPOS_PROD else 0,
+                    key=f"{kp}_tipo1")
                 cotizar  = st.selectbox("Para cotizar", COTIZAR_OPC,
-                    index=COTIZAR_OPC.index(pf["para_cotizar"]) if pf.get("para_cotizar") in COTIZAR_OPC else 0)
-                parent   = st.text_input("Parent", value=pf.get("parent", pf.get("nombre","")))
-                comentario=st.text_input("Comentario", value=pf.get("comentario",""))
+                    index=COTIZAR_OPC.index(pf["para_cotizar"]) if pf.get("para_cotizar") in COTIZAR_OPC else 0,
+                    key=f"{kp}_cotizar")
+                parent   = st.text_input("Parent", value=pf.get("parent", pf.get("nombre","")),
+                                          key=f"{kp}_parent")
+                comentario=st.text_input("Comentario", value=pf.get("comentario",""),
+                                          key=f"{kp}_coment")
             else:
                 tipo1 = "Fresco"; cotizar = ""; parent = ""; comentario = ""
 
@@ -177,9 +188,12 @@ def _actualizar_producto(es_antigua: bool):
     if datos:
         with st.spinner("Guardando..."):
             editar_producto(prod["row_num"], datos, es_antigua)
-        # Limpiar busqueda para que el usuario empiece de cero
+        # Limpiar busqueda y estado del form para empezar de cero
         st.session_state.pop(sk_busq, None)
         st.session_state.pop(sk_sel,  None)
+        _kp = f"upd_{prod['row_num']}"
+        for _k in [k for k in st.session_state if k.startswith(f"{_kp}_")]:
+            st.session_state.pop(_k, None)
         _conf("prod_upd", f"Producto actualizado: {datos['nombre']}")
         st.rerun()
 

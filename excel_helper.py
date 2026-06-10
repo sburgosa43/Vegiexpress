@@ -402,7 +402,7 @@ _PROD_COLS = {
     },
     True: {   # Lista Antigua
         "A":"nombre", "B":"unidad",   "C":"segmento",      "D":"unidad_despacho",
-        "F":"costo",  "G":"precio",   "I":"proveedor",     "J":"pesos",
+        "F":"costo",  "G":"precio",   "M":"proveedor",     "J":"pesos",
         "K":"tipo_producto2", "R":"para_cotizar",
     },
 }
