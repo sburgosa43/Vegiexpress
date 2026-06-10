@@ -430,7 +430,7 @@ def _tab_proveedores():
         nuevo_n = nuevo.strip()
         upd_gen = [{"range": f"O{p['row_num']}", "values": [[nuevo_n]]}
                    for p in affected_gen]
-        upd_ant = [{"range": f"I{p['row_num']}", "values": [[nuevo_n]]}
+        upd_ant = [{"range": f"M{p['row_num']}", "values": [[nuevo_n]]}
                    for p in affected_ant]
 
         with st.spinner(f"Actualizando {total} productos..."):

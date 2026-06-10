@@ -424,7 +424,7 @@ def leer_productos_con_fila(es_antigua: bool = False) -> list[dict]:
             "unidad_despacho": _si(row[3]) or 1,
             "costo":          _sf(row[5]),
             "precio":         _sf(row[col_p]),
-            "proveedor":      str(row[14] if not es_antigua else row[8] or ""),
+            "proveedor":      str(row[14] if not es_antigua else row[12] or ""),
             "pesos":          _sf(row[15] if not es_antigua else row[9]),
             "tipo_producto":  str(row[18] if not es_antigua else "" or ""),
             "tipo_producto2": str(row[20] if not es_antigua else row[10] or ""),
