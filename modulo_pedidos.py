@@ -120,7 +120,7 @@ def _paso1():
 
         fecha = st.date_input(
             "📅 Fecha de entrega", value=date.today(),
-            min_value=date.today() - timedelta(days=30))
+            min_value=date.today() - timedelta(days=45))
         if fecha < date.today():
             st.caption("📅 Fecha en el pasado — asegurate que sea correcta.")
         st.caption(f"Semana {fecha.isocalendar()[1]} · {fecha.strftime('%A %d/%m/%Y')}")

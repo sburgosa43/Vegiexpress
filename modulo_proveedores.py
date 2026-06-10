@@ -349,31 +349,101 @@ def mostrar():
                 st.rerun()
 
             st.divider()
+
+            # ── Vista imprimible HTML (todos los proveedores, sin valores) ────
+            def _html_imprimible():
+                rows_html = ""
+                for _prov in sel_prov:
+                    _df = base_dfs.get(_prov)
+                    if _df is None or _df.empty: continue
+                    rows_html += (
+                        f"<h2 style='page-break-before:always;margin:0 0 4px 0;"
+                        f"font-size:15px'>📦 {_prov} — Semana {semana}/{año}</h2>"
+                        "<table><tr><th style='text-align:left'>Producto</th>"
+                        "<th>Unidad</th><th>Ant-Chim</th><th>Chimalt</th>"
+                        "<th>GT-Stgo</th><th>Río</th><th>Total</th>"
+                        "<th style='min-width:70px'>A Comprar</th></tr>")
+                    for _, r in _df.iterrows():
+                        def _v(a):
+                            try: v = float(r.get(a, 0) or 0)
+                            except Exception: v = 0
+                            return f"{v:g}" if v > 0 else "—"
+                        rows_html += (
+                            f"<tr><td style='text-align:left'>{r['Producto']}</td>"
+                            f"<td>{r['Unidad']}</td>"
+                            f"<td>{_v('Ant-Chim')}</td><td>{_v('Chimalt')}</td>"
+                            f"<td>{_v('GT-Stgo')}</td><td>{_v('Río')}</td>"
+                            f"<td><b>{_v('Total')}</b></td><td></td></tr>")
+                    rows_html += "</table>"
+                return f"""<!DOCTYPE html><html><head><meta charset='utf-8'>
+<title>Lista de Compras S{semana}/{año}</title><style>
+body{{font-family:Helvetica,Arial,sans-serif;font-size:11px;margin:14px}}
+table{{border-collapse:collapse;width:100%;margin-bottom:14px}}
+th,td{{border:1px solid #333;padding:3px 5px;text-align:center;font-size:11px}}
+th{{background:#eee}}
+h2:first-of-type{{page-break-before:auto !important}}
+@media print{{ h2{{page-break-before:always}} h2:first-of-type{{page-break-before:auto}} }}
+</style></head><body>
+<p style='font-size:10px;color:#666'>VeggiExpress · Lista de necesidades ·
+Imprimir: Ctrl+P (o Compartir → Imprimir en el teléfono)</p>
+{rows_html}</body></html>"""
+
+            st.download_button(
+                "🖨 Vista imprimible (HTML — todos los proveedores)",
+                data=_html_imprimible().encode("utf-8"),
+                file_name=f"Lista_Compras_S{semana}_{año}.html",
+                mime="text/html",
+                key=f"html_print_{semana}_{año}",
+                help="Abrilo en el navegador y usa Ctrl+P para imprimir o guardar")
+
+            st.divider()
             st.markdown("**📄 Descargar PDF por proveedor:**")
-            st.caption("Solo líneas con valor en 'A Comprar'.")
+            st.caption("📋 Lista = todas las líneas (A Comprar vacío) · "
+                       "📄 PDF = solo líneas con valor ingresado.")
 
             for prov in sel_prov:
                 edited = edited_results.get(prov)
                 if edited is None: continue
 
-                items_pdf = []
+                items_pdf      = []   # solo lineas con valor (PDF actual)
+                items_completa = []   # TODAS las lineas, A Comprar vacio (para anotar a mano)
                 for i, row in base_dfs[prov].iterrows():
-                    val = str(edited.loc[i, "A Comprar"] or "")
-                    ok, pend, n = _val_comprar(val)
-                    if not ok: continue
-                    item = {
+                    base_item = {
                         "producto":  row["Producto"],
                         "unidad":    row["Unidad"],
                         "cantidad":  float(row["Total"]),
-                        "a_comprar": "P" if pend else f"{n:g}",
                     }
                     for _a in ["Ant-Chim","Chimalt","GT-Stgo","Río"]:
-                        item[_a] = float(row[_a]) if _a in row.index else 0.0
-                    items_pdf.append(item)
+                        base_item[_a] = float(row[_a]) if _a in row.index else 0.0
+
+                    items_completa.append({**base_item, "a_comprar": ""})
+
+                    val = str(edited.loc[i, "A Comprar"] or "")
+                    ok, pend, n = _val_comprar(val)
+                    if ok:
+                        items_pdf.append({**base_item,
+                                          "a_comprar": "P" if pend else f"{n:g}"})
 
                 import base64
                 import streamlit.components.v1 as _cpv
-                col_lbl, col_p, col_d = st.columns([3, 0.8, 0.8])
+                col_lbl, col_full, col_p, col_d = st.columns([2.4, 0.9, 0.8, 0.8])
+
+                # PDF Lista Completa: todas las lineas, columna A Comprar vacia
+                if items_completa:
+                    try:
+                        pdf_full = generar_lista_compras_proveedor(
+                            prov, items_completa, semana, año)
+                        nomf = "".join(ch for ch in prov
+                                       if ch.isalnum() or ch == "_")
+                        col_full.download_button(
+                            "📋 Lista", data=pdf_full,
+                            file_name=f"Lista_{nomf}_S{semana}.pdf",
+                            mime="application/pdf",
+                            key=f"pdf_full_{prov}_{semana}_{año}",
+                            help="Lista completa con A Comprar vacio para anotar a mano",
+                            use_container_width=True)
+                    except Exception:
+                        pass
                 col_lbl.markdown(
                     f"<div style='padding-top:6px'>📦 <b>{prov}</b> "
                     f"— {len(items_pdf)} línea(s)</div>",
