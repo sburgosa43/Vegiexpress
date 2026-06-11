@@ -139,6 +139,43 @@ def generar_excel_mensual(mes: int, año: int) -> bytes:
     for row in ws3.iter_rows(min_row=2, min_col=2):
         for c3 in row: c3.number_format = "#,##0.00"
 
+    # ── Hoja 4: Gastos por Rubro (Campo + areas Veggi + General) ─────────────
+    ws4 = wb.create_sheet("Gastos por Rubro")
+    _AREAS = ["Rio", "Antigua", "Chimaltenango", "Hogares"]
+    cols4  = ["SubCategoria","Campo"] + _AREAS + ["General","Total"]
+    _header(ws4, cols4, [20, 11, 11, 11, 14, 11, 11, 11])
+
+    rubros: dict = {}
+    for g in gas_mes:
+        cat = g["categoria"]
+        if cat not in ("Campo", "Veggi"): continue
+        sub = g["subcat"] or "(sin subcategoria)"
+        col = "Campo" if cat == "Campo" else (
+              g["area"] if g["area"] in _AREAS else "General")
+        d = rubros.setdefault(sub, {})
+        d[col] = d.get(col, 0) + g["monto"]
+
+    r = 2
+    col_keys = ["Campo"] + _AREAS + ["General"]
+    tot4 = {k: 0.0 for k in col_keys}
+    for sub in sorted(rubros, key=lambda s: -sum(rubros[s].values())):
+        d = rubros[sub]
+        ws4.cell(row=r, column=1, value=sub)
+        for j, k in enumerate(col_keys, start=2):
+            v = d.get(k, 0)
+            if v: ws4.cell(row=r, column=j, value=round(v, 2))
+            tot4[k] += v
+        ws4.cell(row=r, column=len(cols4), value=round(sum(d.values()), 2))
+        r += 1
+    ws4.cell(row=r, column=1, value="TOTAL").font = B
+    for j, k in enumerate(col_keys, start=2):
+        cl = ws4.cell(row=r, column=j, value=round(tot4[k], 2))
+        cl.font = B; cl.border = TH
+    cl = ws4.cell(row=r, column=len(cols4), value=round(sum(tot4.values()), 2))
+    cl.font = B; cl.border = TH
+    for row in ws4.iter_rows(min_row=2, min_col=2):
+        for c4 in row: c4.number_format = "#,##0.00"
+
     # Titulo en propiedades
     wb.properties.title = f"VeggiExpress {MESES[mes-1]} {año}"
 

@@ -431,21 +431,25 @@ def _tab_crm(todos, clientes, sem_act, año_act):
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB: MARGEN POR CLIENTE (tendencia mensual MB%)
+# TAB: MARGEN — tendencia mensual MB% por Cliente o por Producto
 # ══════════════════════════════════════════════════════════════════════════════
 def _tab_margen_clientes(todos: list):
-    """MB% mensual por cliente — detecta clientes que pierden rentabilidad."""
+    """MB% mensual por cliente o producto — detecta perdida de rentabilidad."""
     from datetime import date as _date
     import pandas as _pd
 
-    st.markdown("#### Tendencia de Margen Bruto % por Cliente")
-    st.caption("MB% = (precio − costo) × cantidad / ingreso · ultimos 6 meses. "
-               "Tendencia compara el ultimo mes vs promedio de los 3 anteriores.")
+    st.markdown("#### Tendencia de Margen Bruto %")
+    st.caption("MB% = (precio − costo) × cantidad / ingreso. "
+               "Tendencia: ultimo mes vs promedio de los 3 anteriores.")
 
-    n_meses = st.selectbox("Meses a mostrar", [6, 9, 12], index=0, key="mgc_n")
+    cc1, cc2 = st.columns([2, 1])
+    dimension = cc1.radio("Analizar por", ["Cliente", "Producto"],
+                           horizontal=True, key="mgc_dim")
+    n_meses   = cc2.selectbox("Meses", [6, 9, 12], index=0, key="mgc_n")
+
+    key_field = "cliente" if dimension == "Cliente" else "producto"
 
     hoy = _date.today()
-    # Lista de (año, mes) de los ultimos n_meses, mas antiguos primero
     meses = []
     y, m = hoy.year, hoy.month
     for _ in range(n_meses):
@@ -457,7 +461,7 @@ def _tab_margen_clientes(todos: list):
            7:"Jul",8:"Ago",9:"Sep",10:"Oct",11:"Nov",12:"Dic"}
     cols_meses = [f"{lbl[mm]} {yy%100:02d}" for yy, mm in meses]
 
-    # Agregacion: {cliente: {(y,m): [ingreso, mb]}}
+    # Agregacion: {entidad: {(y,m): [ingreso, mb]}}
     data: dict = {}
     for p in todos:
         if p["status"] == "Cancelado": continue
@@ -465,11 +469,12 @@ def _tab_margen_clientes(todos: list):
         if _excluido(p["cliente"]): continue
         key = (p["fecha"].year, p["fecha"].month)
         if key not in meses: continue
-        cli = p["cliente"]
+        ent = str(p.get(key_field) or "").strip()
+        if not ent: continue
         ing = float(p.get("total") or 0)
         mb  = (float(p.get("precio") or 0) - float(p.get("costo") or 0)) \
               * float(p.get("cantidad") or 0)
-        d = data.setdefault(cli, {})
+        d = data.setdefault(ent, {})
         acc = d.setdefault(key, [0.0, 0.0])
         acc[0] += ing
         acc[1] += mb
@@ -478,10 +483,9 @@ def _tab_margen_clientes(todos: list):
         st.info("Sin datos en el periodo seleccionado.")
         return
 
-    # Construir filas con MB% por mes + tendencia
     rows = []
-    for cli, d in data.items():
-        fila = {"Cliente": cli}
+    for ent, d in data.items():
+        fila = {dimension: ent}
         pcts = []
         for (yy, mm), col in zip(meses, cols_meses):
             ing, mb = d.get((yy, mm), (0.0, 0.0))
@@ -489,32 +493,109 @@ def _tab_margen_clientes(todos: list):
             pcts.append(pct)
             fila[col] = f"{pct:.0f}%" if pct is not None else "—"
 
-        ult    = pcts[-1]
-        prev   = [x for x in pcts[-4:-1] if x is not None]
+        ult  = pcts[-1]
+        prev = [x for x in pcts[-4:-1] if x is not None]
         if ult is not None and prev:
             delta = ult - (sum(prev) / len(prev))
             fila["Tendencia"] = ("🔻" if delta < -3 else
-                                  "🔺" if delta >  3 else "→") \
-                                + f" {delta:+.0f}pp"
+                                  "🔺" if delta >  3 else "→") + f" {delta:+.0f}pp"
             fila["_delta"] = delta
         else:
             fila["Tendencia"] = "—"
             fila["_delta"]    = 0.0
-
-        # Ingreso total del periodo para ordenar por relevancia
         fila["_ing_total"] = sum(v[0] for v in d.values())
         rows.append(fila)
 
-    # Orden: peor tendencia primero entre los clientes relevantes
+    # Para productos: limitar a los mas relevantes por ingreso (legibilidad)
+    if dimension == "Producto" and len(rows) > 40:
+        rows.sort(key=lambda r: -r["_ing_total"])
+        rows = rows[:40]
+        st.caption("Mostrando los 40 productos con mayor ingreso en el periodo.")
+
     rows.sort(key=lambda r: (r["_delta"], -r["_ing_total"]))
     df = _pd.DataFrame(rows).drop(columns=["_delta", "_ing_total"])
     st.dataframe(df, hide_index=True, use_container_width=True,
                  height=min(600, 60 + len(rows) * 35))
 
-    bajando = [r["Cliente"] for r in rows if r["_delta" if False else "Tendencia"].startswith("🔻")]
+    bajando = [r[dimension] for r in rows if r["Tendencia"].startswith("🔻")]
     if bajando:
         st.warning(f"⚠️ Margen en descenso (>3pp): {', '.join(bajando[:6])}"
                    + (f" y {len(bajando)-6} mas" if len(bajando) > 6 else ""))
+
+    # ── Drill-down: que producto arrastra el margen del cliente ──────────────
+    if dimension == "Cliente":
+        st.divider()
+        st.markdown("##### 🔍 Diagnóstico de cliente")
+        st.caption("Desglosa por producto: margen del último mes vs promedio "
+                   "de los 3 anteriores, ponderado por peso en la compra.")
+
+        orden_cli = [r["Cliente"] for r in rows]   # peor tendencia primero
+        cli_sel = st.selectbox("Cliente a diagnosticar", orden_cli, key="mgc_drill")
+
+        ult_key   = meses[-1]
+        prev_keys = meses[-4:-1]
+
+        # {producto: {"ult":[ing,mb], "prev":[ing,mb]}}
+        pdata: dict = {}
+        for p in todos:
+            if p["status"] == "Cancelado" or not p["fecha"]: continue
+            if p["cliente"] != cli_sel: continue
+            key = (p["fecha"].year, p["fecha"].month)
+            if key != ult_key and key not in prev_keys: continue
+            prod = str(p.get("producto") or "").strip()
+            if not prod: continue
+            ing = float(p.get("total") or 0)
+            mb  = (float(p.get("precio") or 0) - float(p.get("costo") or 0)) \
+                  * float(p.get("cantidad") or 0)
+            d = pdata.setdefault(prod, {"ult": [0.0, 0.0], "prev": [0.0, 0.0]})
+            b = d["ult"] if key == ult_key else d["prev"]
+            b[0] += ing
+            b[1] += mb
+
+        ing_cli_ult = sum(d["ult"][0] for d in pdata.values())
+        if ing_cli_ult <= 0:
+            st.info(f"{cli_sel} no tiene ventas en {cols_meses[-1]}.")
+        else:
+            filas_d, culpable, max_impacto = [], None, 0.0
+            for prod, d in pdata.items():
+                ing_u, mb_u = d["ult"]
+                ing_p, mb_p = d["prev"]
+                pct_u = (mb_u / ing_u * 100) if ing_u > 0 else None
+                pct_p = (mb_p / ing_p * 100) if ing_p > 0 else None
+                peso  = ing_u / ing_cli_ult * 100
+                if pct_u is not None and pct_p is not None:
+                    delta = pct_u - pct_p
+                    flecha = ("🔻" if delta < -3 else
+                              "🔺" if delta >  3 else "→")
+                    d_txt  = f"{flecha} {delta:+.0f}pp"
+                    impacto = max(0.0, -delta) * peso
+                    if impacto > max_impacto:
+                        max_impacto, culpable = impacto, (prod, delta, peso)
+                else:
+                    delta, d_txt = 0.0, "—"
+                filas_d.append({
+                    "Producto":     prod,
+                    f"Ingreso {cols_meses[-1]}": f"Q{ing_u:,.0f}",
+                    f"MB% {cols_meses[-1]}":     f"{pct_u:.0f}%" if pct_u is not None else "—",
+                    "MB% prom 3m":  f"{pct_p:.0f}%" if pct_p is not None else "—",
+                    "Δ":            d_txt,
+                    "Peso":         f"{peso:.0f}%",
+                    "_orden":       -(max(0.0, -delta) * peso),
+                })
+            filas_d.sort(key=lambda r: r["_orden"])
+            df_d = _pd.DataFrame(filas_d).drop(columns=["_orden"])
+            st.dataframe(df_d, hide_index=True, use_container_width=True,
+                         height=min(420, 60 + len(filas_d) * 35))
+
+            if culpable and max_impacto > 50:   # caida relevante ponderada
+                pr, dl, ps = culpable
+                st.info(f"💡 El descenso viene principalmente de **{pr}**: "
+                        f"su margen cayó {abs(dl):.0f}pp y representa el "
+                        f"{ps:.0f}% de la compra del cliente.")
+            elif culpable is None:
+                st.caption("Sin caídas de margen relevantes en los productos "
+                           "de este cliente.")
+
 
 def mostrar():
     st.markdown("## 📊 Dashboard — VeggiExpress")
@@ -557,7 +638,7 @@ def mostrar():
         "🥧 Shares",
         "📅 Comparativo",
         "👤 CRM",
-        "💹 Margen Clientes",
+        "💹 Margen",
     ])
     with t1: _tab_desempeno(todos, cli_map, periodos, campo, metric)
     with t2: _tab_evolucion(todos, clientes)

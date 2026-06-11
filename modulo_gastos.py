@@ -426,6 +426,47 @@ def _tab_operacion(pedidos: list, cfg: dict):
     ]
     st.dataframe(pd.DataFrame(filas), hide_index=True, use_container_width=True)
 
+    # ── Gastos Operativos por rubro ───────────────────────────────────────────
+    st.divider()
+    st.markdown("#### Gastos Operativos — detalle por rubro")
+    st.caption("Gastos con área asignada en su columna real. "
+               "*General* = gastos Veggi sin área → se prorratean 4/2/1/1.")
+
+    _AREAS_COL = ["Rio", "Antigua", "Chimaltenango", "Hogares"]
+    rubros: dict = {}   # {subcat: {col: monto}}
+    for g in gas_sem:
+        cat = g["categoria"]
+        if cat not in ("Campo", "Veggi"): continue
+        sub = g["subcat"] or "(sin subcategoria)"
+        if cat == "Campo":
+            col = "Campo"
+        else:
+            col = g["area"] if g["area"] in _AREAS_COL else "General"
+        d = rubros.setdefault(sub, {})
+        d[col] = d.get(col, 0) + g["monto"]
+
+    if rubros:
+        cols_orden = ["Campo"] + _AREAS_COL + ["General"]
+        filas_r, tot_cols = [], {k: 0.0 for k in cols_orden}
+        for sub in sorted(rubros, key=lambda s: -sum(rubros[s].values())):
+            d = rubros[sub]
+            fila = {"SubCategoría": sub}
+            for col in cols_orden:
+                v = d.get(col, 0)
+                fila[col] = _fq(v) if v else "—"
+                tot_cols[col] += v
+            fila["Total"] = _fq(sum(d.values()))
+            filas_r.append(fila)
+        fila_t = {"SubCategoría": "── TOTAL"}
+        for col in cols_orden:
+            fila_t[col] = _fq(tot_cols[col])
+        fila_t["Total"] = _fq(sum(tot_cols.values()))
+        filas_r.append(fila_t)
+        st.dataframe(pd.DataFrame(filas_r), hide_index=True,
+                     use_container_width=True)
+    else:
+        st.info("Sin gastos operativos registrados en este período.")
+
     # ── Reconciliacion Compras ────────────────────────────────────────────────
     st.divider()
     st.markdown("#### Inversion en Producto (Reconciliacion)")
