@@ -197,6 +197,25 @@ def _actualizar_producto(es_antigua: bool):
         _conf("prod_upd", f"Producto actualizado: {datos['nombre']}")
         st.rerun()
 
+    # ── Eliminar producto ─────────────────────────────────────────────────────
+    st.divider()
+    with st.expander(f"🗑️ Eliminar '{prod['nombre']}' del listado {lbl}",
+                     expanded=False):
+        st.error("Esta acción elimina la fila del catálogo de forma permanente. "
+                 "Los pedidos históricos NO se modifican.")
+        conf_del = st.checkbox(
+            f"Confirmo que quiero eliminar '{prod['nombre']}'",
+            key=f"del_conf_{lbl}_{prod['row_num']}")
+        if st.button("🗑️ Eliminar producto", type="secondary",
+                     key=f"del_exec_{lbl}_{prod['row_num']}",
+                     disabled=not conf_del):
+            with st.spinner("Eliminando..."):
+                eliminar_producto(prod["row_num"], es_antigua)
+            st.session_state.pop(sk_busq, None)
+            st.session_state.pop(sk_sel,  None)
+            _conf("prod_upd", f"Producto eliminado: {prod['nombre']}")
+            st.rerun()
+
 
 def _precios_tabla(es_antigua: bool):
     """Tab Precios: tabla limpia con columnas fijas y checkbox de catálogo."""
