@@ -188,6 +188,43 @@ def mostrar():
                 r[2].write(f"{d['cantidad']:,.1f}"); r[3].write(d["unidad"])
         st.caption("Actualizá el proveedor en 📦 Productos.")
 
+    # ── Alerta: costos desactualizados (>30 dias o sin registro) ─────────────
+    try:
+        from excel_helper import costo_ultima_actualizacion
+        from datetime import date as _date
+        _ult = costo_ultima_actualizacion()
+        _hoy = _date.today()
+        _prods_semana = set()
+        for _dfp in base_dfs.values():
+            for _, _r in _dfp.iterrows():
+                _prods_semana.add(str(_r["Producto"]).strip())
+
+        _viejos = []
+        for _pr in sorted(_prods_semana):
+            _f = _ult.get(_pr.lower())
+            if _f is None:
+                _viejos.append((_pr, None))
+            elif (_hoy - _f).days > 30:
+                _viejos.append((_pr, (_hoy - _f).days))
+
+        if _viejos:
+            with st.expander(
+                    f"⚠️ {len(_viejos)} producto(s) con costo desactualizado "
+                    f"(>30 dias o sin registro)", expanded=False):
+                st.caption("El costo se registra al editarlo en Productos o en "
+                           "Correccion Masiva. Sin registro = nunca actualizado "
+                           "desde que existe el log.")
+                _rows_v = [{"Producto": _pr,
+                            "Ultima actualizacion":
+                                f"hace {_d} dias" if _d else "sin registro"}
+                           for _pr, _d in _viejos]
+                import pandas as _pd
+                st.dataframe(_pd.DataFrame(_rows_v), hide_index=True,
+                             use_container_width=True,
+                             height=min(300, 60 + len(_rows_v)*35))
+    except Exception:
+        pass
+
     # ══ TABS PRINCIPALES ══════════════════════════════════════════════════════
     tab_apedir, tab_resumen = st.tabs(["📦 A Pedir", "📊 Resumen por Tipo"])
 

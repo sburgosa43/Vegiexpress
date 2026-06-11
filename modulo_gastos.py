@@ -449,6 +449,37 @@ def _tab_operacion(pedidos: list, cfg: dict):
                delta="Comprado > Vendido" if diff > 0 else ("Vendido > Comprado" if diff < 0 else "Exacto"),
                delta_color="normal")
 
+    # ── Export mensual a Excel ────────────────────────────────────────────────
+    st.divider()
+    with st.expander("📥 Export Mensual (Excel) — P&L + Gastos + Facturacion",
+                     expanded=False):
+        MESES_X = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio",
+                   "Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
+        x1, x2 = st.columns(2)
+        mes_x = x1.selectbox("Mes", list(range(1, 13)),
+                              index=date.today().month - 1,
+                              format_func=lambda m: MESES_X[m-1], key="exp_mes")
+        año_x = x2.number_input("Año", 2020, 2030, date.today().year, key="exp_año")
+
+        if st.button("Generar Excel", key="exp_gen", type="primary"):
+            with st.spinner("Generando reporte mensual..."):
+                try:
+                    from export_helper import generar_excel_mensual
+                    xlsx = generar_excel_mensual(mes_x, año_x)
+                    st.session_state["_exp_xlsx"] = xlsx
+                    st.session_state["_exp_name"] = (
+                        f"VeggiExpress_{MESES_X[mes_x-1]}_{año_x}.xlsx")
+                except Exception as e:
+                    st.error(f"Error generando Excel: {e}")
+
+        if st.session_state.get("_exp_xlsx"):
+            st.download_button(
+                "⬇️ Descargar " + st.session_state["_exp_name"],
+                data=st.session_state["_exp_xlsx"],
+                file_name=st.session_state["_exp_name"],
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="exp_dl")
+
 
 
 # ── TAB 4: Historial ──────────────────────────────────────────────────────────

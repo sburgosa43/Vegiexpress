@@ -256,7 +256,46 @@ def _actualizar_precio_catalogo(precio_map: dict,
         cargar_productos.clear()
     except Exception:
         pass
+    if costo_map:
+        _log_costo_actualizado({p: v for p, v in costo_map.items() if v > 0})
     return total
+
+
+# ── LOG DE COSTOS (sheet Historial Cambios) ───────────────────────────────────
+def _log_costo_actualizado(costo_map: dict) -> None:
+    """Registra fecha de actualizacion de costo por producto.
+    Formato fila: Fecha | COSTO | producto | costo_nuevo"""
+    if not costo_map: return
+    try:
+        from datetime import date as _d
+        hoy  = _d.today().strftime("%d/%m/%Y")
+        rows = [[hoy, "COSTO", prod, val] for prod, val in costo_map.items()]
+        append_rows(_K_HIST, rows)
+        costo_ultima_actualizacion.clear()
+    except Exception:
+        pass  # el log nunca debe bloquear la operacion principal
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def costo_ultima_actualizacion() -> dict:
+    """{producto_lower: date} — ultima fecha de actualizacion de costo."""
+    from datetime import datetime as _dt
+    result = {}
+    try:
+        rows = get_all_rows(_K_HIST)
+        for row in rows:
+            if len(row) < 3: continue
+            if str(row[1]).strip().upper() != "COSTO": continue
+            try:
+                f = _dt.strptime(str(row[0]).strip(), "%d/%m/%Y").date()
+            except Exception:
+                continue
+            prod = str(row[2]).strip().lower()
+            if prod and (prod not in result or f > result[prod]):
+                result[prod] = f
+    except Exception:
+        pass
+    return result
 
 
 # ── CORRECCIÓN MASIVA ──────────────────────────────────────────────────────────
@@ -496,6 +535,8 @@ def editar_producto(row_num: int, data: dict, es_antigua: bool = False) -> None:
             upd.append({"range": f"{col_letter}{row_num}", "values": [[val]]})
     if upd:
         update_cells(k, upd)
+    if "costo" in data and data.get("nombre"):
+        _log_costo_actualizado({data["nombre"]: _sf(data["costo"])})
     # Limpieza dirigida: solo caches de productos (no todo el cache global)
     leer_productos_con_fila.clear()
     try:

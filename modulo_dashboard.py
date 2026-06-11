@@ -429,6 +429,93 @@ def _tab_crm(todos, clientes, sem_act, año_act):
 
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB: MARGEN POR CLIENTE (tendencia mensual MB%)
+# ══════════════════════════════════════════════════════════════════════════════
+def _tab_margen_clientes(todos: list):
+    """MB% mensual por cliente — detecta clientes que pierden rentabilidad."""
+    from datetime import date as _date
+    import pandas as _pd
+
+    st.markdown("#### Tendencia de Margen Bruto % por Cliente")
+    st.caption("MB% = (precio − costo) × cantidad / ingreso · ultimos 6 meses. "
+               "Tendencia compara el ultimo mes vs promedio de los 3 anteriores.")
+
+    n_meses = st.selectbox("Meses a mostrar", [6, 9, 12], index=0, key="mgc_n")
+
+    hoy = _date.today()
+    # Lista de (año, mes) de los ultimos n_meses, mas antiguos primero
+    meses = []
+    y, m = hoy.year, hoy.month
+    for _ in range(n_meses):
+        meses.append((y, m))
+        m -= 1
+        if m == 0: m, y = 12, y - 1
+    meses.reverse()
+    lbl = {1:"Ene",2:"Feb",3:"Mar",4:"Abr",5:"May",6:"Jun",
+           7:"Jul",8:"Ago",9:"Sep",10:"Oct",11:"Nov",12:"Dic"}
+    cols_meses = [f"{lbl[mm]} {yy%100:02d}" for yy, mm in meses]
+
+    # Agregacion: {cliente: {(y,m): [ingreso, mb]}}
+    data: dict = {}
+    for p in todos:
+        if p["status"] == "Cancelado": continue
+        if not p["fecha"]: continue
+        if _excluido(p["cliente"]): continue
+        key = (p["fecha"].year, p["fecha"].month)
+        if key not in meses: continue
+        cli = p["cliente"]
+        ing = float(p.get("total") or 0)
+        mb  = (float(p.get("precio") or 0) - float(p.get("costo") or 0)) \
+              * float(p.get("cantidad") or 0)
+        d = data.setdefault(cli, {})
+        acc = d.setdefault(key, [0.0, 0.0])
+        acc[0] += ing
+        acc[1] += mb
+
+    if not data:
+        st.info("Sin datos en el periodo seleccionado.")
+        return
+
+    # Construir filas con MB% por mes + tendencia
+    rows = []
+    for cli, d in data.items():
+        fila = {"Cliente": cli}
+        pcts = []
+        for (yy, mm), col in zip(meses, cols_meses):
+            ing, mb = d.get((yy, mm), (0.0, 0.0))
+            pct = (mb / ing * 100) if ing > 0 else None
+            pcts.append(pct)
+            fila[col] = f"{pct:.0f}%" if pct is not None else "—"
+
+        ult    = pcts[-1]
+        prev   = [x for x in pcts[-4:-1] if x is not None]
+        if ult is not None and prev:
+            delta = ult - (sum(prev) / len(prev))
+            fila["Tendencia"] = ("🔻" if delta < -3 else
+                                  "🔺" if delta >  3 else "→") \
+                                + f" {delta:+.0f}pp"
+            fila["_delta"] = delta
+        else:
+            fila["Tendencia"] = "—"
+            fila["_delta"]    = 0.0
+
+        # Ingreso total del periodo para ordenar por relevancia
+        fila["_ing_total"] = sum(v[0] for v in d.values())
+        rows.append(fila)
+
+    # Orden: peor tendencia primero entre los clientes relevantes
+    rows.sort(key=lambda r: (r["_delta"], -r["_ing_total"]))
+    df = _pd.DataFrame(rows).drop(columns=["_delta", "_ing_total"])
+    st.dataframe(df, hide_index=True, use_container_width=True,
+                 height=min(600, 60 + len(rows) * 35))
+
+    bajando = [r["Cliente"] for r in rows if r["_delta" if False else "Tendencia"].startswith("🔻")]
+    if bajando:
+        st.warning(f"⚠️ Margen en descenso (>3pp): {', '.join(bajando[:6])}"
+                   + (f" y {len(bajando)-6} mas" if len(bajando) > 6 else ""))
+
 def mostrar():
     st.markdown("## 📊 Dashboard — VeggiExpress")
     # Botón de regreso al Inicio
@@ -464,18 +551,20 @@ def mostrar():
 
     st.divider()
 
-    t1, t2, t3, t4, t5 = st.tabs([
+    t1, t2, t3, t4, t5, t6 = st.tabs([
         "📈 Desempeño",
         "📊 Evolución Semanal",
         "🥧 Shares",
         "📅 Comparativo",
         "👤 CRM",
+        "💹 Margen Clientes",
     ])
     with t1: _tab_desempeno(todos, cli_map, periodos, campo, metric)
     with t2: _tab_evolucion(todos, clientes)
     with t3: _tab_shares(todos, clientes)
     with t4: _tab_comparativo(todos, clientes)
     with t5: _tab_crm(todos, clientes, sem_act, año_act)
+    with t6: _tab_margen_clientes(todos)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
