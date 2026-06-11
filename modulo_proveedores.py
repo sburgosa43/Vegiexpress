@@ -331,21 +331,46 @@ def mostrar():
                         col_cfg[an] = st.column_config.NumberColumn(
                             an, disabled=True, width="small", format="%.2f")
 
+                # ── Patron consume-y-remonta (a prueba de resets) ──────────
+                # No dependemos del estado interno del data_editor (fragil ante
+                # reruns). En cada run: 1) leemos las ediciones pendientes del
+                # run anterior directo de session_state, 2) las horneamos en
+                # base_df (autoritativo, vive en session_state), 3) bumpeamos
+                # la version del editor para remontarlo ya con TODO horneado.
+                ver_key = f"ver_{prov}_{semana}_{año}_{reset_n}"
+                ver     = st.session_state.get(ver_key, 0)
+                ed_key  = f"de_{prov}_{semana}_{año}_{reset_n}_v{ver}"
+
+                _prev = st.session_state.get(ed_key)
+                if isinstance(_prev, dict):
+                    _er = _prev.get("edited_rows", {}) or {}
+                    _hubo = False
+                    _col_pos = base_df.columns.get_loc("A Comprar") \
+                               if "A Comprar" in base_df.columns else None
+                    if _col_pos is not None:
+                        for _ridx, _chg in _er.items():
+                            if "A Comprar" in _chg:
+                                try:
+                                    base_df.iloc[int(_ridx), _col_pos] = \
+                                        str(_chg["A Comprar"] or "")
+                                    _hubo = True
+                                except Exception:
+                                    pass
+                    if _hubo:
+                        # Consumir: nueva version → editor fresco con datos horneados
+                        ver += 1
+                        st.session_state[ver_key] = ver
+                        ed_key = f"de_{prov}_{semana}_{año}_{reset_n}_v{ver}"
+
                 edited = st.data_editor(
-                    base_df[vis_cols],
+                    base_df[vis_cols].copy(),
                     column_config=col_cfg,
                     hide_index=True,
                     use_container_width=True,
                     num_rows="fixed",
-                    key=f"de_{prov}_{semana}_{año}_{reset_n}",
+                    key=ed_key,
                 )
                 edited_results[prov] = edited
-
-                # ── Persistir ediciones a session_state ──────────────────────
-                # base_dfs vive en session_state; al mutar el DataFrame aqui,
-                # los valores de "A Comprar" sobreviven reruns y navegacion.
-                if "A Comprar" in edited.columns:
-                    base_df["A Comprar"] = edited["A Comprar"].values
 
                 # Total estimado (pantalla)
                 est_prov = 0.0
