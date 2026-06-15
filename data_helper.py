@@ -172,3 +172,79 @@ def cli_precio(cliente: dict, producto_nombre: str) -> tuple[float, str]:
 def limpiar_cache_precios():
     """Limpia caches de todas las tablas de precios especiales."""
     _leer_tabla_precios.clear()
+
+
+# ── ESCRITURA EN TABLAS DE PRECIOS ESPECIALES ─────────────────────────────────
+_GRUPOS_VALIDOS = {"italianos","chimaltecos","italianos2","porqueno"}
+_ZONAS_VALIDAS  = {"antigua","hogares"}
+
+def guardar_precio_especial(hoja_key: str, lista: str,
+                             producto: str, precio: float) -> bool:
+    """
+    Agrega o actualiza una fila en PreciosZona/Grupo/Cliente.
+    hoja_key: 'precioszona' | 'preciosgrupo' | 'preciosclient'
+    Retorna True si OK.
+    """
+    from gsheets import ws as _ws, get_all_rows
+    try:
+        sheet = _ws(hoja_key)
+        rows  = get_all_rows(hoja_key)
+        lista_l = lista.strip().lower()
+        prod_l  = producto.strip().lower()
+        for i, row in enumerate(rows, start=2):
+            if len(row) < 2: continue
+            if (str(row[0]).strip().lower() == lista_l and
+                    str(row[1]).strip().lower() == prod_l):
+                sheet.update(f"C{i}", [[precio]])
+                _leer_tabla_precios.clear()
+                return True
+        sheet.append_rows([[lista.strip(), producto.strip(), precio]])
+        _leer_tabla_precios.clear()
+        return True
+    except Exception:
+        return False
+
+
+def eliminar_precio_especial(hoja_key: str, lista: str,
+                              producto: str) -> bool:
+    """Elimina la fila de precio especial para lista+producto."""
+    from gsheets import ws as _ws, delete_rows, get_all_rows
+    try:
+        rows  = get_all_rows(hoja_key)
+        lista_l = lista.strip().lower()
+        prod_l  = producto.strip().lower()
+        to_del = []
+        for i, row in enumerate(rows, start=2):
+            if len(row) < 2: continue
+            if (str(row[0]).strip().lower() == lista_l and
+                    str(row[1]).strip().lower() == prod_l):
+                to_del.append(i)
+        if to_del:
+            delete_rows(hoja_key, to_del)
+            _leer_tabla_precios.clear()
+            return True
+        return False
+    except Exception:
+        return False
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def leer_precios_capa(hoja_key: str, lista: str) -> list[dict]:
+    """Retorna [{producto, precio}] para una capa dada."""
+    from gsheets import ws as _ws
+    result = []
+    try:
+        rows = _ws(hoja_key).get_all_values()[1:]
+        lista_l = lista.strip().lower()
+        for row in rows:
+            if len(row) < 3: continue
+            if str(row[0]).strip().lower() != lista_l: continue
+            try:
+                precio = float(str(row[2]).replace(",","").strip() or 0)
+            except Exception:
+                continue
+            if row[1].strip() and precio > 0:
+                result.append({"producto": row[1].strip(), "precio": precio})
+    except Exception:
+        pass
+    return result
