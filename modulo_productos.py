@@ -174,6 +174,7 @@ def _actualizar_producto(es_antigua: bool):
 
     # ── Paso 2: Seleccion del producto ────────────────────────────────────────
     nombres = [p["nombre"] for p in filtrados]
+    # Si hay un solo resultado, lo fijamos directo (evita reset por rerun)
     sel     = st.selectbox("Selecciona el producto:", nombres, key=sk_sel)
     prod    = next(p for p in filtrados if p["nombre"] == sel)
 
@@ -183,17 +184,20 @@ def _actualizar_producto(es_antigua: bool):
 
     # ── Paso 3: Formulario de edicion ─────────────────────────────────────────
     # key_prefix incluye row_num para que cada producto tenga su propio form
+    # Lock product selection so accidental Enter/rerun no saca de la pestaña
+    st.session_state[f"_locked_prod_{lbl}"] = prod["row_num"]
     datos = _form_producto(prefill=prod, key_prefix=f"upd_{prod['row_num']}",
                            es_antigua=es_antigua)
     if datos:
         with st.spinner("Guardando..."):
             editar_producto(prod["row_num"], datos, es_antigua)
-        # Limpiar busqueda y estado del form para empezar de cero
-        st.session_state.pop(sk_busq, None)
-        st.session_state.pop(sk_sel,  None)
+        # Mantener la busqueda y seleccion para que el usuario NO salga de la
+        # pestaña tras guardar. Solo limpiamos el estado interno del form para
+        # que muestre los valores frescos del Sheet en el proximo render.
         _kp = f"upd_{prod['row_num']}"
         for _k in [k for k in st.session_state if k.startswith(f"{_kp}_")]:
             st.session_state.pop(_k, None)
+        leer_productos_con_fila.clear()
         _conf("prod_upd", f"Producto actualizado: {datos['nombre']}")
         st.rerun()
 

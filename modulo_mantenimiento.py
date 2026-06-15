@@ -305,6 +305,26 @@ def _tab_backup():
 
     st.caption("El backup sobreescribe siempre el mismo archivo. "
                "Se ejecuta automaticamente antes de operaciones destructivas.")
+    # ── Diagnóstico ───────────────────────────────────────────────────────────
+    with st.expander("🔧 Diagnóstico del backup", expanded=False):
+        if st.button("Verificar configuración", key="bk_diag"):
+            from backup_helper import diagnostico
+            d = diagnostico()
+            st.write("**BACKUP_FOLDER_ID en Secrets:**",
+                     "✅ Sí" if d["folder_id"] else "❌ Falta")
+            st.write("**Credenciales válidas:**",
+                     "✅ Sí" if d["credenciales"] else "❌ No")
+            st.write("**Carpeta accesible:**",
+                     "✅ Sí" if d["carpeta_accesible"] else "❌ No — ¿compartiste la carpeta con el service account?")
+            if d["file_id_guardado"]:
+                st.write(f"**Backup previo registrado:** ✅ "
+                         f"[ver archivo](https://drive.google.com/file/d/{d['file_id_guardado']}/view)")
+            else:
+                st.write("**Backup previo registrado:** ⚠️ Ninguno — "
+                         "nunca se ha creado un backup exitoso.")
+            if d["error"]:
+                st.error(f"Detalle del error: {d['error']}")
+
     st.divider()
 
     # Link directo al archivo en Drive
