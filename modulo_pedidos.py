@@ -7,7 +7,7 @@ import pandas as pd
 import io
 from difflib import get_close_matches
 from datetime import date, timedelta
-from data_helper   import cargar_clientes, cargar_productos
+from data_helper   import cargar_clientes, cargar_productos, cli_precio
 from excel_helper  import leer_productos_con_fila
 from order_helper  import guardar_pedidos_batch
 try:
