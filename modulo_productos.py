@@ -274,6 +274,105 @@ def _precios_tabla(es_antigua: bool):
             st.info("Sin cambios detectados.")
 
 
+def _tab_validacion():
+    """Audita integridad de nombres y referencias en el catalogo."""
+    import unicodedata
+    from collections import defaultdict
+
+    st.markdown("#### Validación de Catálogo")
+    st.caption("Detecta nombres similares, productos sin proveedor o sin "
+               "costo, y precios en zona/grupo apuntando a productos "
+               "inexistentes en el catálogo General.")
+
+    prods_gen = leer_productos_con_fila(es_antigua=False)
+    prods_ant = leer_productos_con_fila(es_antigua=True)
+
+    def _norm(s: str) -> str:
+        """Quita acentos, espacios extra, mayusculas."""
+        s = unicodedata.normalize("NFKD", str(s or "")).encode("ascii","ignore").decode()
+        return " ".join(s.lower().split())
+
+    # ── Bloque 1: nombres similares en General ───────────────────────────────
+    st.markdown("##### Nombres similares en catálogo General")
+    grupos = defaultdict(list)
+    for p in prods_gen:
+        grupos[_norm(p["nombre"])].append(p["nombre"])
+    duplicados = {k: v for k, v in grupos.items() if len(set(v)) > 1}
+    if duplicados:
+        for clave, variantes in duplicados.items():
+            unicos = sorted(set(variantes))
+            st.warning(f"⚠️ Posible duplicado: {' | '.join(unicos)}")
+    else:
+        st.success("Sin nombres similares en General.")
+
+    # ── Bloque 2: General vs Antigua (cross-list mismatches) ─────────────────
+    st.markdown("##### Productos de Antigua sin coincidencia exacta en General")
+    nombres_gen = {p["nombre"] for p in prods_gen}
+    nombres_gen_norm = {_norm(p["nombre"]): p["nombre"] for p in prods_gen}
+    mismatches = []
+    for p in prods_ant:
+        if p["nombre"] not in nombres_gen:
+            sugerencia = nombres_gen_norm.get(_norm(p["nombre"]))
+            mismatches.append((p["nombre"], sugerencia))
+    if mismatches:
+        for n, sug in mismatches[:30]:
+            if sug:
+                st.warning(f"⚠️ Antigua: \"{n}\" → ¿debería ser \"{sug}\"?")
+            else:
+                st.info(f"ℹ️ Antigua: \"{n}\" sin equivalente en General")
+        if len(mismatches) > 30:
+            st.caption(f"...y {len(mismatches)-30} más")
+    else:
+        st.success("Todos los productos de Antigua existen en General.")
+
+    # ── Bloque 3: productos sin proveedor o sin costo ────────────────────────
+    st.markdown("##### Productos sin proveedor o sin costo")
+    sin_prov = [p["nombre"] for p in prods_gen if not p.get("proveedor","").strip()]
+    sin_costo = [p["nombre"] for p in prods_gen
+                 if not p.get("costo") or float(p.get("costo",0)) <= 0]
+    if sin_prov:
+        with st.expander(f"⚠️ {len(sin_prov)} producto(s) sin proveedor",
+                          expanded=False):
+            for n in sin_prov: st.write(f"  · {n}")
+    if sin_costo:
+        with st.expander(f"⚠️ {len(sin_costo)} producto(s) sin costo",
+                          expanded=False):
+            for n in sin_costo: st.write(f"  · {n}")
+    if not sin_prov and not sin_costo:
+        st.success("Todos los productos tienen proveedor y costo.")
+
+    # ── Bloque 4: PreciosZona/Grupo apuntando a productos inexistentes ───────
+    st.markdown("##### Tablas de Precios vs Catálogo General")
+    try:
+        from gsheets import ws as _ws
+        nombres_set = nombres_gen
+        for hoja_nombre in ["PreciosZona","PreciosGrupo","PreciosCliente"]:
+            try:
+                sheet = _ws(hoja_nombre.lower())
+                rows = sheet.get_all_values()[1:]   # skip header
+            except Exception:
+                continue
+            huerfanos = []
+            for r in rows:
+                if len(r) < 2: continue
+                prod = r[1].strip()
+                if prod and prod not in nombres_set:
+                    huerfanos.append((r[0], prod))
+            if huerfanos:
+                with st.expander(f"⚠️ {hoja_nombre}: {len(huerfanos)} fila(s) "
+                                  f"con producto inexistente en General",
+                                  expanded=False):
+                    for lista, p in huerfanos[:20]:
+                        sug = nombres_gen_norm.get(_norm(p))
+                        msg = f"  · [{lista}] \"{p}\""
+                        if sug: msg += f" → ¿{sug}?"
+                        st.write(msg)
+            else:
+                st.success(f"{hoja_nombre}: todas las filas apuntan a productos válidos.")
+    except Exception as e:
+        st.info(f"Hojas de precios especiales no disponibles aún ({e}).")
+
+
 def mostrar():
     _show_conf("prod_upd")
     _show_conf("precios_upd")
@@ -284,13 +383,14 @@ def mostrar():
     st.divider()
 
     (tab_ng, tab_na, tab_ug, tab_ua,
-     tab_pg, tab_pa) = st.tabs([
+     tab_pg, tab_pa, tab_val) = st.tabs([
         "➕ Nuevo General",
         "➕ Nuevo Antigua",
         "✏️ Actualización General",
         "✏️ Actualización Antigua",
         "📋 Precios General",
         "📋 Precios Antigua",
+        "🔍 Validación",
     ])
 
     with tab_ng:

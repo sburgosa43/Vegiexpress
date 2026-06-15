@@ -14,19 +14,39 @@ def _tab_correccion():
     hoy     = date.today()
     sem_def = hoy.isocalendar()[1]
 
-    c1, c2 = st.columns(2)
+    from data_helper import cargar_clientes
+    from config import ZONAS_MAP as _ZM
+
+    c1, c2, c3 = st.columns(3)
     semana = c1.number_input("Semana", 1, 53, sem_def, key="mc_sem")
     anio   = c2.number_input("Año",  2020, 2030, hoy.year, key="mc_anio")
 
-    todos = leer_pedidos()
-    prods_map = {p["nombre"]: p for p in cargar_productos()}
+    # Filtro de zona — limita a clientes de la zona seleccionada
+    zona_opts = ["Todas"] + [k for k in _ZM.keys() if k != "Todas"]
+    zona_sel  = c3.selectbox("Zona", zona_opts, key="mc_zona",
+                              help="Filtra a clientes de la zona elegida")
+
+    todos      = leer_pedidos()
+    clientes   = {c["nombre"].lower().strip(): c for c in cargar_clientes()}
+    prods_map  = {p["nombre"]: p for p in cargar_productos()}
+
+    def _en_zona(cliente_nombre: str) -> bool:
+        if zona_sel == "Todas":
+            return True
+        cli = clientes.get(cliente_nombre.lower().strip())
+        if not cli:
+            return False
+        codigos_zona = _ZM.get(zona_sel, [])
+        return cli.get("codigo_lugar", "") in codigos_zona
 
     pedidos_sem = [p for p in todos
                    if p["semana"] == semana and p["año"] == anio
-                   and p["status"] != "Cancelado"]
+                   and p["status"] != "Cancelado"
+                   and _en_zona(p["cliente"])]
 
     if not pedidos_sem:
-        st.info(f"Sin pedidos activos en semana {semana}/{anio}.")
+        st.info(f"Sin pedidos activos en semana {semana}/{anio}"
+                + (f" para zona {zona_sel}." if zona_sel != "Todas" else "."))
         return
 
     prods_sem = sorted({p["producto"] for p in pedidos_sem})
