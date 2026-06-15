@@ -16,7 +16,7 @@ def cargar_clientes() -> list[dict]:
     rows = get_all_rows(_K_CLI)
     clientes = []
     for i, row in enumerate(rows, start=2):
-        while len(row) < 11: row.append("")
+        while len(row) < 12: row.append("")
         if not row[0]: continue
         clientes.append({
             "row_num":      i,
@@ -33,6 +33,7 @@ def cargar_clientes() -> list[dict]:
             "codigo_lugar": str(row[10] or "L05"),
             "activo":       str(row[6] or "").strip().lower() != "inactivo",
             "es_antigua":   str(row[10] or "L05").strip() in ("L03", "L04"),
+            "grupo":        str(row[11] or "").strip(),
         })
     return clientes
 
@@ -118,65 +119,50 @@ def _leer_tabla_precios(hoja: str) -> dict:
 
 def cli_precio(cliente: dict, producto_nombre: str) -> tuple[float, str]:
     """
-    Cascada de 4 niveles. Retorna (precio, fuente).
-    fuente: 'cliente' | 'grupo' | 'zona' | 'general'
-
-    cliente: dict con campos 'codigo_lugar', 'grupo', 'nombre', 'es_antigua'
+    Cascada 4 niveles: cliente → grupo → zona → general.
+    Retorna (precio, fuente).
     """
-    from excel_helper import leer_productos_con_fila
-    from config import ZONAS_MAP
-
     prod_lower = producto_nombre.lower().strip()
+    if not prod_lower:
+        return 0.0, "general"
 
-    # Determinar zona del cliente
-    cod = str(cliente.get("codigo_lugar", "") or "").strip()
-    zona_nombre = None
-    for zn, codigos in ZONAS_MAP.items():
-        if cod in codigos:
-            zona_nombre = zn
-            break
+    cod        = str(cliente.get("codigo_lugar", "") or "").strip()
+    grupo      = str(cliente.get("grupo", "") or "").strip()
+    nombre_cli = str(cliente.get("nombre", "") or "").strip()
 
-    # Mapear zona a nombre en PreciosZona
-    _ZONA_KEY = {
-        "🔖 Antigua & Chimal": "antigua",
-        "L20": "hogares",           # fallback directo
-    }
-    # Simplify zona name for lookup
+    # Zona key para PreciosZona
     zona_key = None
     if cod == "L20":
         zona_key = "hogares"
     elif cod in ("L03", "L04"):
         zona_key = "antigua"
 
-    grupo = str(cliente.get("grupo", "") or "").strip()
-    nombre_cli = str(cliente.get("nombre", "") or "").strip()
-
     tab_cli  = _leer_tabla_precios("preciosclient")
     tab_grp  = _leer_tabla_precios("preciosgrupo")
     tab_zona = _leer_tabla_precios("precioszona")
 
-    # Nivel 1 — cliente individual
+    # 1. Cliente individual
     if nombre_cli:
         v = tab_cli.get((nombre_cli.lower(), prod_lower))
-        if v: return v, "cliente"
+        if v: return float(v), "cliente"
 
-    # Nivel 2 — grupo
+    # 2. Grupo
     if grupo:
         v = tab_grp.get((grupo.lower(), prod_lower))
-        if v: return v, "grupo"
+        if v: return float(v), "grupo"
 
-    # Nivel 3 — zona
+    # 3. Zona
     if zona_key:
         v = tab_zona.get((zona_key, prod_lower))
-        if v: return v, "zona"
+        if v: return float(v), "zona"
 
-    # Nivel 4 — precio General del catálogo
+    # 4. General — catálogo
     try:
+        from excel_helper import leer_productos_con_fila
         es_ant = cliente.get("es_antigua", False)
-        prods  = leer_productos_con_fila(es_antigua=es_ant)
-        for p in prods:
+        for p in leer_productos_con_fila(es_antigua=bool(es_ant)):
             if p["nombre"].lower().strip() == prod_lower:
-                return float(p.get("precio", 0) or 0), "general"
+                return float(p.get("precio") or 0), "general"
     except Exception:
         pass
 
