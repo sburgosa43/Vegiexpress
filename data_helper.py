@@ -82,3 +82,107 @@ def get_proveedores() -> list[str]:
     if "Sin Proveedor" not in found:
         found.append("Sin Proveedor")
     return found
+
+
+# ── CASCADA DE PRECIOS (4 niveles) ────────────────────────────────────────────
+_HOJAS_PRECIOS = {
+    "zona":    "precioszona",
+    "grupo":   "preciosgrupo",
+    "cliente": "preciosclient",
+}
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _leer_tabla_precios(hoja: str) -> dict:
+    """
+    Lee una hoja de precios y retorna dict:
+      {(lista_lower, producto_lower): precio_float}
+    """
+    from gsheets import ws as _ws
+    result = {}
+    try:
+        rows = _ws(hoja).get_all_values()
+        for row in rows[1:]:          # skip header
+            if len(row) < 3: continue
+            lista = str(row[0]).strip()
+            prod  = str(row[1]).strip()
+            try:
+                precio = float(str(row[2]).replace(",","").strip() or 0)
+            except Exception:
+                continue
+            if lista and prod and precio > 0:
+                result[(lista.lower(), prod.lower())] = precio
+    except Exception:
+        pass
+    return result
+
+
+def cli_precio(cliente: dict, producto_nombre: str) -> tuple[float, str]:
+    """
+    Cascada de 4 niveles. Retorna (precio, fuente).
+    fuente: 'cliente' | 'grupo' | 'zona' | 'general'
+
+    cliente: dict con campos 'codigo_lugar', 'grupo', 'nombre', 'es_antigua'
+    """
+    from excel_helper import leer_productos_con_fila
+    from config import ZONAS_MAP
+
+    prod_lower = producto_nombre.lower().strip()
+
+    # Determinar zona del cliente
+    cod = str(cliente.get("codigo_lugar", "") or "").strip()
+    zona_nombre = None
+    for zn, codigos in ZONAS_MAP.items():
+        if cod in codigos:
+            zona_nombre = zn
+            break
+
+    # Mapear zona a nombre en PreciosZona
+    _ZONA_KEY = {
+        "🔖 Antigua & Chimal": "antigua",
+        "L20": "hogares",           # fallback directo
+    }
+    # Simplify zona name for lookup
+    zona_key = None
+    if cod == "L20":
+        zona_key = "hogares"
+    elif cod in ("L03", "L04"):
+        zona_key = "antigua"
+
+    grupo = str(cliente.get("grupo", "") or "").strip()
+    nombre_cli = str(cliente.get("nombre", "") or "").strip()
+
+    tab_cli  = _leer_tabla_precios("preciosclient")
+    tab_grp  = _leer_tabla_precios("preciosgrupo")
+    tab_zona = _leer_tabla_precios("precioszona")
+
+    # Nivel 1 — cliente individual
+    if nombre_cli:
+        v = tab_cli.get((nombre_cli.lower(), prod_lower))
+        if v: return v, "cliente"
+
+    # Nivel 2 — grupo
+    if grupo:
+        v = tab_grp.get((grupo.lower(), prod_lower))
+        if v: return v, "grupo"
+
+    # Nivel 3 — zona
+    if zona_key:
+        v = tab_zona.get((zona_key, prod_lower))
+        if v: return v, "zona"
+
+    # Nivel 4 — precio General del catálogo
+    try:
+        es_ant = cliente.get("es_antigua", False)
+        prods  = leer_productos_con_fila(es_antigua=es_ant)
+        for p in prods:
+            if p["nombre"].lower().strip() == prod_lower:
+                return float(p.get("precio", 0) or 0), "general"
+    except Exception:
+        pass
+
+    return 0.0, "general"
+
+
+def limpiar_cache_precios():
+    """Limpia caches de todas las tablas de precios especiales."""
+    _leer_tabla_precios.clear()

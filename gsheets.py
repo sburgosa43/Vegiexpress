@@ -17,7 +17,10 @@ HOJAS = {
     "config":     "Config",
     "historial":  "Historial Cambios",
     "gastos":       "Gastos",
-    "gastosconfig": "GastosConfig",
+    "gastosconfig":  "GastosConfig",
+    "precioszona":   "PreciosZona",
+    "preciosgrupo":  "PreciosGrupo",
+    "preciosclient": "PreciosCliente",
     "backup":       "Pedidos_Backup",
 }
 

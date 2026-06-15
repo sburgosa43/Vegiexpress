@@ -195,7 +195,8 @@ def _paso2():
             st.session_state.ped_nfilas = 15; st.rerun()
 
     if validas:
-        total_est = sum(r["Cantidad"] * prod_dict[r["Producto"]]["precio"]
+        total_est = sum(r["Cantidad"] * (cli_precio(c, r["Producto"])[0]
+                         or prod_dict[r["Producto"]]["precio"])
                         for r in validas if r["Producto"] in prod_dict)
         st.markdown(
             f"<div style='background:#e8f5e9;border-radius:8px;padding:10px;"
@@ -219,11 +220,14 @@ def _paso2():
             for r in validas:
                 p = prod_dict.get(r["Producto"])
                 if p:
+                    # Cascada de precios: Cliente→Grupo→Zona→General
+                    precio_cas, fuente = cli_precio(c, r["Producto"])
                     lineas.append({"nombre": r["Producto"],
                                    "cantidad": r["Cantidad"],
-                                   "precio": p["precio"],
+                                   "precio": precio_cas or p["precio"],
                                    "costo":  p["costo"],
-                                   "unidad": p["unidad"]})
+                                   "unidad": p["unidad"],
+                                   "_precio_fuente": fuente})
             if not lineas:
                 st.warning("Agregá al menos un producto con cantidad > 0.")
             else:
@@ -407,7 +411,7 @@ def _importar_pedidos():
     Acepta paste desde Excel o archivo .xlsx/.csv.
     Valida clientes y productos, permite corrección inline, luego guarda.
     """
-    from data_helper  import cargar_clientes, cargar_productos
+    from data_helper  import cargar_clientes, cli_precio, cargar_productos
     from excel_helper import leer_productos_con_fila
     from difflib      import get_close_matches
     from datetime     import datetime

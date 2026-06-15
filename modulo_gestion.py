@@ -306,11 +306,19 @@ def _modificar(todos):
                             f"Q{precio_orig:,.2f}</small>",
                             unsafe_allow_html=True)
                     elif precio_orig <= 0:
-                        _pcat = float(prods_cat.get(linea["producto"],{}).get("precio",0) or 0)
-                        if _pcat > 0:
+                        # Sugerir precio via cascada para este cliente/producto
+                        _ped_cli = st.session_state.get("gest_cli_obj")
+                        if _ped_cli and linea.get("producto"):
+                            _cas_p, _cas_f = cli_precio(_ped_cli, linea["producto"])
+                        else:
+                            _cas_p = float(prods_cat.get(linea["producto"],{}).get("precio",0) or 0)
+                            _cas_f = "general"
+                        if _cas_p > 0:
+                            _src_icon = {"cliente":"👤","grupo":"🏷️",
+                                         "zona":"📍","general":"📋"}.get(_cas_f,"📋")
                             st.markdown(
-                                f"<small style='color:#2D7A2D'>✓ Precio del catálogo: "
-                                f"Q{_pcat:,.2f}</small>",
+                                f"<small style='color:#2D7A2D'>{_src_icon} Precio sugerido "
+                                f"({_cas_f}): Q{_cas_p:,.2f}</small>",
                                 unsafe_allow_html=True)
 
                     # Indicadores de cambio
