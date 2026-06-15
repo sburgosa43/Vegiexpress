@@ -409,14 +409,12 @@ def agregar_cliente(data: dict) -> str:
         int(data.get("credito", 0)),
         codigo,
         data.get("codigo_lugar","L05"),
+        data.get("grupo",        ""),     # col L
     ]
     append_rows(_K_CLI, [row])
-    # Limpieza dirigida: solo caches de productos (no todo el cache global)
-    leer_productos_con_fila.clear()
     try:
-        from data_helper import cargar_productos, get_proveedores
-        cargar_productos.clear()
-        get_proveedores.clear()
+        from data_helper import cargar_clientes
+        cargar_clientes.clear()
     except Exception:
         pass
     return codigo

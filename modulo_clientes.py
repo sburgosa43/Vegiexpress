@@ -16,7 +16,7 @@ def _show_conf(key: str):
 from data_helper  import cargar_clientes
 from excel_helper import agregar_cliente, editar_cliente, eliminar_cliente
 
-TIPOS_CLIENTE = ["Restaurante", "Bar", "Hotel", "Procesador", "Cocina", "Otro"]
+TIPOS_CLIENTE = ["Restaurante", "Bar", "Hotel", "Procesador", "Cocina", "Hogar", "Otro"]
 ESTATUS_OPC   = ["Cliente", "Pendiente"]
 LUGARES       = {
     "L01 – Rio Dulce":       "L01",
@@ -25,6 +25,7 @@ LUGARES       = {
     "L04 – Chimaltenango":   "L04",
     "L05 – Guatemala":       "L05",
     "L06 – Otro":            "L06",
+    "L20 – Hogares":         "L20",
 }
 LUGAR_KEYS = list(LUGARES.keys())
 LUGAR_VALS = list(LUGARES.values())

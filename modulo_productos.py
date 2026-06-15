@@ -264,14 +264,37 @@ def _mostrar_info_precios(nombre_prod: str):
 
 
 def _cascade_parent(nombre: str, costo_nuevo: float, todos: list):
-    """Detecta hijos del producto y pide confirmar su costo."""
-    hijos = [p for p in todos if p.get("parent","").strip().lower()
-             == nombre.strip().lower() and p["nombre"].strip().lower() != nombre.strip().lower()]
+    """Detecta hijos y permite actualizar su costo en el acto."""
+    hijos = [p for p in todos
+             if p.get("parent","").strip().lower() == nombre.strip().lower()
+             and p["nombre"].strip().lower() != nombre.strip().lower()]
     if not hijos: return
+
     st.warning(f"⚠️ **{nombre}** tiene {len(hijos)} producto(s) hijo(s). "
-               f"Revisá su costo en ✏️ Actualizar Producto:")
-    for h in hijos:
-        st.write(f"  · **{h['nombre']}** — costo actual: Q{h['costo']:.2f}")
+               f"Definí el costo de cada uno (no es proporcional — puede incluir "
+               f"empaque u otros) o cerrá para hacerlo después.")
+
+    with st.form(key=f"cascade_{nombre.replace(' ','_')}"):
+        costos_hijos = {}
+        for h in hijos:
+            c1, c2 = st.columns([3, 1])
+            c1.write(f"**{h['nombre']}** (costo actual: Q{h['costo']:.2f})")
+            costos_hijos[h["row_num"]] = c2.number_input(
+                "Nuevo costo Q", value=float(h["costo"]),
+                min_value=0.0, step=0.5,
+                key=f"cas_{h['row_num']}")
+
+        c_ap, c_sk = st.columns(2)
+        aplicar = c_ap.form_submit_button("Aplicar a hijos", type="primary")
+        c_sk.form_submit_button("Omitir por ahora", type="secondary")
+
+    if aplicar:
+        with st.spinner("Actualizando hijos..."):
+            for h in hijos:
+                nuevo_c = costos_hijos[h["row_num"]]
+                editar_producto(h["row_num"], {**h, "costo": nuevo_c},
+                                es_antigua=False)
+        st.success(f"Costos de {len(hijos)} hijo(s) actualizados.")
 
 
 # ── TAB 3: Ver Catálogo ───────────────────────────────────────────────────────
@@ -449,23 +472,6 @@ def _tab_validacion():
         st.info(f"Hojas de precios especiales no disponibles ({e}).")
 
 
-# ── Tabs legado ───────────────────────────────────────────────────────────────
-def _precios_tabla(es_antigua: bool = False):
-    lbl   = "Antigua" if es_antigua else "General"
-    prods = leer_productos_con_fila(es_antigua=es_antigua)
-    if not prods:
-        st.info("Sin productos."); return
-    filtro = st.text_input("Filtrar", key=f"pt_f_{lbl}", label_visibility="collapsed",
-                            placeholder="nombre...")
-    if filtro:
-        prods = [p for p in prods if filtro.lower() in p["nombre"].lower()]
-    df = pd.DataFrame([{"Producto": p["nombre"], "Costo": p["costo"],
-                         "Precio": p["precio"], "Proveedor": p.get("proveedor","")}
-                        for p in prods])
-    st.dataframe(df, hide_index=True, use_container_width=True)
-    st.caption(f"{len(df)} productos")
-
-
 # ── MOSTRAR ────────────────────────────────────────────────────────────────────
 def mostrar():
     _show_conf("prod_upd")
@@ -476,60 +482,15 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    (tab_np, tab_upd, tab_cat,
-     tab_lp, tab_val,
-     tab_ng_leg, tab_na_leg,
-     tab_ug_leg, tab_ua_leg,
-     tab_pg_leg, tab_pa_leg) = st.tabs([
+    tab_np, tab_upd, tab_cat, tab_lp, tab_val = st.tabs([
         "➕ Nuevo Producto",
         "✏️ Actualizar Producto",
         "📋 Ver Catálogo",
         "🏷️ Listas de Precios",
         "🔍 Validación",
-        "➕ Nuevo General (legado)",
-        "➕ Nuevo Antigua (legado)",
-        "✏️ General (legado)",
-        "✏️ Antigua (legado)",
-        "📋 Precios General (legado)",
-        "📋 Precios Antigua (legado)",
     ])
-
     with tab_np:  _tab_nuevo()
     with tab_upd: _tab_actualizar(es_antigua=False)
     with tab_cat: _tab_catalogo()
     with tab_lp:  _tab_listas()
     with tab_val: _tab_validacion()
-
-    # Legado — mantener hasta Fase 1.5
-    with tab_ng_leg:
-        st.caption("⚠️ Este tab será retirado en Fase 1.5. Usá '➕ Nuevo Producto'.")
-        from excel_helper import agregar_producto as _ap
-        datos = __import__('modulo_productos', fromlist=['_form_campos'])
-        datos2 = None
-        with st.form("form_legacy_ng"):
-            datos2 = _form_campos("leg_ng", {}, es_antigua=False)
-        if datos2:
-            with st.spinner("Guardando..."): _ap(datos2, es_antigua=False)
-            st.success(f"✅ {datos2['nombre']} agregado (legado).")
-            st.rerun()
-    with tab_na_leg:
-        st.caption("⚠️ Este tab será retirado en Fase 1.5. Usá '➕ Nuevo Producto'.")
-        with st.form("form_legacy_na"):
-            datos3 = _form_campos("leg_na", {}, es_antigua=True)
-        if datos3:
-            from excel_helper import agregar_producto as _ap2
-            with st.spinner("Guardando..."): _ap2(datos3, es_antigua=True)
-            st.success(f"✅ {datos3['nombre']} agregado a Antigua (legado).")
-            st.rerun()
-    with tab_ug_leg:
-        st.info("✏️ Usá el tab **Actualizar Producto** (segundo tab). "
-                "Este tab será retirado en Fase 1.5.")
-    with tab_ua_leg:
-        st.info("✏️ Usá el tab **Actualizar Producto** (segundo tab). "
-                "Este tab será retirado en Fase 1.5.")
-    with tab_pg_leg:
-        st.caption("⚠️ Este tab será retirado en Fase 1.5. Usá '📋 Ver Catálogo'.")
-        _precios_tabla(es_antigua=False)
-    with tab_pa_leg:
-        st.caption("⚠️ Este tab será retirado en Fase 1.5. Usá '📋 Ver Catálogo'.")
-        _precios_tabla(es_antigua=True)
