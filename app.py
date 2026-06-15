@@ -32,6 +32,7 @@ PAGES = [
     ("💳 Gastos",                               "modulo_gastos"),
     ("📊 Dashboard",                            "modulo_dashboard"),
     ("🏡 Casa / Personal",                      "modulo_casa"),
+    ("🗂️ Datos",                                "modulo_datos"),
     ("💰 Flujo de Caja",                        "modulo_flujo_caja"),
     ("📥 Pedidos Entrantes",                    "modulo_pedidos_entrantes"),
     ("🔧 Mantenimiento",                        "modulo_mantenimiento"),
