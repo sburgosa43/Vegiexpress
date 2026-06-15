@@ -36,12 +36,27 @@ ZONA_VEGGI  = ["L03", "L04", "L10"]    # Esposa
 
 # ── Clientes a excluir de reportes ───────────────────────────────────────────
 # "veggi" captura "veggi hogares" por substring
-EXCLUIR_DASHBOARD   = ["veggi hogares", "wilson"]
+EXCLUIR_DASHBOARD   = ["wilson"]   # Hogares ya no se excluye — es zona propia
 EXCLUIR_PROVEEDORES = ["wilson"]
 
-def excluido_dashboard(nombre: str) -> bool:
+def es_hogar(nombre: str, clientes_map: dict = None) -> bool:
+    """Detecta si un cliente es del canal Hogares.
+    Criterio 1: nombre histórico 'veggi hogares' (compatibilidad).
+    Criterio 2: codigo_lugar L20 o tipo Hogar (clientes nuevos).
+    """
+    if "veggi hogares" in str(nombre).lower(): return True
+    if clientes_map:
+        cli = clientes_map.get(str(nombre).lower().strip(), {})
+        return (cli.get("codigo_lugar","") == "L20" or
+                cli.get("tipo","").lower() == "hogar")
+    return False
+
+
+def excluido_dashboard(nombre: str, clientes_map: dict = None) -> bool:
+    """Excluye wilson. Hogares ya NO se excluye — aparece como zona propia."""
     n = nombre.lower()
-    return any(x in n for x in EXCLUIR_DASHBOARD)
+    if "wilson" in n: return True
+    return False
 
 def excluido_proveedores(nombre: str) -> bool:
     n = nombre.lower()

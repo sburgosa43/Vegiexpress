@@ -10,10 +10,17 @@ from excel_helper import (leer_pedidos, cancelar_pedido,
                           restaurar_pedido, guardar_cambios_precio)
 from data_helper  import cargar_clientes
 from pdf_helper   import generar_envio, nombre_archivo
-from config       import (ZONAS_MAP as _ZONAS_CFG, excluido_dashboard,
+from config       import (ZONAS_MAP as _ZONAS_CFG, excluido_dashboard, es_hogar,
                            calcular_liquido)
 
 ZONAS_ENVIO = _ZONAS_CFG   # Fuente única: config.py
+
+def _get_cli_map():
+    try:
+        from data_helper import cargar_clientes
+        return {c["nombre"].lower().strip(): c for c in cargar_clientes()}
+    except Exception:
+        return {}
 
 def _zona_de(codigo: str) -> str | None:
     for zona, codigos in ZONAS_ENVIO.items():

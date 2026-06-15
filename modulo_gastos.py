@@ -12,7 +12,7 @@ _K_GC = "gastosconfig"
 
 # ── Exclusiones financieras ───────────────────────────────────────────────────
 _EXCLUIR_FINANCIERO = {"wilson"}
-_INTERNOS           = {"veggi hogares"}
+# _INTERNOS ya no es hardcoded — se usa es_hogar() con mapa de clientes
 
 # ── Zonas Veggi (solo para Gastos, separa Antigua L03 de Chimal L04) ──────────
 _GASTOS_VEGGI_MAP = {
@@ -195,7 +195,7 @@ def _ingresos_campo_veggi(pedidos: list, campo_clis: list, filtro_fn) -> dict:
         total = _sf(p.get("total", 0))
         cli   = p["cliente"].lower().strip()
         if any(x in cli for x in _EXCLUIR_FINANCIERO): continue
-        if any(x in cli for x in _INTERNOS):           continue
+        if es_hogar(nom, _cli_map):                     continue
         inc["Campo" if cli in campo_set else "Veggi"] += total
     return inc
 

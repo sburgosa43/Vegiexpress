@@ -346,7 +346,7 @@ def _tab_creditos():
         st.rerun()
 
 
-def _tab_crm(todos, clientes, sem_act, año_act):
+def _tab_crm(todos, clientes, sem_act, año_act, cli_map=None):
     hist: dict = {}
     for p in todos:
         if _excluido(p["cliente"]): continue
@@ -445,7 +445,13 @@ def _tab_margen_clientes(todos: list):
     cc1, cc2 = st.columns([2, 1])
     dimension = cc1.radio("Analizar por", ["Cliente", "Producto"],
                            horizontal=True, key="mgc_dim")
-    n_meses   = cc2.selectbox("Meses", [6, 9, 12], index=0, key="mgc_n")
+    if dimension == "Cliente":
+        hog_m = cc2.radio("Hogares", ["Todos","Solo","Excluir"],
+                           horizontal=True, key="mgc_hog")
+    else:
+        hog_m = "Todos"
+    cc3 = st.container()
+    n_meses   = cc3.selectbox("Meses", [6, 9, 12], index=0, key="mgc_n")
 
     key_field = "cliente" if dimension == "Cliente" else "producto"
 
@@ -467,6 +473,10 @@ def _tab_margen_clientes(todos: list):
         if p["status"] == "Cancelado": continue
         if not p["fecha"]: continue
         if _excluido(p["cliente"]): continue
+        _es_hog = es_hogar(p["cliente"], {})
+        if dimension == "Cliente":
+            if hog_m == "Solo"    and not _es_hog: continue
+            if hog_m == "Excluir" and     _es_hog: continue
         key = (p["fecha"].year, p["fecha"].month)
         if key not in meses: continue
         ent = str(p.get(key_field) or "").strip()
@@ -644,7 +654,7 @@ def mostrar():
     with t2: _tab_evolucion(todos, clientes)
     with t3: _tab_shares(todos, clientes)
     with t4: _tab_comparativo(todos, clientes)
-    with t5: _tab_crm(todos, clientes, sem_act, año_act)
+    with t5: _tab_crm(todos, clientes, sem_act, año_act, cli_map=_cli_map)
     with t6: _tab_margen_clientes(todos)
 
 
