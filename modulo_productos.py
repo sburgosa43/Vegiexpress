@@ -522,11 +522,11 @@ def mostrar():
             st.success(f"✅ {datos3['nombre']} agregado a Antigua (legado).")
             st.rerun()
     with tab_ug_leg:
-        st.caption("⚠️ Este tab será retirado en Fase 1.5. Usá '✏️ Actualizar Producto'.")
-        _tab_actualizar(es_antigua=False)
+        st.info("✏️ Usá el tab **Actualizar Producto** (segundo tab). "
+                "Este tab será retirado en Fase 1.5.")
     with tab_ua_leg:
-        st.caption("⚠️ Este tab será retirado en Fase 1.5. Usá '✏️ Actualizar Producto'.")
-        _tab_actualizar(es_antigua=True)
+        st.info("✏️ Usá el tab **Actualizar Producto** (segundo tab). "
+                "Este tab será retirado en Fase 1.5.")
     with tab_pg_leg:
         st.caption("⚠️ Este tab será retirado en Fase 1.5. Usá '📋 Ver Catálogo'.")
         _precios_tabla(es_antigua=False)
