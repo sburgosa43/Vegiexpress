@@ -198,16 +198,99 @@ def _importar_pedido(resp: dict, fecha_ent: date,
 
 
 # ── UI principal ───────────────────────────────────────────────────────────────
-def mostrar():
-    from data_helper import cargar_clientes, cargar_productos, cli_precio
-    from excel_helper import leer_productos_con_fila
+def _tab_formulario():
+    """Tab para crear/sincronizar el formulario Google Forms."""
+    from forms_helper import (crear_formulario, sincronizar_formulario,
+                               get_form_id, _productos_hogares)
 
-    st.markdown("## 🏠 Hogares — Importar Pedidos")
+    st.markdown("#### Formulario Google Forms — Hogares")
+    st.caption("Crea y mantiene actualizado el formulario que usan las familias "
+               "para hacer sus pedidos.")
+
+    form_id = get_form_id()
+
+    if form_id:
+        form_url = f"https://docs.google.com/forms/d/{form_id}/viewform"
+        edit_url = f"https://docs.google.com/forms/d/{form_id}/edit"
+        st.success(f"✅ Formulario activo")
+        st.markdown(f"**Link para familias:** [Abrir formulario]({form_url})")
+        st.caption(f"Link de edición: {edit_url}")
+        st.divider()
+
+        # Preview de productos
+        prods = _productos_hogares()
+        st.markdown(f"**{len(prods)} productos** se incluirán en el formulario:")
+        import pandas as pd
+        df = pd.DataFrame([{
+            "Segmento": p["segmento"],
+            "Producto": p["nombre"],
+            "Unidad":   p["unidad"],
+            "Precio Q": p["precio"],
+        } for p in prods])
+        st.dataframe(df, hide_index=True, use_container_width=True,
+                     height=min(400, 60+len(df)*35))
+
+        st.divider()
+        st.markdown("**Sincronizar catálogo con el formulario**")
+        st.caption("Actualiza los precios y agrega productos nuevos. "
+                   "No elimina productos existentes para no perder respuestas.")
+        if st.button("🔄 Sincronizar precios y productos", type="primary",
+                     key="hog_sync_form"):
+            with st.spinner("Sincronizando..."):
+                try:
+                    res = sincronizar_formulario(form_id)
+                    st.success(
+                        f"✅ Sincronización completa — "
+                        f"Actualizados: {res['actualizados']} · "
+                        f"Nuevos: {res['agregados']} · "
+                        f"Sin cambio: {res['sin_cambio']}")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    else:
+        st.info("Todavía no hay un formulario creado. "
+                "Crea uno nuevo con el botón de abajo.")
+        prods = _productos_hogares()
+        st.markdown(f"Se crearán **{len(prods)} preguntas** de productos, "
+                    f"agrupadas por segmento.")
+
+    st.divider()
+    titulo_f = st.text_input("Título del formulario",
+                              value="Pedidos Veggi Hogares",
+                              key="hog_form_titulo")
+    accion = "Actualizar formulario existente" if form_id else "Crear formulario nuevo"
+    if st.button(f"📋 {accion}", type="primary" if not form_id else "secondary",
+                 key="hog_crear_form"):
+        with st.spinner("Creando formulario en Google Forms..."):
+            try:
+                res = crear_formulario(titulo=titulo_f)
+                st.success(
+                    f"✅ Formulario creado con {res['n_productos']} productos.")
+                st.markdown(
+                    f"**Link para familias:** 🔗 [{res['form_url']}]({res['form_url']})")
+                st.caption(
+                    f"Link de edición: {res['edit_url']}")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error creando formulario: {e}")
+
+
+def mostrar():
+    st.markdown("## 🏠 Hogares")
     if st.button("Inicio", key="btn_home_hog", type="secondary"):
         st.session_state["_nav_target"] = "🏠 Inicio"
         st.rerun()
     st.divider()
 
+    tab_imp, tab_form = st.tabs(["📥 Importar Pedidos", "📋 Formulario"])
+    with tab_imp:
+        _tab_importar()
+    with tab_form:
+        _tab_formulario()
+
+def _tab_importar():
+    from data_helper import cargar_clientes, cargar_productos, cli_precio
+    from excel_helper import leer_productos_con_fila
     # ── Preparar catálogo y mapa de clientes ──────────────────────────────────
     prods_gen  = leer_productos_con_fila(es_antigua=False)
     # cat_map: nombre_normalizado → nombre_exacto
