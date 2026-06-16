@@ -22,6 +22,7 @@ HOJAS = {
     "preciosgrupo":  "PreciosGrupo",
     "preciosclient": "PreciosCliente",
     "datoscompletos": "DatosCompletos",
+    "formimports":    "FormImports",
     "backup":       "Pedidos_Backup",
 }
 

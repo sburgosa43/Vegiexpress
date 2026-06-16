@@ -16,7 +16,7 @@ def cargar_clientes() -> list[dict]:
     rows = get_all_rows(_K_CLI)
     clientes = []
     for i, row in enumerate(rows, start=2):
-        while len(row) < 12: row.append("")
+        while len(row) < 13: row.append("")
         if not row[0]: continue
         clientes.append({
             "row_num":      i,
@@ -34,6 +34,7 @@ def cargar_clientes() -> list[dict]:
             "activo":       str(row[6] or "").strip().lower() != "inactivo",
             "es_antigua":   str(row[10] or "L05").strip() in ("L03", "L04"),
             "grupo":        str(row[11] or "").strip(),
+            "email":        str(row[12] or "").strip().lower(),
         })
     return clientes
 
