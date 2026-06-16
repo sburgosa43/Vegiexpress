@@ -93,95 +93,77 @@ _FORM_ORDER_KEY = "hog_form_orden"
 
 # ── Crear formulario nuevo ─────────────────────────────────────────────────────
 def actualizar_formulario(form_id: str,
-                          titulo:   str  = None,
+                          titulo:    str  = None,
                           productos: list = None) -> dict:
     """
-    Actualiza preguntas de productos en un formulario EXISTENTE.
-    Requiere que el service account sea Editor del formulario.
-    Retorna {actualizados, agregados, sin_cambio, form_url}.
+    Limpia las preguntas de producto del formulario y agrega las actuales.
+    1. Lee el formulario y detecta preguntas de producto (formato "Nombre (U) - Q.")
+    2. Las elimina de mayor a menor índice (evita desplazamiento de índices)
+    3. Agrega las nuevas con precios del catálogo
     """
     import re as _re, time
 
     prods = productos if productos is not None else _productos_hogares()
     svc   = _forms_svc()
 
-    # Leer estructura actual del formulario
+    # ── Paso 1: leer estructura actual ───────────────────────────────────────
     form  = svc.forms().get(formId=form_id).execute()
     items = form.get("items", [])
 
-    # Construir mapa producto → precio actual del catálogo
-    prod_map = {p["nombre"].lower().strip(): p for p in prods}
+    # ── Paso 2: detectar índices de preguntas de producto ────────────────────
+    _pat = _re.compile(r"^.+?\s*\(.+?\)\s*[-–]\s*Q[.\s]*[\d.,]+")
+    prod_indices = sorted(
+        [i for i, item in enumerate(items)
+         if "questionItem" in item and _pat.match(item.get("title",""))],
+        reverse=True   # de mayor a menor para no desplazar índices
+    )
 
-    reqs = []
-    nombres_en_form = set()
-    actualizados = sin_cambio = 0
+    # ── Paso 3: eliminar en bloques (de mayor a menor) ────────────────────────
+    if prod_indices:
+        del_reqs = [{"deleteItem": {"location": {"index": idx}}}
+                    for idx in prod_indices]
+        BLOQUE = 50
+        for i in range(0, len(del_reqs), BLOQUE):
+            svc.forms().batchUpdate(
+                formId=form_id,
+                body={"requests": del_reqs[i:i+BLOQUE]}
+            ).execute()
+            time.sleep(0.5)
 
-    # Actualizar items existentes con nuevos precios
-    for item in items:
-        if "questionItem" not in item:
-            continue
-        titulo_item = item.get("title", "")
-        # Detectar formato producto: "Nombre (Unidad) - Q.precio"
-        m = _re.match(r"^(.+?)\s*\((.+?)\)\s*[-–]\s*Q[.\s]*([\d.,]+)",
-                      titulo_item)
-        if not m:
-            continue
-        nombre_f = m.group(1).strip().lower()
-        nombres_en_form.add(nombre_f)
-        prod = prod_map.get(nombre_f)
-        if not prod:
-            continue
-        nuevo_titulo = (f"{prod['nombre']} ({prod['unidad']}) "
-                        f"- Q.{prod['precio']:.2f}")
-        if nuevo_titulo == titulo_item:
-            sin_cambio += 1
-            continue
-        reqs.append({"updateItem": {
+    # ── Paso 4: re-leer para saber cuántos items NO-producto quedaron ─────────
+    form2         = svc.forms().get(formId=form_id).execute()
+    n_base        = len(form2.get("items", []))
+
+    # ── Paso 5: agregar productos seleccionados en bloques ────────────────────
+    add_reqs = []
+    for i, p in enumerate(prods):
+        nombre_p = f"{p['nombre']} ({p['unidad']}) - Q.{p['precio']:.2f}"
+        add_reqs.append({"createItem": {
             "item": {
-                "itemId":       item["itemId"],
-                "title":        nuevo_titulo,
-                "questionItem": item["questionItem"],
-            },
-            "updateMask":   "title",
-            "location":     {"index": item.get("index", 0)},
-        }})
-        actualizados += 1
-
-    # Agregar productos nuevos al final
-    agregados = 0
-    nuevos_prods = [p for p in prods if p["nombre"].lower() not in nombres_en_form]
-    for p in nuevos_prods:
-        reqs.append({"createItem": {
-            "item": {
-                "title": f"{p['nombre']} ({p['unidad']}) - Q.{p['precio']:.2f}",
+                "title": nombre_p,
                 "questionItem": {"question": {
                     "required": False,
                     "textQuestion": {"paragraph": False}
                 }}
             },
-            "location": {"index": len(items) + agregados}
+            "location": {"index": n_base + i}
         }})
-        agregados += 1
 
-    # Ejecutar en bloques
-    if reqs:
-        BLOQUE = 50
-        for i in range(0, len(reqs), BLOQUE):
-            svc.forms().batchUpdate(
-                formId=form_id,
-                body={"requests": reqs[i:i+BLOQUE]}
-            ).execute()
-            if i + BLOQUE < len(reqs):
-                time.sleep(0.5)
+    BLOQUE = 50
+    for i in range(0, len(add_reqs), BLOQUE):
+        svc.forms().batchUpdate(
+            formId=form_id,
+            body={"requests": add_reqs[i:i+BLOQUE]}
+        ).execute()
+        time.sleep(0.5)
 
     _save_form_id(form_id)
 
     return {
-        "form_url":    f"https://docs.google.com/forms/d/{form_id}/viewform",
-        "edit_url":    f"https://docs.google.com/forms/d/{form_id}/edit",
-        "actualizados": actualizados,
-        "agregados":    agregados,
-        "sin_cambio":   sin_cambio,
+        "form_url":   f"https://docs.google.com/forms/d/{form_id}/viewform",
+        "edit_url":   f"https://docs.google.com/forms/d/{form_id}/edit",
+        "eliminados": len(prod_indices),
+        "agregados":  len(prods),
     }
 
 

@@ -322,9 +322,8 @@ def _tab_formulario():
                 from forms_helper import actualizar_formulario
                 res = actualizar_formulario(fid_input.strip(), productos=prods_sel)
                 st.success(
-                    f"✅ Actualizados: {res['actualizados']} · "
-                    f"Nuevos: {res['agregados']} · "
-                    f"Sin cambio: {res['sin_cambio']}")
+                    f"✅ {res['eliminados']} preguntas antiguas eliminadas · "
+                    f"{res['agregados']} productos agregados con precios actuales.")
                 st.markdown(
                     f"**🔗 Link para familias:** "
                     f"[{res['form_url']}]({res['form_url']})")
