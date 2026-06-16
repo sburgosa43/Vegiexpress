@@ -225,7 +225,7 @@ def _finanzas_detallado(pedidos: list, campo_clis: list,
 
         if any(x in cli for x in _EXCLUIR_FINANCIERO): continue
 
-        if any(x in cli for x in _INTERNOS):
+        if es_hogar(nom, _cli_map):
             inc["Interno"][nom]   = inc["Interno"].get(nom, 0)   + total
             costo["Interno"][nom] = costo["Interno"].get(nom, 0) + costo_prod
         elif cli in campo_set:

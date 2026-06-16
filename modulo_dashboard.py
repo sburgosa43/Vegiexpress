@@ -654,7 +654,7 @@ def mostrar():
     with t2: _tab_evolucion(todos, clientes)
     with t3: _tab_shares(todos, clientes)
     with t4: _tab_comparativo(todos, clientes)
-    with t5: _tab_crm(todos, clientes, sem_act, año_act, cli_map=_cli_map)
+    with t5: _tab_crm(todos, clientes, sem_act, año_act, cli_map=cli_map)
     with t6: _tab_margen_clientes(todos)
 
 
