@@ -293,47 +293,47 @@ def _tab_formulario():
 
     # ── Título y acciones ─────────────────────────────────────────────────────
     st.divider()
-    titulo_f = st.text_input("Título del formulario",
-                              value="Pedidos Veggi Hogares",
-                              key="hog_form_titulo")
+    st.markdown("##### Actualizar formulario")
+    st.caption("La app actualiza tu formulario EXISTENTE con los productos "
+               "seleccionados y sus precios actuales del catálogo. "
+               "El link para las familias **no cambia**.")
 
-    a1, a2 = st.columns(2)
+    # Campo para ingresar / confirmar el ID del formulario
+    fid_input = st.text_input(
+        "ID del formulario (de la URL)",
+        value=form_id or "",
+        placeholder="1FAIpQLSe...",
+        key="hog_form_id_input",
+        help="Encontralo en la URL del formulario: "
+             "docs.google.com/forms/d/**[ESTE-ID]**/edit. "
+             "Compartí el formulario con rio-veggi-app@rio-veggi-app.iam.gserviceaccount.com "
+             "como Editor antes de actualizar."
+    )
 
-    # Crear / regenerar
-    accion_lbl = "🔄 Regenerar formulario" if form_id else "📋 Crear formulario nuevo"
-    if a1.button(accion_lbl,
+    prods_sel = [p for p in todos
+                 if p["nombre"] in st.session_state.get(_HOG_SEL_KEY, set())]
+
+    if st.button("🔄 Actualizar formulario con precios y productos actuales",
                  type="primary",
-                 key="hog_crear_form",
-                 disabled=n_sel == 0,
-                 help="Crea un formulario nuevo con los productos seleccionados"):
-        prods_sel = [p for p in todos
-                     if p["nombre"] in st.session_state.get(_HOG_SEL_KEY, set())]
-        with st.spinner(f"Creando formulario con {len(prods_sel)} productos..."):
+                 key="hog_actualizar_form",
+                 disabled=not fid_input.strip() or not prods_sel):
+        with st.spinner(f"Actualizando {len(prods_sel)} productos en el formulario..."):
             try:
-                res = crear_formulario(titulo=titulo_f,
-                                       productos=prods_sel)
-                st.success(f"✅ Formulario listo — {res['n_productos']} productos")
+                from forms_helper import actualizar_formulario
+                res = actualizar_formulario(fid_input.strip(), productos=prods_sel)
+                st.success(
+                    f"✅ Actualizados: {res['actualizados']} · "
+                    f"Nuevos: {res['agregados']} · "
+                    f"Sin cambio: {res['sin_cambio']}")
                 st.markdown(
-                    f"**🔗 Link para las familias:** [{res['form_url']}]({res['form_url']})")
-                st.caption(f"Edición: {res['edit_url']}")
+                    f"**🔗 Link para familias:** "
+                    f"[{res['form_url']}]({res['form_url']})")
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
-
-    # Sincronizar precios (solo si ya existe)
-    if form_id:
-        if a2.button("💲 Sincronizar precios",
-                     key="hog_sync_form",
-                     help="Actualiza precios de productos existentes en el formulario"):
-            with st.spinner("Sincronizando precios..."):
-                try:
-                    res = sincronizar_formulario(form_id)
-                    st.success(
-                        f"✅ Actualizados: {res['actualizados']} · "
-                        f"Nuevos: {res['agregados']} · "
-                        f"Sin cambio: {res['sin_cambio']}")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                st.caption("Verificá que el formulario esté compartido con "
+                           "rio-veggi-app@rio-veggi-app.iam.gserviceaccount.com "
+                           "como Editor.")
 
 
 def mostrar():

@@ -92,128 +92,110 @@ _FORM_ORDER_KEY = "hog_form_orden"
 
 
 # ── Crear formulario nuevo ─────────────────────────────────────────────────────
-def crear_formulario(titulo: str = "Pedidos Veggi Hogares",
-                     productos: list = None) -> dict:
+def actualizar_formulario(form_id: str,
+                          titulo:   str  = None,
+                          productos: list = None) -> dict:
     """
-    Crea un formulario Google Forms con los productos Hogares actuales.
-    Retorna {form_id, form_url, edit_url, n_productos}.
+    Actualiza preguntas de productos en un formulario EXISTENTE.
+    Requiere que el service account sea Editor del formulario.
+    Retorna {actualizados, agregados, sin_cambio, form_url}.
     """
-    import time
+    import re as _re, time
+
     prods = productos if productos is not None else _productos_hogares()
     svc   = _forms_svc()
 
-    # 1. Crear formulario — solo title (sin documentTitle que causa errores)
-    for intento in range(3):
-        try:
-            form    = svc.forms().create(body={
-                "info": {"title": titulo}
-            }).execute()
-            break
-        except Exception as e:
-            if intento == 2: raise
-            time.sleep(2 ** intento)
-    form_id = form["formId"]
+    # Leer estructura actual del formulario
+    form  = svc.forms().get(formId=form_id).execute()
+    items = form.get("items", [])
 
-    # 2. Construir preguntas — solo questionItem (más compatible)
+    # Construir mapa producto → precio actual del catálogo
+    prod_map = {p["nombre"].lower().strip(): p for p in prods}
+
     reqs = []
-    idx  = 0
+    nombres_en_form = set()
+    actualizados = sin_cambio = 0
 
-    def _text_item(titulo_q, req=False):
-        return {"createItem": {
+    # Actualizar items existentes con nuevos precios
+    for item in items:
+        if "questionItem" not in item:
+            continue
+        titulo_item = item.get("title", "")
+        # Detectar formato producto: "Nombre (Unidad) - Q.precio"
+        m = _re.match(r"^(.+?)\s*\((.+?)\)\s*[-–]\s*Q[.\s]*([\d.,]+)",
+                      titulo_item)
+        if not m:
+            continue
+        nombre_f = m.group(1).strip().lower()
+        nombres_en_form.add(nombre_f)
+        prod = prod_map.get(nombre_f)
+        if not prod:
+            continue
+        nuevo_titulo = (f"{prod['nombre']} ({prod['unidad']}) "
+                        f"- Q.{prod['precio']:.2f}")
+        if nuevo_titulo == titulo_item:
+            sin_cambio += 1
+            continue
+        reqs.append({"updateItem": {
             "item": {
-                "title": titulo_q,
-                "questionItem": {"question": {
-                    "required": req,
-                    "textQuestion": {"paragraph": False}
-                }}
+                "itemId":       item["itemId"],
+                "title":        nuevo_titulo,
+                "questionItem": item["questionItem"],
             },
-            "location": {"index": idx}
-        }}
-
-    # Campos de info del cliente
-    for titulo_q, req in [
-        ("Nombre y apellido",    True),
-        ("Correo electrónico",   True),
-        ("Dirección de entrega", True),
-        ("Teléfono de contacto", False),
-    ]:
-        reqs.append({"createItem": {
-            "item": {
-                "title": titulo_q,
-                "questionItem": {"question": {
-                    "required": req,
-                    "textQuestion": {"paragraph": False}
-                }}
-            },
-            "location": {"index": idx}
+            "updateMask":   "title",
+            "location":     {"index": item.get("index", 0)},
         }})
-        idx += 1
+        actualizados += 1
 
-    # Método de pago
-    reqs.append({"createItem": {
-        "item": {
-            "title": "Método de pago",
-            "questionItem": {"question": {
-                "required": True,
-                "choiceQuestion": {
-                    "type": "RADIO",
-                    "options": [{"value": "Efectivo"},
-                                {"value": "Transferencia"}]
-                }
-            }}
-        },
-        "location": {"index": idx}
-    }})
-    idx += 1
-
-    # Productos (sin pageBreak ni textItem — mayor compatibilidad)
-    for p in prods:
-        nombre_p = (f"{p['nombre']} ({p['unidad']}) "
-                    f"- Q.{p['precio']:.2f}")
+    # Agregar productos nuevos al final
+    agregados = 0
+    nuevos_prods = [p for p in prods if p["nombre"].lower() not in nombres_en_form]
+    for p in nuevos_prods:
         reqs.append({"createItem": {
             "item": {
-                "title": nombre_p,
+                "title": f"{p['nombre']} ({p['unidad']}) - Q.{p['precio']:.2f}",
                 "questionItem": {"question": {
                     "required": False,
                     "textQuestion": {"paragraph": False}
                 }}
             },
-            "location": {"index": idx}
+            "location": {"index": len(items) + agregados}
         }})
-        idx += 1
+        agregados += 1
 
-    # 3. Batch update en bloques de 50 (evita timeouts)
-    BLOQUE = 50
-    for i in range(0, len(reqs), BLOQUE):
-        svc.forms().batchUpdate(
-            formId=form_id,
-            body={"requests": reqs[i:i+BLOQUE]}
-        ).execute()
-        if i + BLOQUE < len(reqs):
-            time.sleep(0.5)
+    # Ejecutar en bloques
+    if reqs:
+        BLOQUE = 50
+        for i in range(0, len(reqs), BLOQUE):
+            svc.forms().batchUpdate(
+                formId=form_id,
+                body={"requests": reqs[i:i+BLOQUE]}
+            ).execute()
+            if i + BLOQUE < len(reqs):
+                time.sleep(0.5)
 
-    # 4. Compartir públicamente
-    try:
-        _drive_svc().permissions().create(
-            fileId=form_id,
-            body={"type": "anyone", "role": "reader"},
-            supportsAllDrives=True
-        ).execute()
-    except Exception:
-        pass   # compartir puede fallar si ya tiene permiso
-
-    # 5. Guardar form_id
     _save_form_id(form_id)
 
     return {
-        "form_id":     form_id,
         "form_url":    f"https://docs.google.com/forms/d/{form_id}/viewform",
         "edit_url":    f"https://docs.google.com/forms/d/{form_id}/edit",
-        "n_productos": len(prods),
+        "actualizados": actualizados,
+        "agregados":    agregados,
+        "sin_cambio":   sin_cambio,
     }
 
 
-# ── Sincronizar precios en formulario existente ───────────────────────────────
+def crear_formulario(titulo: str = "Pedidos Veggi Hogares",
+                     productos: list = None) -> dict:
+    """Alias mantenido por compatibilidad — delega a actualizar_formulario."""
+    form_id = get_form_id()
+    if not form_id:
+        raise ValueError(
+            "No hay formulario configurado. "
+            "Ingresá el ID del formulario en el campo de abajo.")
+    return actualizar_formulario(form_id, titulo=titulo, productos=productos)
+
+
 def sincronizar_formulario(form_id: str) -> dict:
     """
     Actualiza los precios de productos existentes en el formulario.
