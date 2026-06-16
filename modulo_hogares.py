@@ -200,79 +200,143 @@ def _importar_pedido(resp: dict, fecha_ent: date,
 # ── UI principal ───────────────────────────────────────────────────────────────
 def _tab_formulario():
     """Tab para crear/sincronizar el formulario Google Forms."""
+    import pandas as pd
     from forms_helper import (crear_formulario, sincronizar_formulario,
-                               get_form_id, _productos_hogares)
+                               get_form_id, _productos_hogares,
+                               _FORM_SEL_KEY)
 
     st.markdown("#### Formulario Google Forms — Hogares")
-    st.caption("Crea y mantiene actualizado el formulario que usan las familias "
-               "para hacer sus pedidos.")
+    st.caption("Seleccioná los productos que querés incluir, "
+               "luego generá o sincronizá el formulario.")
 
+    # ── Estado activo ─────────────────────────────────────────────────────────
     form_id = get_form_id()
-
     if form_id:
         form_url = f"https://docs.google.com/forms/d/{form_id}/viewform"
-        edit_url = f"https://docs.google.com/forms/d/{form_id}/edit"
-        st.success(f"✅ Formulario activo")
-        st.markdown(f"**Link para familias:** [Abrir formulario]({form_url})")
-        st.caption(f"Link de edición: {edit_url}")
-        st.divider()
+        col_a, col_b = st.columns([3,1])
+        col_a.success(f"✅ Formulario activo — "
+                      f"[Link para familias]({form_url})")
+        if col_b.button("📋 Copiar link", key="hog_copy_link"):
+            st.write(f"`{form_url}`")
 
-        # Preview de productos
-        prods = _productos_hogares()
-        st.markdown(f"**{len(prods)} productos** se incluirán en el formulario:")
-        import pandas as pd
-        df = pd.DataFrame([{
+    # ── Selector de productos (estilo Cotizador) ───────────────────────────────
+    todos = _productos_hogares()
+    # Construir DataFrame editable con checkbox Incluir
+    sel_prev = st.session_state.get(_FORM_SEL_KEY, set())
+    if not sel_prev:
+        # Primera vez: marcar TODOS por defecto
+        sel_prev = {p["nombre"] for p in todos}
+
+    filas = []
+    for p in todos:
+        filas.append({
+            "✓":       p["nombre"] in sel_prev,
             "Segmento": p["segmento"],
             "Producto": p["nombre"],
             "Unidad":   p["unidad"],
             "Precio Q": p["precio"],
-        } for p in prods])
-        st.dataframe(df, hide_index=True, use_container_width=True,
-                     height=min(400, 60+len(df)*35))
+        })
+    df_sel = pd.DataFrame(filas)
 
-        st.divider()
-        st.markdown("**Sincronizar catálogo con el formulario**")
-        st.caption("Actualiza los precios y agrega productos nuevos. "
-                   "No elimina productos existentes para no perder respuestas.")
-        if st.button("🔄 Sincronizar precios y productos", type="primary",
-                     key="hog_sync_form"):
-            with st.spinner("Sincronizando..."):
-                try:
-                    res = sincronizar_formulario(form_id)
-                    st.success(
-                        f"✅ Sincronización completa — "
-                        f"Actualizados: {res['actualizados']} · "
-                        f"Nuevos: {res['agregados']} · "
-                        f"Sin cambio: {res['sin_cambio']}")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+    st.markdown("##### Productos a incluir en el formulario")
+    col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
+    seg_filter = col_f1.selectbox(
+        "Filtrar segmento",
+        ["Todos"] + sorted({p["segmento"] for p in todos}),
+        key="hog_seg_filter")
+    txt_filter = col_f2.text_input("Buscar", placeholder="nombre...",
+                                    key="hog_txt_filter")
+    col_f3.metric("Seleccionados",
+                  len([r for r in filas if r["✓"]]))
 
+    if seg_filter != "Todos":
+        mask = df_sel["Segmento"] == seg_filter
     else:
-        st.info("Todavía no hay un formulario creado. "
-                "Crea uno nuevo con el botón de abajo.")
-        prods = _productos_hogares()
-        st.markdown(f"Se crearán **{len(prods)} preguntas** de productos, "
-                    f"agrupadas por segmento.")
+        mask = pd.Series([True]*len(df_sel))
+    if txt_filter:
+        mask = mask & df_sel["Producto"].str.contains(
+            txt_filter, case=False, na=False)
 
+    df_vis = df_sel[mask].copy()
+
+    edited = st.data_editor(
+        df_vis,
+        column_config={
+            "✓":       st.column_config.CheckboxColumn("✓", width="small"),
+            "Segmento":st.column_config.TextColumn("Segmento", disabled=True),
+            "Producto": st.column_config.TextColumn("Producto",  disabled=True, width="large"),
+            "Unidad":   st.column_config.TextColumn("Unidad",   disabled=True, width="small"),
+            "Precio Q": st.column_config.NumberColumn("Q",      disabled=True,
+                                                       format="%.2f", width="small"),
+        },
+        hide_index=True,
+        use_container_width=True,
+        key="hog_prod_editor",
+        height=min(500, 60 + len(df_vis)*35),
+    )
+
+    # Persistir selección
+    nuevos_sel = set(st.session_state.get(_FORM_SEL_KEY, set()))
+    for _, row in edited.iterrows():
+        if row["✓"]:
+            nuevos_sel.add(row["Producto"])
+        else:
+            nuevos_sel.discard(row["Producto"])
+    st.session_state[_FORM_SEL_KEY] = nuevos_sel
+
+    bc1, bc2, bc3 = st.columns(3)
+    if bc1.button("☑ Marcar todos", key="hog_sel_all"):
+        st.session_state[_FORM_SEL_KEY] = {p["nombre"] for p in todos}
+        st.rerun()
+    if bc2.button("☐ Desmarcar todos", key="hog_des_all"):
+        st.session_state[_FORM_SEL_KEY] = set()
+        st.rerun()
+
+    n_sel = len(nuevos_sel)
+    st.caption(f"{n_sel} de {len(todos)} productos seleccionados.")
+
+    # ── Título y acciones ─────────────────────────────────────────────────────
     st.divider()
     titulo_f = st.text_input("Título del formulario",
                               value="Pedidos Veggi Hogares",
                               key="hog_form_titulo")
-    accion = "Actualizar formulario existente" if form_id else "Crear formulario nuevo"
-    if st.button(f"📋 {accion}", type="primary" if not form_id else "secondary",
-                 key="hog_crear_form"):
-        with st.spinner("Creando formulario en Google Forms..."):
+
+    a1, a2 = st.columns(2)
+
+    # Crear / regenerar
+    accion_lbl = "🔄 Regenerar formulario" if form_id else "📋 Crear formulario nuevo"
+    if a1.button(accion_lbl,
+                 type="primary",
+                 key="hog_crear_form",
+                 disabled=n_sel == 0,
+                 help="Crea un formulario nuevo con los productos seleccionados"):
+        prods_sel = [p for p in todos if p["nombre"] in nuevos_sel]
+        with st.spinner(f"Creando formulario con {len(prods_sel)} productos..."):
             try:
-                res = crear_formulario(titulo=titulo_f)
-                st.success(
-                    f"✅ Formulario creado con {res['n_productos']} productos.")
+                res = crear_formulario(titulo=titulo_f,
+                                       productos=prods_sel)
+                st.success(f"✅ Formulario listo — {res['n_productos']} productos")
                 st.markdown(
-                    f"**Link para familias:** 🔗 [{res['form_url']}]({res['form_url']})")
-                st.caption(
-                    f"Link de edición: {res['edit_url']}")
+                    f"**🔗 Link para las familias:** [{res['form_url']}]({res['form_url']})")
+                st.caption(f"Edición: {res['edit_url']}")
                 st.rerun()
             except Exception as e:
-                st.error(f"Error creando formulario: {e}")
+                st.error(f"Error: {e}")
+
+    # Sincronizar precios (solo si ya existe)
+    if form_id:
+        if a2.button("💲 Sincronizar precios",
+                     key="hog_sync_form",
+                     help="Actualiza precios de productos existentes en el formulario"):
+            with st.spinner("Sincronizando precios..."):
+                try:
+                    res = sincronizar_formulario(form_id)
+                    st.success(
+                        f"✅ Actualizados: {res['actualizados']} · "
+                        f"Nuevos: {res['agregados']} · "
+                        f"Sin cambio: {res['sin_cambio']}")
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
 
 def mostrar():

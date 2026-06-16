@@ -62,7 +62,7 @@ def _save_form_id(form_id: str) -> None:
 
 # ── Obtener productos Hogares para el formulario ───────────────────────────────
 def _productos_hogares() -> list[dict]:
-    """Retorna productos con precio Hogares, ordenados por segmento."""
+    """Retorna TODOS los productos con precio Hogares, ordenados por segmento."""
     from excel_helper import leer_productos_con_fila
     from data_helper  import leer_precios_capa
 
@@ -83,18 +83,22 @@ def _productos_hogares() -> list[dict]:
             "segmento": p.get("segmento", "Otros"),
             "precio":   precio,
         })
-
-    # Ordenar por segmento, luego nombre
     return sorted(result, key=lambda x: (x["segmento"], x["nombre"]))
 
 
+# Keys para persistir seleccion del formulario en session_state
+_FORM_SEL_KEY = "hog_form_seleccion"
+_FORM_ORDER_KEY = "hog_form_orden"
+
+
 # ── Crear formulario nuevo ─────────────────────────────────────────────────────
-def crear_formulario(titulo: str = "Pedidos Veggi Hogares") -> dict:
+def crear_formulario(titulo: str = "Pedidos Veggi Hogares",
+                     productos: list = None) -> dict:
     """
     Crea un formulario Google Forms con los productos Hogares actuales.
     Retorna {form_id, form_url, edit_url, n_productos}.
     """
-    prods = _productos_hogares()
+    prods = productos if productos is not None else _productos_hogares()
     svc   = _forms_svc()
 
     # 1. Crear formulario vacío
