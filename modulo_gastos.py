@@ -206,6 +206,7 @@ def _finanzas_detallado(pedidos: list, campo_clis: list,
     Ingreso + costo_producto por area en una sola pasada.
     Retorna {"inc": {...}, "costo": {...}}
     """
+    from config     import es_hogar
     from data_helper import cargar_clientes as _cc
     _cli_map  = {_c["nombre"].lower().strip(): _c for _c in _cc()}
     campo_set = {c.lower().strip() for c in campo_clis}

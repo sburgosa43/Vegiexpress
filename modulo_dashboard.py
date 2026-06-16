@@ -5,7 +5,7 @@ Períodos: Sem Actual | Sem Ant. | MTD | YTD | PYTD
 import streamlit as st
 import plotly.graph_objects as go
 from config import (ZONAS_DASH, COLORES_ZONA_RUTAS, excluido_dashboard,
-                     EXCLUIR_DASHBOARD)
+                    EXCLUIR_DASHBOARD, es_hogar)
 import pandas as pd
 import plotly.express as px
 from datetime import date
