@@ -145,6 +145,116 @@ def _editores_fragment(sel_prov, base_dfs, prod_map, todas_areas,
             f"</div>", unsafe_allow_html=True)
 
 
+def _tab_por_area(semana: int, año: int, prod_map: dict):
+    """Desglose de compras necesarias por área — Río / Antigua / Hogares."""
+    from excel_helper import leer_pedidos
+    from data_helper  import cargar_clientes
+
+    AREAS = {
+        "🌊 Río":     (["L01"],       "#1565C0"),
+        "🔖 Antigua": (["L03","L04"], "#2E7D32"),
+        "🏠 Hogares": (["L20"],       "#E65100"),
+    }
+
+    todos  = leer_pedidos()
+    clis   = cargar_clientes()
+    cli_z  = {c["nombre"].lower().strip(): c.get("codigo_lugar","")
+               for c in clis}
+
+    ped_sem = [p for p in todos
+               if p["semana"] == semana and p["año"] == año
+               and p["status"] != "Cancelado"]
+
+    if not ped_sem:
+        st.info(f"Sin pedidos activos en semana {semana}/{año}.")
+        return
+
+    totales_area = {}
+    grand_total  = 0.0
+
+    for area_nom, (codigos, color) in AREAS.items():
+        lineas = [p for p in ped_sem
+                  if cli_z.get(p["cliente"].lower().strip(),"") in codigos]
+        if not lineas:
+            continue
+
+        # Agregar cantidad por producto
+        agg = {}
+        for l in lineas:
+            prod = l["producto"].strip()
+            cant = float(l.get("cantidad") or 0)
+            if cant <= 0: continue
+            pi = prod_map.get(prod.lower(), {})
+            if prod not in agg:
+                agg[prod] = {
+                    "cantidad": 0.0,
+                    "costo":    float(pi.get("costo") or l.get("costo") or 0),
+                    "unidad":   pi.get("unidad",""),
+                    "proveedor":l.get("proveedor",""),
+                }
+            agg[prod]["cantidad"] += cant
+
+        if not agg:
+            continue
+
+        filas, total_area = [], 0.0
+        for prod, d in sorted(agg.items()):
+            sub = round(d["cantidad"] * d["costo"], 2)
+            total_area += sub
+            filas.append({
+                "Producto":   prod,
+                "Proveedor":  d["proveedor"],
+                "Unidad":     d["unidad"],
+                "Cantidad":   d["cantidad"],
+                "Costo Q":    d["costo"],
+                "Subtotal Q": sub,
+            })
+        grand_total += total_area
+        totales_area[area_nom] = total_area
+
+        # Card por área
+        st.markdown(
+            f"<div style='background:{color};color:white;padding:6px 14px;"
+            f"border-radius:6px;font-weight:bold;font-size:.95rem;"
+            f"margin:12px 0 4px 0'>"
+            f"{area_nom} &nbsp;·&nbsp; "
+            f"<span style='font-weight:normal'>"
+            f"Total insumo: Q{total_area:,.2f}</span></div>",
+            unsafe_allow_html=True)
+
+        df = pd.DataFrame(filas)
+        st.dataframe(
+            df,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Cantidad":   st.column_config.NumberColumn(format="%.2f"),
+                "Costo Q":    st.column_config.NumberColumn(format="%.2f"),
+                "Subtotal Q": st.column_config.NumberColumn(format="%.2f"),
+            },
+            height=min(400, 60 + len(df)*35),
+        )
+
+        # Descarga por área
+        csv = df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button(
+            f"⬇️ CSV {area_nom.split()[1]}",
+            data=csv,
+            file_name=f"compras_{area_nom.split()[1]}_S{semana}_{año}.csv",
+            mime="text/csv",
+            key=f"dl_area_{area_nom}_{semana}",
+        )
+
+    # ── Resumen global ────────────────────────────────────────────────────────
+    if totales_area:
+        st.divider()
+        cols_r = st.columns(len(totales_area) + 1)
+        for i, (area, tot) in enumerate(totales_area.items()):
+            pct = tot / grand_total * 100 if grand_total else 0
+            cols_r[i].metric(area, f"Q{tot:,.0f}", f"{pct:.0f}%")
+        cols_r[-1].metric("**TOTAL SEMANA**", f"Q{grand_total:,.0f}")
+
+
 def mostrar():
     st.markdown("## 📦 Pedidos a Proveedores")
     if st.button("🏠 Inicio", key="btn_home_prov", type="secondary"):
@@ -330,7 +440,11 @@ def mostrar():
         pass
 
     # ══ TABS PRINCIPALES ══════════════════════════════════════════════════════
-    tab_apedir, tab_resumen = st.tabs(["📦 A Pedir", "📊 Resumen por Tipo"])
+    tab_apedir, tab_resumen, tab_area = st.tabs(
+        ["📦 A Pedir", "📊 Resumen por Tipo", "📍 Por Área"])
+
+    with tab_area:
+        _tab_por_area(semana, año, prod_map)
 
     # ─────────────────────────────────────────────────────────────────────────
     with tab_resumen:
