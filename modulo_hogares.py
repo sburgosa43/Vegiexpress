@@ -7,7 +7,10 @@ import re, unicodedata, json
 from datetime import date, datetime
 
 # ID del Sheet de respuestas del formulario actual
-FORM_SHEET_ID = "1QZX-KmaBK9k41vxsve9IFsKqgigK9rb5cBVUc3snnUk"
+FORM_SHEET_ID  = "1QZX-KmaBK9k41vxsve9IFsKqgigK9rb5cBVUc3snnUk"
+_HOG_SEL_KEY  = "hog_form_seleccion"   # clave de session_state
+_HOG_HOG_INIT_KEY = "hog_form_init"
+_HOG_HOG_VER_KEY  = "hog_form_ver"
 
 # Columnas no-producto del formulario (se ignoran al buscar productos)
 _SKIP_COLS = {
@@ -202,8 +205,7 @@ def _tab_formulario():
     """Tab para crear/sincronizar el formulario Google Forms."""
     import pandas as pd
     from forms_helper import (crear_formulario, sincronizar_formulario,
-                               get_form_id, _productos_hogares,
-                               _FORM_SEL_KEY)
+                               get_form_id, _productos_hogares)
 
     st.markdown("#### Formulario Google Forms — Hogares")
     st.caption("Seleccioná los productos que querés incluir, "
@@ -224,12 +226,10 @@ def _tab_formulario():
     nombres_todos = [p["nombre"] for p in todos]
 
     # Inicializar con todos seleccionados la primera vez
-    _INIT_KEY = "hog_form_init"
-    _VER_KEY  = "hog_form_ver"
-    if _INIT_KEY not in st.session_state:
-        st.session_state[_FORM_SEL_KEY] = set(nombres_todos)
-        st.session_state[_INIT_KEY]     = True
-    ver = st.session_state.get(_VER_KEY, 0)
+    if _HOG_HOG_INIT_KEY not in st.session_state:
+        st.session_state[_HOG_SEL_KEY] = set(nombres_todos)
+        st.session_state[_HOG_HOG_INIT_KEY] = True
+    ver = st.session_state.get(_HOG_HOG_VER_KEY, 0)
 
     st.markdown("##### Productos a incluir en el formulario")
 
@@ -246,7 +246,7 @@ def _tab_formulario():
                  if (seg_f == "Todos" or p["segmento"] == seg_f) and
                     (not txt_f or txt_f.lower() in p["nombre"].lower())]
 
-    sel_actual = st.session_state[_FORM_SEL_KEY]
+    sel_actual = st.session_state[_HOG_SEL_KEY]
 
     ref_df = pd.DataFrame([{
         "✓ Inc.":   "☑" if p["nombre"] in sel_actual else "☐",
@@ -276,19 +276,19 @@ def _tab_formulario():
             key=f"hog_multiselect_{ver}",   # version para forzar reset
             label_visibility="collapsed",
         )
-        st.session_state[_FORM_SEL_KEY] = set(sel_nueva)
+        st.session_state[_HOG_SEL_KEY] = set(sel_nueva)
 
         bc1, bc2 = st.columns(2)
         if bc1.button("☑ Marcar todos", key="hog_sel_all"):
-            st.session_state[_FORM_SEL_KEY] = set(nombres_todos)
-            st.session_state[_VER_KEY]      = ver + 1
+            st.session_state[_HOG_SEL_KEY] = set(nombres_todos)
+            st.session_state[_HOG_VER_KEY]      = ver + 1
             st.rerun()
         if bc2.button("☐ Desmarcar todos", key="hog_des_all"):
-            st.session_state[_FORM_SEL_KEY] = set()
-            st.session_state[_VER_KEY]      = ver + 1
+            st.session_state[_HOG_SEL_KEY] = set()
+            st.session_state[_HOG_VER_KEY]      = ver + 1
             st.rerun()
 
-    n_sel = len(st.session_state[_FORM_SEL_KEY])
+    n_sel = len(st.session_state[_HOG_SEL_KEY])
     st.caption(f"{n_sel} de {len(todos)} productos seleccionados.")
 
     # ── Título y acciones ─────────────────────────────────────────────────────
@@ -307,7 +307,7 @@ def _tab_formulario():
                  disabled=n_sel == 0,
                  help="Crea un formulario nuevo con los productos seleccionados"):
         prods_sel = [p for p in todos
-                     if p["nombre"] in st.session_state.get(_FORM_SEL_KEY, set())]
+                     if p["nombre"] in st.session_state.get(_HOG_SEL_KEY, set())]
         with st.spinner(f"Creando formulario con {len(prods_sel)} productos..."):
             try:
                 res = crear_formulario(titulo=titulo_f,
