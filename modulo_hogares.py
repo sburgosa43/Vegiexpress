@@ -219,24 +219,19 @@ def _tab_formulario():
         if col_b.button("📋 Copiar link", key="hog_copy_link"):
             st.write(f"`{form_url}`")
 
-    # ── Selector de productos (estilo Cotizador) ───────────────────────────────
+    # ── Selector de productos ────────────────────────────────────────────────
     todos = _productos_hogares()
-    # Construir DataFrame editable con checkbox Incluir
-    sel_prev = st.session_state.get(_FORM_SEL_KEY, set())
-    if not sel_prev:
-        # Primera vez: marcar TODOS por defecto
-        sel_prev = {p["nombre"] for p in todos}
 
-    filas = []
-    for p in todos:
-        filas.append({
-            "✓":       p["nombre"] in sel_prev,
-            "Segmento": p["segmento"],
-            "Producto": p["nombre"],
-            "Unidad":   p["unidad"],
-            "Precio Q": p["precio"],
-        })
-    df_sel = pd.DataFrame(filas)
+    # Bug fix 1: distinguir "no inicializado" de "intencionalmente vacío"
+    _INIT_KEY = "hog_form_init"
+    if _INIT_KEY not in st.session_state:
+        st.session_state[_FORM_SEL_KEY] = {p["nombre"] for p in todos}
+        st.session_state[_INIT_KEY]     = True
+    sel_actual = st.session_state[_FORM_SEL_KEY]
+
+    # Bug fix 2: version counter para remountar editor al cambiar selección
+    _VER_KEY = "hog_form_ver"
+    ver = st.session_state.get(_VER_KEY, 0)
 
     st.markdown("##### Productos a incluir en el formulario")
     col_f1, col_f2, col_f3 = st.columns([2, 2, 1])
@@ -246,53 +241,61 @@ def _tab_formulario():
         key="hog_seg_filter")
     txt_filter = col_f2.text_input("Buscar", placeholder="nombre...",
                                     key="hog_txt_filter")
-    col_f3.metric("Seleccionados",
-                  len([r for r in filas if r["✓"]]))
+    col_f3.metric("Seleccionados", len(sel_actual))
 
-    if seg_filter != "Todos":
-        mask = df_sel["Segmento"] == seg_filter
-    else:
-        mask = pd.Series([True]*len(df_sel))
-    if txt_filter:
-        mask = mask & df_sel["Producto"].str.contains(
-            txt_filter, case=False, na=False)
-
-    df_vis = df_sel[mask].copy()
+    # Construir vista filtrada
+    filas = []
+    for p in todos:
+        if seg_filter != "Todos" and p["segmento"] != seg_filter:
+            continue
+        if txt_filter and txt_filter.lower() not in p["nombre"].lower():
+            continue
+        filas.append({
+            "✓":        p["nombre"] in sel_actual,
+            "Segmento": p["segmento"],
+            "Producto": p["nombre"],
+            "Unidad":   p["unidad"],
+            "Precio Q": p["precio"],
+        })
 
     edited = st.data_editor(
-        df_vis,
+        pd.DataFrame(filas),
         column_config={
-            "✓":       st.column_config.CheckboxColumn("✓", width="small"),
-            "Segmento":st.column_config.TextColumn("Segmento", disabled=True),
-            "Producto": st.column_config.TextColumn("Producto",  disabled=True, width="large"),
-            "Unidad":   st.column_config.TextColumn("Unidad",   disabled=True, width="small"),
+            "✓":        st.column_config.CheckboxColumn("✓", width="small"),
+            "Segmento": st.column_config.TextColumn("Segmento", disabled=True),
+            "Producto": st.column_config.TextColumn("Producto", disabled=True,
+                                                     width="large"),
+            "Unidad":   st.column_config.TextColumn("Unidad",   disabled=True,
+                                                     width="small"),
             "Precio Q": st.column_config.NumberColumn("Q",      disabled=True,
                                                        format="%.2f", width="small"),
         },
         hide_index=True,
         use_container_width=True,
-        key="hog_prod_editor",
-        height=min(500, 60 + len(df_vis)*35),
+        key=f"hog_prod_editor_{ver}",      # version en la key → remonta limpio
+        height=min(500, 60 + len(filas)*35),
     )
 
-    # Persistir selección
-    nuevos_sel = set(st.session_state.get(_FORM_SEL_KEY, set()))
+    # Persistir: aplicar ediciones SOLO sobre los items visibles
+    nueva_sel = set(sel_actual)     # empezar desde selección completa
     for _, row in edited.iterrows():
         if row["✓"]:
-            nuevos_sel.add(row["Producto"])
+            nueva_sel.add(row["Producto"])
         else:
-            nuevos_sel.discard(row["Producto"])
-    st.session_state[_FORM_SEL_KEY] = nuevos_sel
+            nueva_sel.discard(row["Producto"])
+    st.session_state[_FORM_SEL_KEY] = nueva_sel
 
-    bc1, bc2, bc3 = st.columns(3)
+    bc1, bc2 = st.columns(2)
     if bc1.button("☑ Marcar todos", key="hog_sel_all"):
         st.session_state[_FORM_SEL_KEY] = {p["nombre"] for p in todos}
+        st.session_state[_VER_KEY]      = ver + 1   # fuerza remonte del editor
         st.rerun()
     if bc2.button("☐ Desmarcar todos", key="hog_des_all"):
         st.session_state[_FORM_SEL_KEY] = set()
+        st.session_state[_VER_KEY]      = ver + 1
         st.rerun()
 
-    n_sel = len(nuevos_sel)
+    n_sel = len(nueva_sel)
     st.caption(f"{n_sel} de {len(todos)} productos seleccionados.")
 
     # ── Título y acciones ─────────────────────────────────────────────────────
