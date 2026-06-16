@@ -17,11 +17,13 @@ ZONAS_MAP = {
     "Antigua & Chimal":     ["L03", "L04"],
     "Guatemala & Santiago": ["L05", "L06"],
     "Rio":                  ["L01"],
+    "Hogares":              ["L20"],
 }
 COLORES_ZONA = {
     "Antigua & Chimal":     "#2D7A2D",
     "Guatemala & Santiago": "#8DC63F",
     "Rio":                  "#4A4A4A",
+    "Hogares":              "#E65100",
 }
 COLORES_PERIODO = {
     "Sem Actual": "#2D7A2D",
@@ -32,7 +34,7 @@ COLORES_PERIODO = {
 }
 PERIODOS_CORTO = ["Sem Actual", "Sem Ant.", "MTD"]
 PERIODOS_LARGO = ["YTD", "PYTD"]
-EXCLUIR = ["veggi hogares", "wilson"]
+EXCLUIR = ["wilson"]   # Hogares ya no se excluye — es zona propia
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────

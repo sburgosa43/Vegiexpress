@@ -19,6 +19,7 @@ _GASTOS_VEGGI_MAP = {
     "Rio":           ["L01", "L02"],
     "Antigua":       ["L03"],
     "Chimaltenango": ["L04"],
+    "Hogares":       ["L20"],
 }
 
 # ── Prorrateo gastos operativos Veggi: 4/2/1/1 ───────────────────────────────

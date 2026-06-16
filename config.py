@@ -8,19 +8,22 @@ ZONAS_MAP = {
     "🔖 Antigua & Chimal":     ["L03", "L04", "L10"],
     "🏙️ Guatemala & Santiago": ["L05", "L06"],
     "🌊 Río":                  ["L01", "L02"],
+    "🏠 Hogares":              ["L20"],
 }
 
 COLORES_ZONA = {
     "🔖 Antigua & Chimal":     "#2D7A2D",
     "🏙️ Guatemala & Santiago": "#8DC63F",
     "🌊 Río":                  "#4A4A4A",
+    "🏠 Hogares":              "#E65100",
 }
 
 # Para Dashboard (análisis)
 ZONAS_DASH = {
-    "Todas":            ["L01", "L02", "L03", "L04", "L05", "L06"],
+    "Todas":            ["L01", "L02", "L03", "L04", "L20", "L05", "L06"],
     "GT + Santiago":    ["L05", "L06"],
     "Río":              ["L01", "L02"],
+    "Hogares":          ["L20"],
     "Antigua + Chimal": ["L03", "L04"],
 }
 

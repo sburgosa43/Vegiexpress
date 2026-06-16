@@ -14,11 +14,13 @@ ZONAS_MAP = {
     "Antigua & Chimal":     ["L03", "L04", "L10"],
     "Guatemala & Santiago": ["L05", "L06"],
     "Rio":                  ["L01"],
+    "Hogares":              ["L20"],
 }
 COLORES_ZONA = {
     "Antigua & Chimal":     "#2D7A2D",
     "Guatemala & Santiago": "#8DC63F",
     "Rio":                  "#4A4A4A",
+    "Hogares":              "#E65100",
 }
 
 
