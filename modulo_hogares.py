@@ -9,8 +9,8 @@ from datetime import date, datetime
 # ID del Sheet de respuestas del formulario actual
 FORM_SHEET_ID  = "1QZX-KmaBK9k41vxsve9IFsKqgigK9rb5cBVUc3snnUk"
 _HOG_SEL_KEY  = "hog_form_seleccion"   # clave de session_state
-_HOG_HOG_INIT_KEY = "hog_form_init"
-_HOG_HOG_VER_KEY  = "hog_form_ver"
+_HOG_INIT_KEY = "hog_form_init"
+_HOG_VER_KEY  = "hog_form_ver"
 
 # Columnas no-producto del formulario (se ignoran al buscar productos)
 _SKIP_COLS = {
@@ -226,10 +226,10 @@ def _tab_formulario():
     nombres_todos = [p["nombre"] for p in todos]
 
     # Inicializar con todos seleccionados la primera vez
-    if _HOG_HOG_INIT_KEY not in st.session_state:
+    if _HOG_INIT_KEY not in st.session_state:
         st.session_state[_HOG_SEL_KEY] = set(nombres_todos)
-        st.session_state[_HOG_HOG_INIT_KEY] = True
-    ver = st.session_state.get(_HOG_HOG_VER_KEY, 0)
+        st.session_state[_HOG_INIT_KEY] = True
+    ver = st.session_state.get(_HOG_VER_KEY, 0)
 
     st.markdown("##### Productos a incluir en el formulario")
 
