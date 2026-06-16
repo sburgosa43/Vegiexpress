@@ -233,6 +233,19 @@ def _tab_formulario():
 
     st.markdown("##### Productos a incluir en el formulario")
 
+    # Botón para recargar selección desde el formulario actual
+    if form_id:
+        if st.button("🔄 Recargar lista desde el formulario actual",
+                     key="hog_reload_form"):
+            try:
+                en_form = leer_productos_en_form(form_id)
+                st.session_state[_HOG_SEL_KEY] = {
+                    n for n in en_form if n in set(nombres_todos)}
+                st.session_state[_HOG_VER_KEY] = ver + 1
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error leyendo el formulario: {e}")
+
     # Filtros para la tabla de referencia
     col_f1, col_f2 = st.columns(2)
     seg_f = col_f1.selectbox("Segmento", ["Todos"] +
@@ -249,7 +262,8 @@ def _tab_formulario():
     sel_actual = st.session_state[_HOG_SEL_KEY]
 
     ref_df = pd.DataFrame([{
-        "✓ Inc.":   "☑" if p["nombre"] in sel_actual else "☐",
+        "Estado":   "📋 En formulario" if p["nombre"] in sel_actual
+                    else "➕ No incluido",
         "Segmento": p["segmento"],
         "Producto": p["nombre"],
         "Unidad":   p["unidad"],

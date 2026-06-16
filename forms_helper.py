@@ -92,6 +92,22 @@ _FORM_ORDER_KEY = "hog_form_orden"
 
 
 # ── Crear formulario nuevo ─────────────────────────────────────────────────────
+
+def leer_productos_en_form(form_id: str) -> set:
+    """Retorna set de nombres de productos actualmente en el formulario."""
+    import re as _re
+    svc  = _forms_svc()
+    form = svc.forms().get(formId=form_id).execute()
+    _pat = _re.compile(r"^(.+?)\s*\(.+?\)\s*[-\u2013]\s*Q[.\s]*[\d.,]+")
+    nombres = set()
+    for item in form.get("items", []):
+        if "questionItem" not in item:
+            continue
+        m = _pat.match(item.get("title", ""))
+        if m:
+            nombres.add(m.group(1).strip())
+    return nombres
+
 def actualizar_formulario(form_id: str,
                           titulo:    str  = None,
                           productos: list = None) -> dict:
@@ -134,20 +150,43 @@ def actualizar_formulario(form_id: str,
     form2         = svc.forms().get(formId=form_id).execute()
     n_base        = len(form2.get("items", []))
 
-    # ── Paso 5: agregar productos seleccionados en bloques ────────────────────
+    # ── Paso 5: agregar secciones + productos en orden ───────────────────────
+    # Agrupar por segmento (orden: Vegetales → Frutas → Hierbas → Otros)
+    from collections import defaultdict as _dd
+    seg_prods = _dd(list)
+    for p in prods:
+        seg_prods[p["segmento"]].append(p)
+
+    # Orden de segmentos: los que tengan productos, primero los "conocidos"
+    _SEG_ORD = ["Vegetales","Frutas","Hierbas","Congelados",
+                "Especias","Flores","Otros"]
+    segmentos_ord = [s for s in _SEG_ORD if s in seg_prods] +                     [s for s in seg_prods if s not in _SEG_ORD]
+
     add_reqs = []
-    for i, p in enumerate(prods):
-        nombre_p = f"{p['nombre']} ({p['unidad']}) - Q.{p['precio']:.2f}"
+    pos = n_base
+    for seg in segmentos_ord:
+        # textItem como separador visual (no cambia navegación)
         add_reqs.append({"createItem": {
             "item": {
-                "title": nombre_p,
-                "questionItem": {"question": {
-                    "required": False,
-                    "textQuestion": {"paragraph": False}
-                }}
+                "title":    seg,
+                "textItem": {}
             },
-            "location": {"index": n_base + i}
+            "location": {"index": pos}
         }})
+        pos += 1
+        for p in seg_prods[seg]:
+            nombre_p = f"{p['nombre']} ({p['unidad']}) - Q.{p['precio']:.2f}"
+            add_reqs.append({"createItem": {
+                "item": {
+                    "title": nombre_p,
+                    "questionItem": {"question": {
+                        "required": False,
+                        "textQuestion": {"paragraph": False}
+                    }}
+                },
+                "location": {"index": pos}
+            }})
+            pos += 1
 
     BLOQUE = 50
     for i in range(0, len(add_reqs), BLOQUE):
