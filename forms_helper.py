@@ -98,116 +98,117 @@ def crear_formulario(titulo: str = "Pedidos Veggi Hogares",
     Crea un formulario Google Forms con los productos Hogares actuales.
     Retorna {form_id, form_url, edit_url, n_productos}.
     """
+    import time
     prods = productos if productos is not None else _productos_hogares()
     svc   = _forms_svc()
 
-    # 1. Crear formulario vacío
-    form    = svc.forms().create(body={"info": {
-        "title":         titulo,
-        "documentTitle": titulo,
-    }}).execute()
+    # 1. Crear formulario — solo title (sin documentTitle que causa errores)
+    for intento in range(3):
+        try:
+            form    = svc.forms().create(body={
+                "info": {"title": titulo}
+            }).execute()
+            break
+        except Exception as e:
+            if intento == 2: raise
+            time.sleep(2 ** intento)
     form_id = form["formId"]
 
-    # 2. Construir preguntas
-    requests = []
-    idx = 0
+    # 2. Construir preguntas — solo questionItem (más compatible)
+    reqs = []
+    idx  = 0
 
-    # Campos informativos
-    def _text_q(titulo_q, requerido=True):
+    def _text_item(titulo_q, req=False):
         return {"createItem": {
-            "item": {"title": titulo_q, "questionItem": {"question": {
-                "required": requerido,
-                "textQuestion": {"paragraph": False}
-            }}},
+            "item": {
+                "title": titulo_q,
+                "questionItem": {"question": {
+                    "required": req,
+                    "textQuestion": {"paragraph": False}
+                }}
+            },
             "location": {"index": idx}
         }}
 
-    campos_info = [
+    # Campos de info del cliente
+    for titulo_q, req in [
         ("Nombre y apellido",    True),
         ("Correo electrónico",   True),
         ("Dirección de entrega", True),
         ("Teléfono de contacto", False),
-    ]
-    for titulo_q, req in campos_info:
-        requests.append({"createItem": {
-            "item": {"title": titulo_q, "questionItem": {"question": {
-                "required": req,
-                "textQuestion": {"paragraph": False}
-            }}},
+    ]:
+        reqs.append({"createItem": {
+            "item": {
+                "title": titulo_q,
+                "questionItem": {"question": {
+                    "required": req,
+                    "textQuestion": {"paragraph": False}
+                }}
+            },
             "location": {"index": idx}
         }})
         idx += 1
 
-    # Método de pago (radio)
-    requests.append({"createItem": {
-        "item": {"title": "Método de pago", "questionItem": {"question": {
-            "required": True,
-            "choiceQuestion": {
-                "type": "RADIO",
-                "options": [{"value": "Efectivo"}, {"value": "Transferencia"}]
-            }
-        }}},
-        "location": {"index": idx}
-    }})
-    idx += 1
-
-    # Separador de sección
-    requests.append({"createItem": {
+    # Método de pago
+    reqs.append({"createItem": {
         "item": {
-            "title":        "Productos",
-            "description":  "Ingresá la CANTIDAD que querés de cada producto. "
-                            "Dejá en blanco los que no necesitás.",
-            "pageBreakItem": {}
+            "title": "Método de pago",
+            "questionItem": {"question": {
+                "required": True,
+                "choiceQuestion": {
+                    "type": "RADIO",
+                    "options": [{"value": "Efectivo"},
+                                {"value": "Transferencia"}]
+                }
+            }}
         },
         "location": {"index": idx}
     }})
     idx += 1
 
-    # Un segmento header + productos por segmento
-    segmento_actual = None
+    # Productos (sin pageBreak ni textItem — mayor compatibilidad)
     for p in prods:
-        if p["segmento"] != segmento_actual:
-            segmento_actual = p["segmento"]
-            requests.append({"createItem": {
-                "item": {
-                    "title":    segmento_actual,
-                    "textItem": {}
-                },
-                "location": {"index": idx}
-            }})
-            idx += 1
-
-        titulo_prod = (f"{p['nombre']} ({p['unidad']}) "
-                       f"- Q.{p['precio']:.2f}")
-        requests.append({"createItem": {
-            "item": {"title": titulo_prod, "questionItem": {"question": {
-                "required": False,
-                "textQuestion": {"paragraph": False}
-            }}},
+        nombre_p = (f"{p['nombre']} ({p['unidad']}) "
+                    f"- Q.{p['precio']:.2f}")
+        reqs.append({"createItem": {
+            "item": {
+                "title": nombre_p,
+                "questionItem": {"question": {
+                    "required": False,
+                    "textQuestion": {"paragraph": False}
+                }}
+            },
             "location": {"index": idx}
         }})
         idx += 1
 
-    # 3. Ejecutar batch update
-    svc.forms().batchUpdate(
-        formId=form_id,
-        body={"requests": requests}
-    ).execute()
+    # 3. Batch update en bloques de 50 (evita timeouts)
+    BLOQUE = 50
+    for i in range(0, len(reqs), BLOQUE):
+        svc.forms().batchUpdate(
+            formId=form_id,
+            body={"requests": reqs[i:i+BLOQUE]}
+        ).execute()
+        if i + BLOQUE < len(reqs):
+            time.sleep(0.5)
 
-    # 4. Compartir públicamente (para que las familias puedan llenarlo)
-    _drive_svc().permissions().create(
-        fileId=form_id,
-        body={"type": "anyone", "role": "reader"},
-        supportsAllDrives=True
-    ).execute()
+    # 4. Compartir públicamente
+    try:
+        _drive_svc().permissions().create(
+            fileId=form_id,
+            body={"type": "anyone", "role": "reader"},
+            supportsAllDrives=True
+        ).execute()
+    except Exception:
+        pass   # compartir puede fallar si ya tiene permiso
 
     # 5. Guardar form_id
     _save_form_id(form_id)
 
     return {
-        "form_id":    form_id,
-        "form_url":   f"https://docs.google.com/forms/d/{form_id}/viewform",
-        "edit_url":   f"https://docs.google.com/forms/d/{form_id}/edit",
+        "form_id":     form_id,
+        "form_url":    f"https://docs.google.com/forms/d/{form_id}/viewform",
+        "edit_url":    f"https://docs.google.com/forms/d/{form_id}/edit",
         "n_productos": len(prods),
     }
 
