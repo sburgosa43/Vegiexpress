@@ -306,7 +306,8 @@ def _tab_formulario():
                  key="hog_crear_form",
                  disabled=n_sel == 0,
                  help="Crea un formulario nuevo con los productos seleccionados"):
-        prods_sel = [p for p in todos if p["nombre"] in nuevos_sel]
+        prods_sel = [p for p in todos
+                     if p["nombre"] in st.session_state.get(_FORM_SEL_KEY, set())]
         with st.spinner(f"Creando formulario con {len(prods_sel)} productos..."):
             try:
                 res = crear_formulario(titulo=titulo_f,
