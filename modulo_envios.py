@@ -152,12 +152,11 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
 
 
 AREAS_LIST = {
-    "Río":      lambda cli, z: z == "L01",
-    "Guate":    lambda cli, z: z == "L05" and "veggi hogares" not in cli.lower(),
-    "Santiago": lambda cli, z: z == "L06" and "veggi hogares" not in cli.lower(),
-    "Antigua":  lambda cli, z: z == "L03",
-    "Chimal":   lambda cli, z: z == "L04" and "veggi hogares" not in cli.lower(),
-    "Veggi Hogares": lambda cli, z: "veggi hogares" in cli.lower(),
+    "🌊 Río":     lambda cli, z: z in ("L01", "L02"),
+    "🏙️ Guate":  lambda cli, z: z in ("L05", "L06") and z != "L20",
+    "🔖 Antigua": lambda cli, z: z == "L03",
+    "🔖 Chimal":  lambda cli, z: z == "L04",
+    "🏠 Hogares": lambda cli, z: z == "L20" or "veggi hogares" in cli.lower(),
 }
 
 
