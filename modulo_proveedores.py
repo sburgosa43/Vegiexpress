@@ -50,7 +50,8 @@ def _editores_fragment(sel_prov, base_dfs, prod_map, todas_areas,
                         semana, año, reset_n):
     """Editores de A Comprar + totales EN VIVO, aislados en un fragmento:
     cada edicion solo reejecuta este bloque (rapido), no toda la pagina."""
-    total_est_global = 0.0
+    total_est_global  = 0.0
+    global_area_costs = {}   # {area: costo_demanda_total}
 
     for prov in sel_prov:
         base_df = base_dfs[prov]
@@ -116,52 +117,57 @@ def _editores_fragment(sel_prov, base_dfs, prod_map, todas_areas,
         if "A Comprar" in edited.columns:
             base_df["A Comprar"] = edited["A Comprar"].values
 
-        # ── Gasto estimado EN VIVO por proveedor ───────────────────────────
-        est_prov = 0.0
+        # ── Costo por área (demanda × costo, siempre visible) ───────────────
+        est_prov   = 0.0
+        area_costs = {}
         for i, row in base_df.iterrows():
+            try:   _c = float(row["_costo"] or 0)
+            except: _c = 0.0
+            if _c <= 0:
+                continue
+            # Demanda por área → costo atribuible (Opción A)
+            for an in todas_areas:
+                if an in row.index:
+                    qty = float(row[an] or 0)
+                    if qty > 0:
+                        area_costs[an] = area_costs.get(an, 0) + qty * _c
+            # Estimado A Comprar (solo si hay valor)
             val = str(edited.loc[i, "A Comprar"] or "")
             ok, pend, n = _val_comprar(val)
-            try:
-                _c = float(row["_costo"] or 0)
-            except Exception:
-                _c = 0.0
-            if ok and not pend and _c > 0:
+            if ok and not pend:
                 est_prov += n * _c
-        if est_prov > 0:
+
+        if area_costs or est_prov > 0:
+            area_parts = " &nbsp;·&nbsp; ".join(
+                f"<b>{an}:</b> Q{v:,.0f}"
+                for an, v in area_costs.items() if v > 0
+            )
+            est_txt = (f" &nbsp;·&nbsp; <b>A Comprar estimado: Q{est_prov:,.2f}</b>"
+                       if est_prov > 0 else "")
             st.markdown(
-                f"<div style='text-align:right;font-size:.8rem;"
+                f"<div style='text-align:right;font-size:.78rem;"
                 f"color:{color};margin:2px 0 6px 0'>"
-                f"<b>Estimado {prov}: Q{est_prov:,.2f}</b></div>",
+                + area_parts + est_txt + "</div>",
                 unsafe_allow_html=True)
             total_est_global += est_prov
+            for an, v in area_costs.items():
+                global_area_costs[an] = global_area_costs.get(an, 0) + v
 
-    # ── GASTO TOTAL EN VIVO con desglose por área ───────────────────────────
-    if total_est_global > 0:
-        # Acumular área costs de todos los proveedores
-        global_area = {}
-        for prov in sel_prov:
-            base_df = base_dfs[prov]
-            ed_key  = f"de_{prov}_{semana}_{año}_{reset_n}"
-            for an in todas_areas:
-                if an not in base_df.columns:
-                    continue
-                for i, row in base_df.iterrows():
-                    try: _c = float(row["_costo"] or 0)
-                    except: _c = 0.0
-                    qty = float(row.get(an, 0) or 0)
-                    if qty > 0 and _c > 0:
-                        global_area[an] = global_area.get(an, 0) + qty * _c
-
+    # ── BANNER GLOBAL — siempre visible si hay demanda ───────────────────────
+    if global_area_costs:
         area_line = "  &nbsp;|&nbsp;  ".join(
             f"<b>{an}:</b> Q{v:,.0f}"
-            for an, v in sorted(global_area.items()) if v > 0
+            for an, v in global_area_costs.items() if v > 0
         )
+        est_global_txt = (f"<br><span style='font-size:.8rem;color:#388e3c'>"
+                          f"<b>💰 A Comprar estimado: Q{total_est_global:,.2f}</b></span>"
+                          if total_est_global > 0 else "")
         st.markdown(
             f"<div style='background:#e8f5e9;border-radius:8px;"
             f"padding:10px;text-align:center;margin:8px 0'>"
-            f"<b>💰 Estimado total semana: Q{total_est_global:,.2f}</b>"
-            + (f"<br><span style='font-size:.82rem;color:#555'>{area_line}</span>"
-               if area_line else "")
+            f"<b>📦 Necesidad semana por área</b>"
+            f"<br><span style='font-size:.85rem'>{area_line}</span>"
+            + est_global_txt
             + "</div>", unsafe_allow_html=True)
 
 
