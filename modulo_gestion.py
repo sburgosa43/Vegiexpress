@@ -15,6 +15,7 @@ def _show_conf(key: str):
 
 import base64
 from datetime import date
+from data_helper  import cargar_clientes, cli_precio
 from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido,
                           editar_linea, editar_fecha_pedido, eliminar_pedido)
 from order_helper import guardar_edicion_pedidos
@@ -350,11 +351,30 @@ def _modificar(todos):
 
                 for jj, nv in enumerate(nuevas_ui):
                     nj1, nj2, nj3, njx = st.columns([3.5, 1.5, 1.5, 0.5])
-                    nv["producto"] = nj1.selectbox("",  prods_lista,
+
+                    # Producto — al cambiar, auto-busca precio por cascada
+                    prod_prev = nv.get("_prev_prod", "")
+                    nv["producto"] = nj1.selectbox("", prods_lista,
                         index=(prods_lista.index(nv.get("producto",""))
                                if nv.get("producto","") in prods_lista else 0),
                         key=f"nv_{unico}_{jj}_prod",
                         label_visibility="collapsed")
+
+                    # Si el producto cambió → calcular precio de cascada
+                    if nv["producto"] and nv["producto"] != prod_prev:
+                        _cli_obj = (mapa_exact.get(cli_sel)
+                                    or mapa_lower.get(cli_sel.lower()))
+                        if _cli_obj:
+                            _price, _fuente = cli_precio(_cli_obj, nv["producto"])
+                        else:
+                            _price = float(prods_cat.get(
+                                nv["producto"], {}).get("precio", 0) or 0)
+                            _fuente = "general"
+                        nv["precio"]     = _price
+                        nv["_prev_prod"] = nv["producto"]
+                        # Pre-cargar session_state para que el number_input lo muestre
+                        st.session_state[f"nv_{unico}_{jj}_prec"] = float(_price)
+
                     nv["cantidad"] = nj2.number_input("", min_value=0.0, step=0.5,
                         value=float(nv.get("cantidad", 0.0)),
                         key=f"nv_{unico}_{jj}_cant",
