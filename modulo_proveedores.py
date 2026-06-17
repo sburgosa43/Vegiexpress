@@ -15,10 +15,9 @@ from pdf_helper   import generar_lista_compras_proveedor
 # EXCLUIR_CLIENTES viene de config.py
 
 AREAS_PROV = [
-    ("Ant-Chim", lambda cli, z: z in ["L03","L04"] and "chimalt" not in cli.lower() and z != "L10"),
-    ("Chimalt",  lambda cli, z: z == "L10" or "chimalt" in cli.lower()),
-    ("GT-Stgo",  lambda cli, z: z in ["L05","L06"]),
-    ("Río",      lambda cli, z: z == "L01"),
+    ("Antigua",  lambda cli, z: z in ["L03","L04","L10"] or "chimalt" in cli.lower()),
+    ("Río",      lambda cli, z: z in ["L01","L02"]),
+    ("Hogares",  lambda cli, z: z == "L20" or "veggi hogares" in cli.lower()),
 ]
 
 
@@ -136,13 +135,34 @@ def _editores_fragment(sel_prov, base_dfs, prod_map, todas_areas,
                 unsafe_allow_html=True)
             total_est_global += est_prov
 
-    # ── GASTO TOTAL EN VIVO ─────────────────────────────────────────────────
+    # ── GASTO TOTAL EN VIVO con desglose por área ───────────────────────────
     if total_est_global > 0:
+        # Acumular área costs de todos los proveedores
+        global_area = {}
+        for prov in sel_prov:
+            base_df = base_dfs[prov]
+            ed_key  = f"de_{prov}_{semana}_{año}_{reset_n}"
+            for an in todas_areas:
+                if an not in base_df.columns:
+                    continue
+                for i, row in base_df.iterrows():
+                    try: _c = float(row["_costo"] or 0)
+                    except: _c = 0.0
+                    qty = float(row.get(an, 0) or 0)
+                    if qty > 0 and _c > 0:
+                        global_area[an] = global_area.get(an, 0) + qty * _c
+
+        area_line = "  &nbsp;|&nbsp;  ".join(
+            f"<b>{an}:</b> Q{v:,.0f}"
+            for an, v in sorted(global_area.items()) if v > 0
+        )
         st.markdown(
             f"<div style='background:#e8f5e9;border-radius:8px;"
             f"padding:10px;text-align:center;margin:8px 0'>"
             f"<b>💰 Estimado total semana: Q{total_est_global:,.2f}</b>"
-            f"</div>", unsafe_allow_html=True)
+            + (f"<br><span style='font-size:.82rem;color:#555'>{area_line}</span>"
+               if area_line else "")
+            + "</div>", unsafe_allow_html=True)
 
 
 def _tab_por_area(semana: int, año: int, prod_map: dict):
