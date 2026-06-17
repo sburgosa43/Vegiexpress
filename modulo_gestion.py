@@ -362,10 +362,12 @@ def _modificar(todos):
 
                     # Si el producto cambió → calcular precio de cascada
                     if nv["producto"] and nv["producto"] != prod_prev:
-                        _clis   = cargar_clientes()
+                        _clis    = cargar_clientes()
+                        _cli_nom = l0.get("cliente", "")
                         _cli_obj = next(
                             (c for c in _clis
-                             if c["nombre"].lower().strip() == cli_sel.lower().strip()),
+                             if c["nombre"].lower().strip()
+                                == _cli_nom.lower().strip()),
                             None)
                         if _cli_obj:
                             _price, _fuente = cli_precio(_cli_obj, nv["producto"])
