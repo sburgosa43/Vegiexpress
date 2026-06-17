@@ -362,8 +362,11 @@ def _modificar(todos):
 
                     # Si el producto cambió → calcular precio de cascada
                     if nv["producto"] and nv["producto"] != prod_prev:
-                        _cli_obj = (mapa_exact.get(cli_sel)
-                                    or mapa_lower.get(cli_sel.lower()))
+                        _clis   = cargar_clientes()
+                        _cli_obj = next(
+                            (c for c in _clis
+                             if c["nombre"].lower().strip() == cli_sel.lower().strip()),
+                            None)
                         if _cli_obj:
                             _price, _fuente = cli_precio(_cli_obj, nv["producto"])
                         else:
@@ -372,7 +375,6 @@ def _modificar(todos):
                             _fuente = "general"
                         nv["precio"]     = _price
                         nv["_prev_prod"] = nv["producto"]
-                        # Pre-cargar session_state para que el number_input lo muestre
                         st.session_state[f"nv_{unico}_{jj}_prec"] = float(_price)
 
                     nv["cantidad"] = nj2.number_input("", min_value=0.0, step=0.5,
