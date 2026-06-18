@@ -171,12 +171,12 @@ def _tab_nuevo():
 
 # ── TAB 2: Actualizar Producto ────────────────────────────────────────────────
 def _tab_actualizar(es_antigua: bool = False):
-    """Vista rápida (tabla inline) + edición completa (expander)."""
-    import pandas as _pd
-    lbl   = "Antigua" if es_antigua else "General"
+    """Tabla inline con data_editor — Actual vs Nuevo + Margen en vivo."""
+    import pandas as pd
+    lbl = "Antigua" if es_antigua else "General"
     _show_conf("prod_upd")
 
-    todos  = leer_productos_con_fila(es_antigua=es_antigua)
+    todos = leer_productos_con_fila(es_antigua=es_antigua)
 
     # ── Filtros ───────────────────────────────────────────────────────────────
     f1, f2, f3 = st.columns(3)
@@ -196,74 +196,100 @@ def _tab_actualizar(es_antigua: bool = False):
 
     st.caption(f"{len(filtrados)} de {len(todos)} productos")
 
-    # ── Cabecera ──────────────────────────────────────────────────────────────
+    # ── Margen ────────────────────────────────────────────────────────────────
     IVA, ISR = 0.12, 0.05
 
     def _mg(costo, precio):
         if precio <= 0: return 0.0
         return (1 - ISR) * (precio - costo * (1 + IVA)) / precio * 100
 
-    def _mg_badge(mg):
-        return "🟢" if mg >= 35 else ("🟡" if mg >= 20 else "🔴")
+    def _mg_txt(mg_nuevo, mg_saved=None):
+        badge = "🟢" if mg_nuevo >= 35 else ("🟡" if mg_nuevo >= 20 else "🔴")
+        s = f"{badge} {mg_nuevo:.1f}%"
+        if mg_saved is not None and abs(mg_nuevo - mg_saved) > 0.05:
+            delta = mg_nuevo - mg_saved
+            s += f"  ↑+{delta:.1f}" if delta > 0 else f"  ↓{delta:.1f}"
+        return s
 
-    def _mg_cell(container, mg_nuevo, mg_saved):
-        badge = _mg_badge(mg_nuevo)
-        delta = mg_nuevo - mg_saved
-        txt   = f"{badge} {mg_nuevo:.1f}%"
-        if abs(delta) > 0.05:
-            col   = "green" if delta > 0 else "red"
-            arrow = f"↑+{delta:.1f}pt" if delta > 0 else f"↓{delta:.1f}pt"
-            txt  += f" <span style='color:{col};font-size:.75rem'>{arrow}</span>"
-        container.markdown(
-            f"<div style='padding:5px 0;font-size:.84rem'>{txt}</div>",
-            unsafe_allow_html=True)
+    # ── Leer edits previos del session_state para margen en vivo ─────────────
+    ED_KEY    = f"upd_ed_{lbl}"
+    prev_edits = {}
+    if ED_KEY in st.session_state and hasattr(st.session_state[ED_KEY], "get"):
+        prev_edits = st.session_state[ED_KEY].get("edited_rows", {})
 
-    C  = [2.0, 0.7, 0.85, 0.9, 1.0, 0.85, 0.9, 1.05, 0.4]
-    hh = st.columns(C)
-    for i, txt in enumerate(["**Producto**","**Unidad**",
-                              "Costo act.","Precio act.","Margen act.",
-                              "**Costo nuevo**","**Precio nuevo**","**Margen nuevo**",""]):
-        if txt: hh[i].caption(txt)
-    st.markdown("<hr style='margin:2px 0 6px 0;border-color:#ddd'>",
-                unsafe_allow_html=True)
+    # ── Construir DataFrame ───────────────────────────────────────────────────
+    rows = []
+    for idx, p in enumerate(filtrados):
+        cs = float(p.get("costo")  or 0)
+        ps = float(p.get("precio") or 0)
+        edits   = prev_edits.get(idx, prev_edits.get(str(idx), {}))
+        c_nuevo = float(edits.get("Costo Nuevo",  cs))
+        p_nuevo = float(edits.get("Precio Nuevo", ps))
+        mg_act  = _mg(cs, ps)
+        mg_new  = _mg(c_nuevo, p_nuevo)
+        rows.append({
+            "Producto":      p["nombre"],
+            "Unidad":        p.get("unidad",""),
+            "Precio Act":    ps,
+            "Costo Act":     cs,
+            "Margen Act":    _mg_txt(mg_act),
+            "Precio Nuevo":  p_nuevo,
+            "Costo Nuevo":   c_nuevo,
+            "Margen Nuevo":  _mg_txt(mg_new, mg_act),
+            "_rn":           p["row_num"],
+            "_cs":           cs,
+            "_ps":           ps,
+        })
 
-    for p in filtrados:
-        rn           = p["row_num"]
-        costo_saved  = float(p.get("costo")  or 0)
-        precio_saved = float(p.get("precio") or 0)
-        mg_saved     = _mg(costo_saved, precio_saved)
+    df = pd.DataFrame(rows)
 
-        col = st.columns(C)
-        col[0].write(p["nombre"])
-        col[1].caption(p.get("unidad",""))
+    edited = st.data_editor(
+        df,
+        key=ED_KEY,
+        column_config={
+            "Producto":     st.column_config.TextColumn("Producto",    disabled=True, width="large"),
+            "Unidad":       st.column_config.TextColumn("Unidad",      disabled=True, width="small"),
+            "Precio Act":   st.column_config.NumberColumn("Precio Act",  disabled=True, format="Q %.2f"),
+            "Costo Act":    st.column_config.NumberColumn("Costo Act",   disabled=True, format="Q %.2f"),
+            "Margen Act":   st.column_config.TextColumn("Margen Act",  disabled=True),
+            "Precio Nuevo": st.column_config.NumberColumn("Precio Nuevo", format="Q %.2f", step=0.25),
+            "Costo Nuevo":  st.column_config.NumberColumn("Costo Nuevo",  format="Q %.2f", step=0.25),
+            "Margen Nuevo": st.column_config.TextColumn("Margen Nuevo", disabled=True),
+            "_rn": None, "_cs": None, "_ps": None,
+        },
+        hide_index=True,
+        use_container_width=True,
+        height=min(600, 60 + len(df) * 35),
+    )
 
-        # ── Actual (solo lectura) ──────────────────────────────────────────────
-        col[2].caption(f"Q{costo_saved:.2f}")
-        col[3].caption(f"Q{precio_saved:.2f}")
-        _mg_cell(col[4], mg_saved, mg_saved)
+    # ── Guardar cambios ───────────────────────────────────────────────────────
+    cambios = []
+    for idx, row in edited.iterrows():
+        p = filtrados[idx]
+        cs_orig = float(row["_cs"] or 0)
+        ps_orig = float(row["_ps"] or 0)
+        c_new   = float(row["Costo Nuevo"]  or 0)
+        p_new   = float(row["Precio Nuevo"] or 0)
+        if abs(c_new - cs_orig) > 0.001 or abs(p_new - ps_orig) > 0.001:
+            cambios.append((p, c_new, p_new, cs_orig, ps_orig))
 
-        # ── Nuevo (editable) ───────────────────────────────────────────────────
-        nuevo_costo = col[5].number_input("C",
-            value=costo_saved, min_value=0.0, step=0.25, format="%.2f",
-            label_visibility="collapsed", key=f"upd_c_{lbl}_{rn}")
-        nuevo_precio = col[6].number_input("P",
-            value=precio_saved, min_value=0.0, step=0.25, format="%.2f",
-            label_visibility="collapsed", key=f"upd_p_{lbl}_{rn}")
-        mg_nuevo = _mg(nuevo_costo, nuevo_precio)
-        _mg_cell(col[7], mg_nuevo, mg_saved)
-
-        if col[8].button("💾", key=f"upd_s_{lbl}_{rn}", help="Guardar"):
-            costo_cambio = abs(nuevo_costo - costo_saved) > 0.001
-            with st.spinner(""):
-                editar_producto(rn, {**p, "costo": nuevo_costo,
-                                     "precio": nuevo_precio}, es_antigua)
-            st.toast(
-                f"✅ {p['nombre']}  "
-                f"Q{costo_saved:.2f}→Q{nuevo_costo:.2f} | "
-                f"Q{precio_saved:.2f}→Q{nuevo_precio:.2f} | "
-                f"Margen {mg_nuevo:.1f}%", icon="✅")
-            if costo_cambio:
-                _cascade_parent(p["nombre"], nuevo_costo, todos)
+    if cambios:
+        n = len(cambios)
+        st.info(f"**{n}** producto(s) con cambios pendientes")
+        if st.button(f"💾 Guardar {n} cambio(s)", type="primary",
+                     key=f"upd_save_all_{lbl}"):
+            for p, c_new, p_new, cs_orig, _ in cambios:
+                costo_cambio = abs(c_new - cs_orig) > 0.001
+                with st.spinner(f"Guardando {p['nombre']}..."):
+                    editar_producto(p["row_num"],
+                                    {**p, "costo": c_new, "precio": p_new},
+                                    es_antigua)
+                if costo_cambio:
+                    _cascade_parent(p["nombre"], c_new, todos)
+            # Clear editor state
+            st.session_state.pop(ED_KEY, None)
+            _conf("prod_upd",
+                  f"✅ {n} producto(s) actualizados.")
             st.rerun()
 
     # ── Edición completa (expander) ───────────────────────────────────────────
@@ -272,19 +298,15 @@ def _tab_actualizar(es_antigua: bool = False):
                      expanded=False):
         sk_busq = f"busq_completa_{lbl}"
         sk_sel  = f"sel_completa_{lbl}"
-
         with st.form(key=f"form_busq_completa_{lbl}"):
             b1, b2 = st.columns([4,1])
-            txt = b1.text_input("Buscar producto",
-                                 placeholder="Escribí el nombre...",
+            txt = b1.text_input("Buscar producto", placeholder="Escribí el nombre...",
                                  value=st.session_state.get(sk_busq,""))
-            buscar = b2.form_submit_button("🔍 Buscar",
-                                            use_container_width=True)
+            buscar = b2.form_submit_button("🔍 Buscar", use_container_width=True)
         if buscar:
             st.session_state[sk_busq] = txt.strip()
             st.session_state.pop(sk_sel, None)
             st.rerun()
-
         busqueda = st.session_state.get(sk_busq, "")
         if not busqueda:
             st.info("Escribí el nombre para buscarlo.")
@@ -293,9 +315,9 @@ def _tab_actualizar(es_antigua: bool = False):
             if not matches:
                 st.warning(f"No se encontraron productos con '{busqueda}'.")
             else:
-                nombres  = [p["nombre"] for p in matches]
-                sel      = st.selectbox("Selecciona:", nombres, key=sk_sel)
-                prod     = next(p for p in matches if p["nombre"] == sel)
+                nombres = [p["nombre"] for p in matches]
+                sel     = st.selectbox("Seleccioná:", nombres, key=sk_sel)
+                prod    = next(p for p in matches if p["nombre"] == sel)
                 _mostrar_info_precios(prod["nombre"])
                 kp = f"upd_comp_{prod['row_num']}"
                 with st.form(key=f"form_comp_{kp}"):
@@ -305,36 +327,11 @@ def _tab_actualizar(es_antigua: bool = False):
                                        - float(prod.get("costo",0))) > 0.001
                     with st.spinner("Guardando..."):
                         editar_producto(prod["row_num"], datos, es_antigua)
-                    for _k in [k for k in st.session_state
-                               if k.startswith(f"{kp}_")]:
-                        st.session_state.pop(_k, None)
                     if costo_cambio:
                         _cascade_parent(datos["nombre"],
                                         float(datos["costo"]), todos)
-                    _conf("prod_upd",
-                          f"Producto actualizado: {datos['nombre']}")
+                    _conf("prod_upd", f"Producto actualizado: {datos['nombre']}")
                     st.rerun()
-                # Eliminar
-                st.divider()
-                with st.expander(
-                        f"🗑️ Eliminar '{prod['nombre']}' del listado {lbl}",
-                        expanded=False):
-                    st.error("Esta acción elimina la fila del catálogo "
-                             "permanentemente. Los pedidos históricos NO "
-                             "se modifican.")
-                    conf_del = st.checkbox(
-                        f"Confirmo que quiero eliminar '{prod['nombre']}'",
-                        key=f"del_conf_{lbl}_{prod['row_num']}")
-                    if st.button("🗑️ Eliminar producto", type="secondary",
-                                 key=f"del_exec_{lbl}_{prod['row_num']}",
-                                 disabled=not conf_del):
-                        with st.spinner("Eliminando..."):
-                            eliminar_producto(prod["row_num"], es_antigua)
-                        st.session_state.pop(sk_busq, None)
-                        st.session_state.pop(sk_sel, None)
-                        _conf("prod_upd",
-                              f"Producto eliminado: {prod['nombre']}")
-                        st.rerun()
 
 
 def _mostrar_info_precios(nombre_prod: str):
