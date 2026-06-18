@@ -66,17 +66,56 @@ def _tab_correccion():
             "Nuevo Costo": costo_actual,
         })
 
-    df = pd.DataFrame(rows)
+    # ── Margen en vivo ───────────────────────────────────────────────────────
+    IVA, ISR = 0.12, 0.05
+
+    def _mg(costo, precio):
+        if float(precio) <= 0: return 0.0
+        return (1 - ISR) * (float(precio) - float(costo) * (1 + IVA)) / float(precio) * 100
+
+    def _mg_txt(mg_nuevo, mg_saved=None):
+        badge = "🟢" if mg_nuevo >= 35 else ("🟡" if mg_nuevo >= 20 else "🔴")
+        s = f"{badge} {mg_nuevo:.1f}%"
+        if mg_saved is not None and abs(mg_nuevo - mg_saved) > 0.05:
+            d = mg_nuevo - mg_saved
+            s += f"  ↑+{d:.1f}" if d > 0 else f"  ↓{d:.1f}"
+        return s
+
+    # Leer edits previos para margen en vivo
+    prev_edits = {}
+    ed_state = st.session_state.get("mc_editor")
+    if isinstance(ed_state, dict):
+        prev_edits = ed_state.get("edited_rows", {})
+
+    # Agregar márgenes al DataFrame
+    rows_mg = []
+    for idx, row in enumerate(rows):
+        edits   = prev_edits.get(idx, prev_edits.get(str(idx), {}))
+        p_nuevo = float(edits.get("Nuevo Precio", row["Nuevo Precio"]))
+        c_nuevo = float(edits.get("Nuevo Costo",  row["Nuevo Costo"]))
+        mg_act  = _mg(row["Costo Act"], row["Precio Act"])
+        mg_new  = _mg(c_nuevo, p_nuevo)
+        rows_mg.append({**row,
+                        "Margen Act":   _mg_txt(mg_act),
+                        "Nuevo Precio": p_nuevo,
+                        "Nuevo Costo":  c_nuevo,
+                        "Margen Nuevo": _mg_txt(mg_new, mg_act)})
+
+    df = pd.DataFrame(rows_mg)
+
     edited = st.data_editor(
         df,
         column_config={
-            "Producto":   st.column_config.TextColumn(disabled=True),
-            "Precio Act": st.column_config.NumberColumn(format="Q%.2f", disabled=True),
-            "Nuevo Precio": st.column_config.NumberColumn(format="Q%.2f", step=0.25),
-            "Costo Act":  st.column_config.NumberColumn(format="Q%.2f", disabled=True),
-            "Nuevo Costo": st.column_config.NumberColumn(format="Q%.2f", step=0.25),
+            "Producto":     st.column_config.TextColumn(disabled=True, width="large"),
+            "Precio Act":   st.column_config.NumberColumn("Precio Act",  format="Q%.2f", disabled=True),
+            "Costo Act":    st.column_config.NumberColumn("Costo Act",   format="Q%.2f", disabled=True),
+            "Margen Act":   st.column_config.TextColumn("Margen Act",   disabled=True),
+            "Nuevo Precio": st.column_config.NumberColumn("Nuevo Precio", format="Q%.2f", step=0.25),
+            "Nuevo Costo":  st.column_config.NumberColumn("Nuevo Costo",  format="Q%.2f", step=0.25),
+            "Margen Nuevo": st.column_config.TextColumn("Margen Nuevo", disabled=True),
         },
-        hide_index=True, use_container_width=True, key="mc_editor"
+        hide_index=True, use_container_width=True, key="mc_editor",
+        height=min(600, 60 + len(df) * 35),
     )
 
     cambios = []
