@@ -682,6 +682,271 @@ def generar_cotizacion(lineas: list, desde: "date", hasta: "date",
 
 
 # ── LISTA DE COMPRAS A PROVEEDORES ──────────────────────────────────────────
+
+def generar_cotizacion_formal(
+    lineas: list,           # [{producto, unidad, especificacion, volumen_semanal, precio_cotizar}]
+    desde: "date",
+    hasta: "date",
+    empresa: str = "",
+    atencion: str = "",
+    cuerpo: str = "",
+    cotizador: str = "",
+    cotizador_tel: str = "",
+    num_cot: str = "",
+) -> bytes:
+    """
+    PDF de cotizacion formal para empresas procesadoras.
+    Membrete VeggiExpress + cuerpo de presentacion + tabla de productos
+    con especificacion y volumen semanal + condiciones + firma.
+    """
+    from reportlab.platypus import KeepTogether
+
+    buffer = BytesIO()
+    S_base = _S()
+
+    # Estilos adicionales para cotizacion formal
+    def sty(name, **kw):
+        defaults = dict(fontName="Helvetica", fontSize=9,
+                        textColor=GRIS_CARB, leading=13)
+        defaults.update(kw)
+        return ParagraphStyle(name, **defaults)
+
+    S = {
+        **S_base,
+        "cot_titulo":  sty("cot_titulo",  fontSize=22, fontName="Helvetica-Bold",
+                            textColor=GRIS_CARB, alignment=TA_RIGHT, leading=26),
+        "cot_sub":     sty("cot_sub",     fontSize=9,  fontName="Helvetica-Oblique",
+                            textColor=VERDE_OSC, alignment=TA_RIGHT, leading=12),
+        "cot_num":     sty("cot_num",     fontSize=8,  textColor=GRIS_CARB,
+                            alignment=TA_RIGHT, leading=11),
+        "dest_lbl":    sty("dest_lbl",    fontSize=7.5, fontName="Helvetica-Bold",
+                            textColor=VERDE_OSC, leading=10),
+        "dest_empresa":sty("dest_empresa",fontSize=12, fontName="Helvetica-Bold",
+                            textColor=GRIS_CARB, leading=15),
+        "dest_info":   sty("dest_info",   fontSize=9,  textColor=GRIS_CARB, leading=12),
+        "cuerpo":      sty("cuerpo",      fontSize=9.5, textColor=GRIS_CARB,
+                            leading=14, spaceAfter=4),
+        "cond_titulo": sty("cond_titulo", fontSize=8.5, fontName="Helvetica-Bold",
+                            textColor=VERDE_OSC, leading=11, spaceBefore=6),
+        "cond_item":   sty("cond_item",   fontSize=8.5, textColor=GRIS_CARB, leading=11),
+        "firma_nombre":sty("firma_nombre",fontSize=10, fontName="Helvetica-Bold",
+                            textColor=GRIS_CARB, alignment=TA_CENTER, leading=13),
+        "firma_cargo": sty("firma_cargo", fontSize=8.5, textColor=GRIS_CARB,
+                            alignment=TA_CENTER, leading=11),
+        "brand_footer":sty("brand_footer",fontSize=8, fontName="Helvetica-Oblique",
+                            textColor=GRIS_CARB, alignment=TA_CENTER, leading=10),
+    }
+
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=18*mm, rightMargin=18*mm,
+        topMargin=12*mm, bottomMargin=20*mm,
+        title=f"Cotizacion Formal VeggiExpress {num_cot}",
+    )
+    story = []
+    CW = PAGE_W - 36*mm
+
+    # ── 1. HEADER: Logo + Titulo + Numero ─────────────────────────────────────
+    if os.path.exists(LOGO_PATH):
+        logo = RLImage(LOGO_PATH, width=55*mm, height=18*mm)
+    else:
+        logo = _p("VeggiExpress", ParagraphStyle("lg", fontSize=18,
+                  fontName="Helvetica-Bold", textColor=VERDE_OSC))
+
+    hdr_right = [
+        _p("COTIZACION COMERCIAL", S["cot_titulo"]),
+        _p("Distribucion de Frutas y Vegetales Frescos", S["cot_sub"]),
+        Spacer(1, 3*mm),
+        _p(f"No. {num_cot}", S["cot_num"]),
+        _p(f"Fecha: {desde.strftime('%d/%m/%Y')}", S["cot_num"]),
+        _p(f"Valida hasta: {hasta.strftime('%d/%m/%Y')}", S["cot_num"]),
+    ]
+
+    ht = Table([[logo, hdr_right]], colWidths=[58*mm, CW - 58*mm])
+    ht.setStyle(TableStyle([
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        ("ALIGN",  (1,0), (1,0),   "RIGHT"),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 0),
+    ]))
+    story.append(ht)
+    story.append(Spacer(1, 4*mm))
+    story.append(HRFlowable(width=CW, color=VERDE_OSC, thickness=1.5))
+    story.append(Spacer(1, 4*mm))
+
+    # ── 2. EMPRESA EMISORA ─────────────────────────────────────────────────────
+    emisora_info = [
+        "Productos Alimenticios Super Bueno",
+        "Guatemala, Guatemala",
+        "Tel. 5874-9679  |  sburgosa@gmail.com",
+    ]
+    em_rows = [[_p(l, sty("em", fontSize=8, textColor=GRIS_CARB, leading=11))]
+               for l in emisora_info]
+
+    # ── 3. DESTINATARIO ────────────────────────────────────────────────────────
+    dest_block = [
+        _p("A:", S["dest_lbl"]),
+        _p(_s(empresa) or "Empresa", S["dest_empresa"]),
+    ]
+    if atencion:
+        dest_block.append(_p(f"A la atencion de: {_s(atencion)}", S["dest_info"]))
+
+    sec_table = Table(
+        [[em_rows, dest_block]],
+        colWidths=[CW * 0.42, CW * 0.58],
+    )
+    sec_table.setStyle(TableStyle([
+        ("VALIGN",  (0,0), (-1,-1), "TOP"),
+        ("ALIGN",   (0,0), (0,0),   "LEFT"),
+        ("ALIGN",   (1,0), (1,0),   "LEFT"),
+        ("LEFTPADDING",  (1,0), (1,0), 8),
+        ("BACKGROUND",   (1,0), (1,0), GRIS_TAB),
+        ("ROUNDEDCORNERS", [3]),
+        ("TOPPADDING",   (1,0), (1,0), 6),
+        ("BOTTOMPADDING",(1,0), (1,0), 6),
+    ]))
+    story.append(sec_table)
+    story.append(Spacer(1, 5*mm))
+
+    # ── 4. CUERPO DE PRESENTACION ─────────────────────────────────────────────
+    if cuerpo:
+        for parrafo in _s(cuerpo).split("\n"):
+            if parrafo.strip():
+                story.append(_p(parrafo.strip(), S["cuerpo"]))
+        story.append(Spacer(1, 3*mm))
+
+    # ── 5. TABLA DE PRODUCTOS ─────────────────────────────────────────────────
+    # Columnas: No. | Producto | Especificacion | Vol. Semanal | Precio/u | Total Est./sem.
+    col_w = [
+        8*mm,         # No.
+        CW*0.22,      # Producto
+        CW*0.27,      # Especificacion
+        CW*0.13,      # Vol. Semanal
+        CW*0.12,      # Precio/u
+        CW*0.16,      # Total Est./sem.
+    ]
+
+    th_sty  = TableStyle([
+        ("BACKGROUND",    (0,0), (-1,0), VERDE_OSC),
+        ("TEXTCOLOR",     (0,0), (-1,0), BLANCO),
+        ("FONTNAME",      (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE",      (0,0), (-1,0), 8.5),
+        ("ALIGN",         (0,0), (-1,0), "CENTER"),
+        ("VALIGN",        (0,0), (-1,-1),"MIDDLE"),
+        ("TOPPADDING",    (0,0), (-1,-1), 5),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+        ("LEFTPADDING",   (0,0), (-1,-1), 4),
+        ("RIGHTPADDING",  (0,0), (-1,-1), 4),
+        ("ALIGN",         (3,1), (5,-1), "RIGHT"),
+        ("FONTSIZE",      (0,1), (-1,-1), 8.5),
+        ("ROWBACKGROUNDS",(0,1), (-1,-1), [BLANCO, GRIS_TAB]),
+        ("LINEBELOW",     (0,-1), (-1,-1), 0.8, VERDE_OSC),
+        ("GRID",          (0,0), (-1,-1), 0.3, colors.HexColor("#CCCCCC")),
+        ("VALIGN",        (0,1), (-1,-1), "TOP"),
+    ])
+
+    def _th(txt):
+        return _p(txt, ParagraphStyle("th_f", fontName="Helvetica-Bold",
+                  fontSize=8.5, textColor=BLANCO, alignment=TA_CENTER, leading=11))
+    def _td(txt, right=False):
+        al = TA_RIGHT if right else TA_LEFT
+        return _p(txt, ParagraphStyle("td_f", fontSize=8.5,
+                  textColor=GRIS_CARB, alignment=al, leading=11))
+
+    tbl_data = [[
+        _th("No."), _th("Producto"), _th("Especificacion"),
+        _th("Vol. Semanal"), _th("Precio/u"), _th("Total Est./Sem."),
+    ]]
+
+    total_semana = 0.0
+    for i, l in enumerate(lineas, 1):
+        vol   = float(l.get("volumen_semanal") or 0)
+        prec  = float(l.get("precio_cotizar")  or 0)
+        total = vol * prec
+        total_semana += total
+
+        vol_txt   = f"{vol:,.0f} {l.get('unidad','lbs')}" if vol else "—"
+        prec_txt  = f"Q{prec:,.2f}" if prec else "—"
+        total_txt = f"Q{total:,.2f}" if total else "—"
+
+        tbl_data.append([
+            _td(str(i),                    right=True),
+            _td(_s(l.get("producto",""))),
+            _td(_s(l.get("especificacion",""))),
+            _td(vol_txt,                   right=True),
+            _td(prec_txt,                  right=True),
+            _td(total_txt,                 right=True),
+        ])
+
+    # Fila de total
+    tbl_data.append([
+        _p("", S["td"]), _p("", S["td"]), _p("", S["td"]),
+        _p("", S["td"]),
+        _p("TOTAL SEMANAL EST.", ParagraphStyle("tot_lbl_f", fontSize=8.5,
+            fontName="Helvetica-Bold", textColor=VERDE_OSC, alignment=TA_RIGHT, leading=11)),
+        _p(f"Q{total_semana:,.2f}", ParagraphStyle("tot_val_f", fontSize=9.5,
+            fontName="Helvetica-Bold", textColor=GRIS_CARB, alignment=TA_RIGHT, leading=12)),
+    ])
+
+    th_sty.add("BACKGROUND", (0, len(tbl_data)-1), (-1, len(tbl_data)-1), GRIS_CLR)
+    th_sty.add("LINEABOVE",  (0, len(tbl_data)-1), (-1, len(tbl_data)-1), 1.0, VERDE_OSC)
+
+    prod_tbl = Table(tbl_data, colWidths=col_w, repeatRows=1)
+    prod_tbl.setStyle(th_sty)
+    story.append(prod_tbl)
+    story.append(Spacer(1, 5*mm))
+
+    # ── 6. CONDICIONES ─────────────────────────────────────────────────────────
+    condiciones = [
+        "Moneda: Quetzales guatemaltecos (GTQ), precios sin IVA.",
+        "Calidad: Productos frescos de primera calidad, seleccionados y calibrados.",
+        "Entrega: Sujeto a programa y volumen acordado con el cliente.",
+        "Empaque: Segun especificacion del cliente o estandar VeggiExpress.",
+        f"Validez de la cotizacion: {hasta.strftime('%d de %B de %Y')}.",
+        "Precios sujetos a variacion por condiciones de mercado fuera del periodo de vigencia.",
+    ]
+
+    story.append(_p("CONDICIONES GENERALES", S["cond_titulo"]))
+    for cond in condiciones:
+        story.append(_p(f"• {cond}", S["cond_item"]))
+    story.append(Spacer(1, 6*mm))
+
+    # ── 7. CIERRE Y FIRMA ─────────────────────────────────────────────────────
+    cierre = ("Quedamos a sus ordenes para cualquier consulta, ajuste en "
+              "especificaciones o coordinacion de visita. Esperamos poder "
+              "ser su proveedor de confianza.")
+    story.append(_p(cierre, S["cuerpo"]))
+    story.append(Spacer(1, 10*mm))
+
+    # Firma
+    firma_tel = cotizador_tel or "Tel. 5874-9679"
+    firma_data = [[
+        [
+            Spacer(1, 12*mm),
+            HRFlowable(width=55*mm, color=GRIS_CARB, thickness=0.8),
+            Spacer(1, 2*mm),
+            _p(_s(cotizador) or "VeggiExpress", S["firma_nombre"]),
+            _p("Gerente de Produccion y Comercializacion", S["firma_cargo"]),
+            _p("VeggiExpress  |  Productos Alimenticios Super Bueno", S["firma_cargo"]),
+            _p(f"{firma_tel}  |  sburgosa@gmail.com", S["firma_cargo"]),
+        ]
+    ]]
+    firma_tbl = Table(firma_data, colWidths=[CW])
+    firma_tbl.setStyle(TableStyle([("ALIGN", (0,0), (-1,-1), "CENTER")]))
+    story.append(firma_tbl)
+
+    # Footer
+    story.append(Spacer(1, 8*mm))
+    story.append(HRFlowable(width=CW, color=VERDE_LIM, thickness=0.8))
+    story.append(Spacer(1, 2*mm))
+    story.append(_p(
+        "VeggiExpress  |  Productos Alimenticios Super Bueno  |  "
+        "Guatemala  |  sburgosa@gmail.com  |  5874-9679",
+        S["brand_footer"]))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
 def generar_lista_compras_proveedor(prov: str, items: list,
                                     semana: int, año: int) -> bytes:
     """

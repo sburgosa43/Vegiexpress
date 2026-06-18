@@ -270,34 +270,68 @@ def _tab_escenarios():
 def _cotizacion():
     from datetime import date, timedelta
     from data_helper import cargar_productos
-    from pdf_helper  import generar_cotizacion
+    from pdf_helper  import generar_cotizacion, generar_cotizacion_formal
 
-    st.markdown("Generá un PDF de cotización para prospectar clientes o "
-                "comunicar cambios de precios.")
+    # ── Selector de tipo ──────────────────────────────────────────────────────
+    tipo = st.radio("Tipo de cotizacion:",
+                    ["📋 Simple", "🏢 Formal / Empresarial"],
+                    horizontal=True, key="cot_tipo")
+    is_formal = tipo.startswith("🏢")
+
     st.divider()
 
     # Vigencia
     v1, v2 = st.columns(2)
     with v1:
-        desde = st.date_input("Vigente desde", value=date.today(), key="cot_desde")
+        desde = v1.date_input("Vigente desde", value=date.today(), key="cot_desde")
     with v2:
-        hasta = st.date_input("Vigente hasta",
+        hasta = v2.date_input("Vigente hasta",
                                value=date.today() + timedelta(days=30),
                                key="cot_hasta")
 
-    st.divider()
-
-    # Quién cotiza
+    # Cotizador + numero
     COTIZADORES = {
         "Andrea Castillo Sanabria": "Tel. 59306817",
         "Sergio Burgos Alburez":    "Tel. 58749679",
     }
-    cotizador_nombre = st.selectbox("Elaborado por:", list(COTIZADORES.keys()),
-                                     key="cot_quien")
+    cx1, cx2 = st.columns(2)
+    cotizador_nombre = cx1.selectbox("Elaborado por:", list(COTIZADORES.keys()),
+                                      key="cot_quien")
     cotizador_tel    = COTIZADORES[cotizador_nombre]
 
+    if is_formal:
+        num_cot = cx2.text_input("No. Cotizacion",
+                                  value=f"VX-{desde.strftime('%Y%m%d')}-001",
+                                  key="cot_num")
     st.divider()
-    st.markdown("**Productos a cotizar** — seleccioná y ajustá el precio:")
+
+    # ── Campos extra para cotizacion formal ───────────────────────────────────
+    if is_formal:
+        ef1, ef2 = st.columns(2)
+        empresa_dest = ef1.text_input("Empresa destinataria",
+                                       placeholder="PRALCASA / Nombre de la empresa",
+                                       key="cot_empresa")
+        atencion_dest = ef2.text_input("A la atencion de",
+                                        placeholder="Nombre del contacto",
+                                        key="cot_atencion")
+
+        CUERPO_DEFAULT = (
+            "Estimado equipo,\n\n"
+            "Por medio de la presente, nos es grato presentar nuestra "
+            "cotizacion de productos frescos conforme a sus requerimientos. "
+            "VeggiExpress se especializa en la distribucion de frutas y "
+            "vegetales frescos de alta calidad, garantizando consistencia "
+            "en volumen, calidad certificada y puntualidad en la entrega.\n\n"
+            "A continuacion el detalle de productos cotizados:"
+        )
+        cuerpo_texto = st.text_area("Cuerpo de la cotizacion",
+                                     value=st.session_state.get("cot_cuerpo",
+                                                                  CUERPO_DEFAULT),
+                                     height=130, key="cot_cuerpo_area")
+        st.session_state["cot_cuerpo"] = cuerpo_texto
+        st.divider()
+
+    st.markdown("**Productos a cotizar** — selecciona y ajusta el precio:")
 
     SEGS = {"Premium":50,"Alto":40,"Media Alta":35,"Media":30,
             "Media Baja":25,"Baja":20,"Sin Segmento":0}
@@ -310,25 +344,40 @@ def _cotizacion():
     # Init grilla
     if "cot_grilla" not in st.session_state:
         st.session_state["cot_grilla"] = [
-            {"producto":"","precio_cotizar":0.0} for _ in range(n_filas)]
+            {"producto":"","precio_cotizar":0.0,
+             "especificacion":"","volumen_semanal":0.0} for _ in range(n_filas)]
     elif len(st.session_state["cot_grilla"]) < n_filas:
         while len(st.session_state["cot_grilla"]) < n_filas:
-            st.session_state["cot_grilla"].append({"producto":"","precio_cotizar":0.0})
+            st.session_state["cot_grilla"].append(
+                {"producto":"","precio_cotizar":0.0,
+                 "especificacion":"","volumen_semanal":0.0})
 
     grilla = st.session_state["cot_grilla"]
     lineas_pdf = []
 
-    # Encabezado
-    hdr = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
-    for h, lbl in zip(hdr, ["Producto","Unidad","Costo","Pto. Eq.","P. Imp.",
-                              "Precio Cotizar","Margen %","Margen Q","IVA/u","ISR/u"]):
-        h.markdown(f"<small><b>{lbl}</b></small>", unsafe_allow_html=True)
+    # Encabezado — diferente por tipo
+    if is_formal:
+        hdr = st.columns([2.0, 1.8, 0.7, 1.0, 0.85, 0.85])
+        for h, lbl in zip(hdr, ["Producto","Especificacion","Vol/Sem",
+                                  "Precio Cotizar","Margen %","Margen Q"]):
+            h.markdown(f"<small><b>{lbl}</b></small>", unsafe_allow_html=True)
+    else:
+        hdr = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
+        for h, lbl in zip(hdr, ["Producto","Unidad","Costo","Pto. Eq.","P. Imp.",
+                                  "Precio Cotizar","Margen %","Margen Q","IVA/u","ISR/u"]):
+            h.markdown(f"<small><b>{lbl}</b></small>", unsafe_allow_html=True)
 
     for i, fila in enumerate(grilla):
         k_prod = f"cot_prod_{i}"
         k_prec = f"cot_prec_{i}"
+        k_spec = f"cot_spec_{i}"
+        k_vol  = f"cot_vol_{i}"
 
-        r = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
+        if is_formal:
+            r = st.columns([2.0, 1.8, 0.7, 1.0, 0.85, 0.85])
+        else:
+            r = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
+
         prod_sel = r[0].selectbox("", nombres,
             index=(nombres.index(fila["producto"]) if fila["producto"] in nombres else 0),
             key=k_prod, label_visibility="collapsed")
@@ -377,12 +426,29 @@ def _cotizacion():
 
             grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed}
 
+            # Campos formales (especificacion + volumen)
+            if is_formal:
+                especif = r[1].text_input("", value=fila.get("especificacion",""),
+                                           key=k_spec, label_visibility="collapsed",
+                                           placeholder="Ej: Descolada, calibre mediano")
+                vol_sem = r[2].number_input("", value=float(fila.get("volumen_semanal",0)),
+                                             min_value=0.0, step=100.0, key=k_vol,
+                                             label_visibility="collapsed")
+                grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed,
+                              "especificacion": especif, "volumen_semanal": vol_sem}
+            else:
+                grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed,
+                              "especificacion":"", "volumen_semanal": 0.0}
+
             if precio_ed > 0:
                 lineas_pdf.append({"producto": prod_sel,
                                    "unidad":   p.get("unidad",""),
-                                   "precio_cotizar": precio_ed})
+                                   "precio_cotizar":  precio_ed,
+                                   "especificacion":  grilla[i].get("especificacion",""),
+                                   "volumen_semanal": grilla[i].get("volumen_semanal",0.0)})
         else:
-            grilla[i] = {"producto":"","precio_cotizar":0.0}
+            grilla[i] = {"producto":"","precio_cotizar":0.0,
+                          "especificacion":"","volumen_semanal":0.0}
             for col in r[1:]: col.write("")
 
     st.session_state["cot_grilla"] = grilla
@@ -418,13 +484,27 @@ def _cotizacion():
             label_visibility="collapsed",
         )
 
-        if st.button("📄 Generar PDF de Cotización", type="primary"):
+        btn_lbl = "📄 Generar Cotizacion Formal" if is_formal else "📄 Generar PDF"
+        if st.button(btn_lbl, type="primary"):
             with st.spinner("Generando PDF..."):
-                pdf_bytes = generar_cotizacion(lineas_pdf, desde, hasta,
-                                       cotizador=cotizador_nombre,
-                                       cotizador_tel=cotizador_tel,
-                                       notas=notas_cot)
-            nombre = f"Cotizacion_VeggiExpress_{desde.strftime('%d%m%Y')}.pdf"
+                if is_formal:
+                    pdf_bytes = generar_cotizacion_formal(
+                        lineas_pdf, desde, hasta,
+                        empresa=st.session_state.get("cot_empresa",""),
+                        atencion=st.session_state.get("cot_atencion",""),
+                        cuerpo=st.session_state.get("cot_cuerpo",""),
+                        cotizador=cotizador_nombre,
+                        cotizador_tel=cotizador_tel,
+                        num_cot=st.session_state.get("cot_num","VX-001"),
+                    )
+                    nombre = (f"Cotizacion_Formal_VeggiExpress_"
+                              f"{st.session_state.get('cot_num','').replace('-','_')}.pdf")
+                else:
+                    pdf_bytes = generar_cotizacion(lineas_pdf, desde, hasta,
+                                           cotizador=cotizador_nombre,
+                                           cotizador_tel=cotizador_tel,
+                                           notas=notas_cot)
+                    nombre = f"Cotizacion_VeggiExpress_{desde.strftime('%d%m%Y')}.pdf"
             st.download_button("📥 Descargar PDF", data=pdf_bytes,
                 file_name=nombre, mime="application/pdf",
                 key="cot_dl", type="primary")
