@@ -74,11 +74,11 @@ def _tab_correccion():
         return (1 - ISR) * (float(precio) - float(costo) * (1 + IVA)) / float(precio) * 100
 
     def _mg_txt(mg_nuevo, mg_saved=None):
-        badge = "🟢" if mg_nuevo >= 35 else ("🟡" if mg_nuevo >= 20 else "🔴")
+        badge = "[+]" if mg_nuevo >= 35 else ("[~]" if mg_nuevo >= 20 else "[!]")
         s = f"{badge} {mg_nuevo:.1f}%"
         if mg_saved is not None and abs(mg_nuevo - mg_saved) > 0.05:
             d = mg_nuevo - mg_saved
-            s += f"  ↑+{d:.1f}" if d > 0 else f"  ↓{d:.1f}"
+            s += f" +{d:.1f}pt" if d > 0 else f" {d:.1f}pt"
         return s
 
     # Leer edits previos para margen en vivo
@@ -88,17 +88,18 @@ def _tab_correccion():
         prev_edits = ed_state.get("edited_rows", {})
 
     # Agregar márgenes al DataFrame
+    # IMPORTANTE: NO sobreescribir Nuevo Precio / Nuevo Costo en el base
+    # (si lo hacemos, el data_editor limpia el delta y se pierden los cambios)
     rows_mg = []
     for idx, row in enumerate(rows):
         edits   = prev_edits.get(idx, prev_edits.get(str(idx), {}))
+        # Valores efectivos = base + cualquier delta pendiente del usuario
         p_nuevo = float(edits.get("Nuevo Precio", row["Nuevo Precio"]))
         c_nuevo = float(edits.get("Nuevo Costo",  row["Nuevo Costo"]))
         mg_act  = _mg(row["Costo Act"], row["Precio Act"])
         mg_new  = _mg(c_nuevo, p_nuevo)
-        rows_mg.append({**row,
+        rows_mg.append({**row,           # mantiene Nuevo Precio/Costo SIN cambiar
                         "Margen Act":   _mg_txt(mg_act),
-                        "Nuevo Precio": p_nuevo,
-                        "Nuevo Costo":  c_nuevo,
                         "Margen Nuevo": _mg_txt(mg_new, mg_act)})
 
     df = pd.DataFrame(rows_mg)
