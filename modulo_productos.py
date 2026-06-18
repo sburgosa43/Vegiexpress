@@ -171,79 +171,137 @@ def _tab_nuevo():
 
 # ── TAB 2: Actualizar Producto ────────────────────────────────────────────────
 def _tab_actualizar(es_antigua: bool = False):
-    lbl      = "Antigua" if es_antigua else "General"
-    sk_busq  = f"busq_confirmada_{lbl}"
-    sk_sel   = f"upd_sel_{lbl}"
+    """Vista rápida (tabla inline) + edición completa (expander)."""
+    import pandas as _pd
+    lbl   = "Antigua" if es_antigua else "General"
     _show_conf("prod_upd")
 
-    productos = leer_productos_con_fila(es_antigua=es_antigua)
+    todos  = leer_productos_con_fila(es_antigua=es_antigua)
 
-    with st.form(key=f"form_busq_{lbl}"):
-        b1, b2 = st.columns([4,1])
-        txt    = b1.text_input("Buscar producto",
-                                placeholder="Escribí el nombre...",
-                                value=st.session_state.get(sk_busq,""))
-        buscar = b2.form_submit_button("🔍 Buscar", use_container_width=True)
-    if buscar:
-        st.session_state[sk_busq] = txt.strip()
-        st.session_state.pop(sk_sel, None)
-        st.rerun()
+    # ── Filtros ───────────────────────────────────────────────────────────────
+    f1, f2, f3 = st.columns(3)
+    txt_f  = f1.text_input("Buscar", placeholder="nombre...",
+                            key=f"upd_txt_{lbl}", label_visibility="collapsed")
+    seg_f  = f2.selectbox("Segmento", ["Todos"] +
+                           sorted({p.get("segmento","") for p in todos if p.get("segmento","")}),
+                           key=f"upd_seg_{lbl}")
+    prov_f = f3.selectbox("Proveedor", ["Todos"] +
+                           sorted({p.get("proveedor","") for p in todos if p.get("proveedor","")}),
+                           key=f"upd_prov_{lbl}")
 
-    busqueda = st.session_state.get(sk_busq, "")
-    if not busqueda:
-        st.info("Escribí el nombre del producto para buscarlo.")
-        return
+    filtrados = [p for p in todos
+                 if (not txt_f or txt_f.lower() in p["nombre"].lower())
+                 and (seg_f  == "Todos" or p.get("segmento","")  == seg_f)
+                 and (prov_f == "Todos" or p.get("proveedor","") == prov_f)]
 
-    filtrados = [p for p in productos if busqueda.lower() in p["nombre"].lower()]
-    if not filtrados:
-        st.warning(f"No se encontraron productos con '{busqueda}'.")
-        return
+    st.caption(f"{len(filtrados)} de {len(todos)} productos")
 
-    nombres = [p["nombre"] for p in filtrados]
-    sel     = st.selectbox("Selecciona el producto:", nombres, key=sk_sel)
-    prod    = next(p for p in filtrados if p["nombre"] == sel)
+    # ── Cabecera de columnas ──────────────────────────────────────────────────
+    hh1, hh2, hh3, hh4, hh5 = st.columns([3, 1, 1.3, 1.3, 0.6])
+    hh1.caption("**Producto**"); hh2.caption("**Unidad**")
+    hh3.caption("**Costo Q**");  hh4.caption("**Precio Q**")
 
-    st.caption(f"Fila {prod['row_num']} · "
-               f"Costo: Q{prod['costo']:.2f} · Precio: Q{prod['precio']:.2f}")
+    # ── Filas editables ───────────────────────────────────────────────────────
+    for p in filtrados:
+        rn = p["row_num"]
+        c1, c2, c3, c4, c5 = st.columns([3, 1, 1.3, 1.3, 0.6])
+        c1.write(p["nombre"])
+        c2.caption(p.get("unidad",""))
 
-    # Mostrar precios especiales como info
-    _mostrar_info_precios(prod["nombre"])
-
-    st.divider()
-    kp = f"upd_{prod['row_num']}"
-    with st.form(key=f"form_prod_{kp}"):
-        datos = _form_campos(kp, prod, es_antigua=es_antigua)
-
-    if datos:
-        costo_cambio = abs(float(datos.get("costo",0)) - float(prod.get("costo",0))) > 0.001
-        with st.spinner("Guardando..."):
-            editar_producto(prod["row_num"], datos, es_antigua)
-
-        for _k in [k for k in st.session_state if k.startswith(f"{kp}_")]:
-            st.session_state.pop(_k, None)
-
-        if costo_cambio:
-            _cascade_parent(datos["nombre"], float(datos["costo"]), productos)
-
-        _conf("prod_upd", f"Producto actualizado: {datos['nombre']}")
-        st.rerun()
-
-    # Eliminar
-    st.divider()
-    with st.expander(f"🗑️ Eliminar '{prod['nombre']}' del listado {lbl}", expanded=False):
-        st.error("Esta acción elimina la fila del catálogo permanentemente. "
-                 "Los pedidos históricos NO se modifican.")
-        conf_del = st.checkbox(f"Confirmo que quiero eliminar '{prod['nombre']}'",
-                               key=f"del_conf_{lbl}_{prod['row_num']}")
-        if st.button("🗑️ Eliminar producto", type="secondary",
-                     key=f"del_exec_{lbl}_{prod['row_num']}",
-                     disabled=not conf_del):
-            with st.spinner("Eliminando..."):
-                eliminar_producto(prod["row_num"], es_antigua)
-            st.session_state.pop(sk_busq, None)
-            st.session_state.pop(sk_sel, None)
-            _conf("prod_upd", f"Producto eliminado: {prod['nombre']}")
+        nuevo_costo = c3.number_input("C", value=float(p.get("costo") or 0),
+                                       min_value=0.0, step=0.5, format="%.2f",
+                                       label_visibility="collapsed",
+                                       key=f"upd_c_{lbl}_{rn}")
+        nuevo_precio = c4.number_input("P", value=float(p.get("precio") or 0),
+                                        min_value=0.0, step=0.5, format="%.2f",
+                                        label_visibility="collapsed",
+                                        key=f"upd_p_{lbl}_{rn}")
+        if c5.button("💾", key=f"upd_s_{lbl}_{rn}", help="Guardar"):
+            costo_cambio = abs(nuevo_costo - float(p.get("costo") or 0)) > 0.001
+            with st.spinner("Guardando..."):
+                editar_producto(rn, {**p,
+                                     "costo":  nuevo_costo,
+                                     "precio": nuevo_precio}, es_antigua)
+            for _k in [k for k in st.session_state
+                       if k.startswith(f"upd_c_{lbl}_{rn}")
+                       or k.startswith(f"upd_p_{lbl}_{rn}")]:
+                st.session_state.pop(_k, None)
+            if costo_cambio:
+                _cascade_parent(p["nombre"], nuevo_costo, todos)
+            _conf("prod_upd",
+                  f"✅ {p['nombre']} — Costo: Q{nuevo_costo:.2f} · "
+                  f"Precio: Q{nuevo_precio:.2f}")
             st.rerun()
+
+    # ── Edición completa (expander) ───────────────────────────────────────────
+    st.divider()
+    with st.expander("✏️ Edición completa — nombre, proveedor, unidad, parent...",
+                     expanded=False):
+        sk_busq = f"busq_completa_{lbl}"
+        sk_sel  = f"sel_completa_{lbl}"
+
+        with st.form(key=f"form_busq_completa_{lbl}"):
+            b1, b2 = st.columns([4,1])
+            txt = b1.text_input("Buscar producto",
+                                 placeholder="Escribí el nombre...",
+                                 value=st.session_state.get(sk_busq,""))
+            buscar = b2.form_submit_button("🔍 Buscar",
+                                            use_container_width=True)
+        if buscar:
+            st.session_state[sk_busq] = txt.strip()
+            st.session_state.pop(sk_sel, None)
+            st.rerun()
+
+        busqueda = st.session_state.get(sk_busq, "")
+        if not busqueda:
+            st.info("Escribí el nombre para buscarlo.")
+        else:
+            matches = [p for p in todos if busqueda.lower() in p["nombre"].lower()]
+            if not matches:
+                st.warning(f"No se encontraron productos con '{busqueda}'.")
+            else:
+                nombres  = [p["nombre"] for p in matches]
+                sel      = st.selectbox("Selecciona:", nombres, key=sk_sel)
+                prod     = next(p for p in matches if p["nombre"] == sel)
+                _mostrar_info_precios(prod["nombre"])
+                kp = f"upd_comp_{prod['row_num']}"
+                with st.form(key=f"form_comp_{kp}"):
+                    datos = _form_campos(kp, prod, es_antigua=es_antigua)
+                if datos:
+                    costo_cambio = abs(float(datos.get("costo",0))
+                                       - float(prod.get("costo",0))) > 0.001
+                    with st.spinner("Guardando..."):
+                        editar_producto(prod["row_num"], datos, es_antigua)
+                    for _k in [k for k in st.session_state
+                               if k.startswith(f"{kp}_")]:
+                        st.session_state.pop(_k, None)
+                    if costo_cambio:
+                        _cascade_parent(datos["nombre"],
+                                        float(datos["costo"]), todos)
+                    _conf("prod_upd",
+                          f"Producto actualizado: {datos['nombre']}")
+                    st.rerun()
+                # Eliminar
+                st.divider()
+                with st.expander(
+                        f"🗑️ Eliminar '{prod['nombre']}' del listado {lbl}",
+                        expanded=False):
+                    st.error("Esta acción elimina la fila del catálogo "
+                             "permanentemente. Los pedidos históricos NO "
+                             "se modifican.")
+                    conf_del = st.checkbox(
+                        f"Confirmo que quiero eliminar '{prod['nombre']}'",
+                        key=f"del_conf_{lbl}_{prod['row_num']}")
+                    if st.button("🗑️ Eliminar producto", type="secondary",
+                                 key=f"del_exec_{lbl}_{prod['row_num']}",
+                                 disabled=not conf_del):
+                        with st.spinner("Eliminando..."):
+                            eliminar_producto(prod["row_num"], es_antigua)
+                        st.session_state.pop(sk_busq, None)
+                        st.session_state.pop(sk_sel, None)
+                        _conf("prod_upd",
+                              f"Producto eliminado: {prod['nombre']}")
+                        st.rerun()
 
 
 def _mostrar_info_precios(nombre_prod: str):
