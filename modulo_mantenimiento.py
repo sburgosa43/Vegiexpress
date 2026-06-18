@@ -7,14 +7,21 @@ from datetime import date
 
 # ── TAB 1: Correccion masiva ──────────────────────────────────────────────────
 def _tab_correccion():
-    """Correccion masiva de precios y costos por nivel de cascada."""
+    """Correccion masiva — productos de la semana actual, precios por nivel de cascada."""
     import datetime, pandas as pd
     from excel_helper  import leer_pedidos, actualizar_precio_semana
-    from excel_helper  import leer_productos_con_fila
-    from data_helper   import leer_precios_capa, guardar_precio_especial, eliminar_precio_especial
+    from excel_helper  import leer_productos_con_fila, editar_producto as _edit_prod
+    from data_helper   import leer_precios_capa, cargar_clientes
+    from data_helper   import guardar_precio_especial, eliminar_precio_especial
     from gsheets       import get_all_rows
+    from config        import ZONAS_MAP as _ZM
 
-    # ── Opciones de nivel ─────────────────────────────────────────────────────
+    st.markdown("#### Correccion Masiva de Precios / Costos")
+
+    # ── Semana, zona y nivel ──────────────────────────────────────────────────
+    hoy     = datetime.date.today()
+    sem_def = hoy.isocalendar()[1]
+
     try:
         zonas  = sorted({r[0] for r in get_all_rows("precioszona")  if r and r[0]})
         grupos = sorted({r[0] for r in get_all_rows("preciosgrupo") if r and r[0]})
@@ -22,104 +29,101 @@ def _tab_correccion():
         zonas, grupos = [], []
 
     nivel_opts = (["General"]
-                  + [f"Zona: {z}" for z in zonas]
+                  + [f"Zona: {z}"  for z in zonas]
                   + [f"Grupo: {g}" for g in grupos])
 
-    st.markdown("#### Correccion Masiva de Precios / Costos")
+    c1, c2, c3, c4 = st.columns([1, 1, 1.5, 2])
+    semana   = c1.number_input("Semana", 1, 53, sem_def,   key="mc3_sem")
+    anio     = c2.number_input("Ano",  2020, 2030, hoy.year, key="mc3_anio")
+    zona_ped = c3.selectbox("Zona de pedidos",
+                             ["Todas"] + [k for k in _ZM if k != "Todas"],
+                             key="mc3_zona")
+    nivel    = c4.selectbox("Lista a editar", nivel_opts, key="mc3_nivel")
 
-    col_n, col_f1, col_f2, col_f3 = st.columns([2, 1.5, 1.5, 1.5])
-    nivel   = col_n.selectbox("Lista a editar", nivel_opts, key="mc2_nivel")
-    txt_f   = col_f1.text_input("Buscar producto", placeholder="nombre...",
-                                 key="mc2_txt", label_visibility="collapsed")
-    seg_f   = col_f2.selectbox("Segmento", ["Todos"], key="mc2_seg")
-    prov_f  = col_f3.selectbox("Proveedor", ["Todos"], key="mc2_prov")
+    # ── Leer pedidos de la semana ─────────────────────────────────────────────
+    todos    = leer_pedidos()
+    clientes = {c["nombre"].lower().strip(): c for c in cargar_clientes()}
 
-    # ── Cargar catalogo general ───────────────────────────────────────────────
-    prods_gen  = leer_productos_con_fila(es_antigua=False)
-    segmentos  = ["Todos"] + sorted({p.get("segmento","") for p in prods_gen if p.get("segmento","")})
-    provs      = ["Todos"] + sorted({p.get("proveedor","") for p in prods_gen if p.get("proveedor","")})
+    def _en_zona(nom):
+        if zona_ped == "Todas": return True
+        cli = clientes.get(nom.lower().strip())
+        return cli and cli.get("codigo_lugar","") in _ZM.get(zona_ped, [])
 
-    # Actualizar opciones de filtro (necesita rerun si cambiaron)
-    if seg_f not in segmentos:
-        seg_f = "Todos"
-    if prov_f not in provs:
-        prov_f = "Todos"
+    ped_sem = [p for p in todos
+               if p["semana"] == semana and p["año"] == anio
+               and p["status"] != "Cancelado" and _en_zona(p["cliente"])]
 
-    # Filtrar productos
-    filtrados = [p for p in prods_gen
-                 if (not txt_f or txt_f.lower() in p["nombre"].lower())
-                 and (seg_f  == "Todos" or p.get("segmento","")  == seg_f)
-                 and (prov_f == "Todos" or p.get("proveedor","") == prov_f)]
+    if not ped_sem:
+        st.info(f"Sin pedidos en semana {semana}/{anio}"
+                + (f" para {zona_ped}." if zona_ped != "Todas" else "."))
+        return
 
-    # Repoblar selectboxes con opciones reales
-    col_f2.empty()
-    col_f3.empty()
+    prods_semana = sorted({p["producto"] for p in ped_sem})
+    st.caption(f"**{len(prods_semana)}** productos en pedidos semana {semana}"
+               + (f" · {zona_ped}" if zona_ped != "Todas" else "")
+               + f"  |  Editando: **{nivel}**")
 
-    st.caption(f"{len(filtrados)} de {len(prods_gen)} productos  |  Editando: **{nivel}**")
+    # ── Catálogo general ──────────────────────────────────────────────────────
+    cat_gen = {p["nombre"]: p for p in leer_productos_con_fila(es_antigua=False)}
 
     # ── Precios del nivel seleccionado ────────────────────────────────────────
-    es_general = (nivel == "General")
-    hoja_nivel = lista_nivel = None
-    precios_nivel = {}
+    es_general  = (nivel == "General")
+    hoja_nivel  = lista_nivel = None
+    precios_niv = {}
 
     if not es_general:
-        if nivel.startswith("Zona: "):
-            hoja_nivel  = "precioszona"
-            lista_nivel = nivel[6:]
-        else:
-            hoja_nivel  = "preciosgrupo"
-            lista_nivel = nivel[7:]
-        precios_nivel = {
+        hoja_nivel  = "precioszona"  if nivel.startswith("Zona: ")  else "preciosgrupo"
+        lista_nivel = nivel[6:]      if nivel.startswith("Zona: ")  else nivel[7:]
+        precios_niv = {
             p["producto"]: float(p["precio"] or 0)
             for p in leer_precios_capa(hoja_nivel, lista_nivel)
         }
 
-    # ── Construir filas ───────────────────────────────────────────────────────
-    IVA, ISR = 0.12, 0.05
-
+    # ── Construir filas (solo productos de la semana) ─────────────────────────
     rows = []
-    for p in filtrados:
-        costo_gen  = float(p.get("costo")  or 0)
-        precio_gen = float(p.get("precio") or 0)
+    for prod in prods_semana:
+        cat = cat_gen.get(prod, {})
+        costo_gen  = float(cat.get("costo")  or 0)
+        precio_gen = float(cat.get("precio") or 0)
+        rn         = cat.get("row_num", 0)
 
         if es_general:
             rows.append({
-                "Producto":   p["nombre"],
-                "Costo act":  costo_gen,
-                "Costo nvo":  costo_gen,
-                "P.General":  precio_gen,
-                "P.Nuevo":    precio_gen,
-                "_rn":        p["row_num"],
+                "Producto":    prod,
+                "Costo act":   costo_gen,
+                "Costo nvo":   costo_gen,
+                "P.General":   precio_gen,
+                "P.Nuevo":     precio_gen,
+                "_rn":         rn,
                 "_costo_orig": costo_gen,
                 "_precio_orig": precio_gen,
             })
         else:
-            p_nivel = precios_nivel.get(p["nombre"])  # None = sin precio especial
-            p_base  = p_nivel if p_nivel is not None else precio_gen
+            p_niv = precios_niv.get(prod)
             rows.append({
-                "Producto":   p["nombre"],
+                "Producto":   prod,
                 "Costo(Gen)": costo_gen,
                 "P.General":  precio_gen,
-                "P.Act":      p_nivel if p_nivel else "",
-                "P.Nuevo":    p_nivel if p_nivel else precio_gen,
-                "_rn":        p["row_num"],
-                "_p_act":     p_nivel,
+                "P.Act":      p_niv if p_niv is not None else "",
+                "P.Nuevo":    p_niv if p_niv is not None else precio_gen,
+                "_rn":        rn,
+                "_p_act":     p_niv,
                 "_p_gen":     precio_gen,
                 "_costo":     costo_gen,
             })
 
     if not rows:
-        st.info("Sin productos con esos filtros.")
+        st.info("Sin productos del catalogo para los pedidos de esta semana.")
         return
 
     df = pd.DataFrame(rows)
-    hidden = [c for c in df.columns if c.startswith("_")]
 
-    # ── AG Grid ───────────────────────────────────────────────────────────────
+    # ── AG Grid con margenes en vivo ──────────────────────────────────────────
     try:
         from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
-        # JavaScript margin functions
+        GREEN = {"backgroundColor": "#E8F5E9"}
+
         if es_general:
             MG_ACT = JsCode("""function(p){
                 var c=p.data['Costo act'],v=p.data['P.General'];
@@ -143,8 +147,7 @@ def _tab_correccion():
         else:
             MG_ACT = JsCode("""function(p){
                 var c=p.data['Costo(Gen)'];
-                var v=p.data['P.Act'];
-                if(!v)v=p.data['P.General'];
+                var v=p.data['P.Act']||p.data['P.General'];
                 if(!v||v<=0)return'';
                 var m=(1-0.05)*(v-c*1.12)/v*100;
                 var b=m>=35?'[+]':(m>=20?'[~]':'[!]');
@@ -174,38 +177,35 @@ def _tab_correccion():
             return{color:'#B71C1C',fontWeight:'bold'};
         }""")
 
-        GREEN_BG = {"backgroundColor": "#E8F5E9"}
-
-        vis_cols = [c for c in df.columns if not c.startswith("_")]
-        gb = GridOptionsBuilder.from_dataframe(df[vis_cols])
+        vis = [c for c in df.columns if not c.startswith("_")]
+        gb  = GridOptionsBuilder.from_dataframe(df[vis])
         gb.configure_default_column(resizable=True, sortable=True, editable=False)
-
         gb.configure_column("Producto", width=130, pinned="left")
 
         if es_general:
-            gb.configure_column("Costo act",  width=85, type=["numericColumn"],
+            gb.configure_column("Costo act", width=85, type=["numericColumn"],
                                 valueFormatter="'Q'+value.toFixed(2)")
-            gb.configure_column("Costo nvo",  width=90, editable=True,
+            gb.configure_column("Costo nvo", width=90, editable=True,
                                 type=["numericColumn"],
                                 valueFormatter="'Q'+value.toFixed(2)",
-                                cellStyle=GREEN_BG)
-            gb.configure_column("P.General",  width=90, type=["numericColumn"],
+                                cellStyle=GREEN)
+            gb.configure_column("P.General", width=90, type=["numericColumn"],
                                 valueFormatter="'Q'+value.toFixed(2)")
-            gb.configure_column("P.Nuevo",    width=90, editable=True,
+            gb.configure_column("P.Nuevo",   width=90, editable=True,
                                 type=["numericColumn"],
                                 valueFormatter="'Q'+value.toFixed(2)",
-                                cellStyle=GREEN_BG)
+                                cellStyle=GREEN)
         else:
             gb.configure_column("Costo(Gen)", width=85, type=["numericColumn"],
                                 valueFormatter="'Q'+value.toFixed(2)")
             gb.configure_column("P.General",  width=85, type=["numericColumn"],
                                 valueFormatter="'Q'+value.toFixed(2)")
-            gb.configure_column("P.Act",      width=85, type=["numericColumn"],
-                                valueFormatter="params.value?'Q'+params.value.toFixed(2):'(General)'")
+            gb.configure_column("P.Act",      width=85,
+                                valueFormatter="params.value?'Q'+Number(params.value).toFixed(2):'(General)'")
             gb.configure_column("P.Nuevo",    width=90, editable=True,
                                 type=["numericColumn"],
                                 valueFormatter="'Q'+value.toFixed(2)",
-                                cellStyle=GREEN_BG)
+                                cellStyle=GREEN)
 
         go = gb.build()
         go["columnDefs"].append({"field":"_mga","headerName":"Mg.Act",
@@ -215,97 +215,91 @@ def _tab_correccion():
                                   "cellStyle":MG_STYLE})
 
         result = AgGrid(
-            df[vis_cols],
+            df[vis],
             gridOptions=go,
             update_mode=GridUpdateMode.VALUE_CHANGED,
             allow_unsafe_jscode=True,
-            key=f"mc2_ag_{nivel}",
-            height=min(560, 50 + len(df) * 40),
+            key=f"mc3_ag_{nivel}_{semana}_{anio}",
+            height=min(560, 55 + len(df) * 42),
             fit_columns_on_grid_load=True,
         )
         edited = result["data"]
 
     except ImportError:
-        # Fallback: data_editor sin margenes en vivo
-        st.warning("streamlit-aggrid no disponible aun — usando tabla basica sin margenes en vivo.")
-        col_cfg = {"Producto": st.column_config.TextColumn(disabled=True, width="small")}
-        if es_general:
-            col_cfg["Costo act"]  = st.column_config.NumberColumn(disabled=True, format="Q%.2f", width="small")
-            col_cfg["Costo nvo"]  = st.column_config.NumberColumn(format="Q%.2f", step=0.25, width="small")
-            col_cfg["P.General"]  = st.column_config.NumberColumn(disabled=True, format="Q%.2f", width="small")
-            col_cfg["P.Nuevo"]    = st.column_config.NumberColumn(format="Q%.2f", step=0.25, width="small")
-        else:
-            col_cfg["Costo(Gen)"] = st.column_config.NumberColumn(disabled=True, format="Q%.2f", width="small")
-            col_cfg["P.General"]  = st.column_config.NumberColumn(disabled=True, format="Q%.2f", width="small")
-            col_cfg["P.Act"]      = st.column_config.NumberColumn(disabled=True, format="Q%.2f", width="small")
-            col_cfg["P.Nuevo"]    = st.column_config.NumberColumn(format="Q%.2f", step=0.25, width="small")
+        st.warning("streamlit-aggrid no disponible — tabla basica sin margenes en vivo.")
         vis = [c for c in df.columns if not c.startswith("_")]
-        edited = st.data_editor(df[vis], column_config=col_cfg,
+        ccfg = {"Producto": st.column_config.TextColumn(disabled=True, width="small")}
+        ro = {"disabled": True, "format": "Q%.2f", "width": "small"}
+        ed = {"format": "Q%.2f", "step": 0.25, "width": "small"}
+        if es_general:
+            ccfg["Costo act"]  = st.column_config.NumberColumn("Costo act", **ro)
+            ccfg["Costo nvo"]  = st.column_config.NumberColumn("Costo nvo", **ed)
+            ccfg["P.General"]  = st.column_config.NumberColumn("P.General", **ro)
+            ccfg["P.Nuevo"]    = st.column_config.NumberColumn("P.Nuevo",   **ed)
+        else:
+            ccfg["Costo(Gen)"] = st.column_config.NumberColumn("Costo(Gen)", **ro)
+            ccfg["P.General"]  = st.column_config.NumberColumn("P.General",  **ro)
+            ccfg["P.Act"]      = st.column_config.NumberColumn("P.Act",      **ro)
+            ccfg["P.Nuevo"]    = st.column_config.NumberColumn("P.Nuevo",    **ed)
+        edited = st.data_editor(df[vis], column_config=ccfg,
                                 hide_index=True, use_container_width=True,
-                                key=f"mc2_ed_{nivel}",
+                                key=f"mc3_ed_{nivel}_{semana}",
                                 height=min(560, 60+len(df)*35))
 
     # ── Detectar cambios ──────────────────────────────────────────────────────
-    cambios = []
+    cambios  = []
     orig_map = {r["Producto"]: r for r in rows}
 
     for _, row in edited.iterrows():
-        prod   = row["Producto"]
-        orig   = orig_map.get(prod, {})
+        prod = row["Producto"]
+        orig = orig_map.get(prod, {})
 
         if es_general:
-            c_act  = float(orig.get("_costo_orig", 0) or 0)
-            p_act  = float(orig.get("_precio_orig", 0) or 0)
-            c_nvo  = float(row.get("Costo nvo", c_act) or c_act)
-            p_nvo  = float(row.get("P.Nuevo",   p_act) or p_act)
+            c_orig = float(orig.get("_costo_orig",  0) or 0)
+            p_orig = float(orig.get("_precio_orig", 0) or 0)
+            c_nvo  = float(row.get("Costo nvo",  c_orig) or c_orig)
+            p_nvo  = float(row.get("P.Nuevo",    p_orig) or p_orig)
             rn     = int(orig.get("_rn", 0))
-            if abs(c_nvo - c_act) > 0.001 or abs(p_nvo - p_act) > 0.001:
+            if abs(c_nvo-c_orig)>0.001 or abs(p_nvo-p_orig)>0.001:
                 cambios.append({"producto": prod, "row_num": rn,
-                                "costo_ant": c_act, "costo_nuevo": c_nvo,
-                                "precio_ant": p_act, "precio_nuevo": p_nvo,
-                                "p_cambia": abs(p_nvo-p_act)>0.001,
-                                "c_cambia": abs(c_nvo-c_act)>0.001})
+                                "costo_ant": c_orig, "costo_nuevo": c_nvo,
+                                "precio_ant": p_orig, "precio_nuevo": p_nvo,
+                                "p_cambia": abs(p_nvo-p_orig)>0.001,
+                                "c_cambia": abs(c_nvo-c_orig)>0.001})
         else:
-            p_act_nivel = orig.get("_p_act")  # None = sin precio especial
-            p_gen       = float(orig.get("_p_gen", 0) or 0)
-            p_nvo       = float(row.get("P.Nuevo", p_gen) or p_gen)
-            p_base      = p_act_nivel if p_act_nivel is not None else p_gen
-            if abs(p_nvo - p_base) > 0.001:
+            p_act = orig.get("_p_act")
+            p_gen = float(orig.get("_p_gen", 0) or 0)
+            p_nvo = float(row.get("P.Nuevo", p_gen) or p_gen)
+            base  = p_act if p_act is not None else p_gen
+            if abs(p_nvo - base) > 0.001:
                 cambios.append({"producto": prod,
-                                "precio_ant": p_base, "precio_nuevo": p_nvo,
-                                "p_act_nivel": p_act_nivel,
-                                "eliminar": (p_nvo <= 0 and p_act_nivel is not None)})
+                                "precio_ant": base, "precio_nuevo": p_nvo,
+                                "p_act_nivel": p_act,
+                                "p_cambia": True, "c_cambia": False,
+                                "costo_ant": 0, "costo_nuevo": 0,
+                                "eliminar": (p_nvo <= 0 and p_act is not None)})
 
     if not cambios:
         st.info("Sin cambios detectados.")
         return
 
-    st.warning(f"**{len(cambios)}** producto(s) con cambios pendientes")
+    st.warning(f"**{len(cambios)}** producto(s) con cambios")
 
-    # Opciones de guardado
-    hoy = datetime.date.today()
-    sem_def = hoy.isocalendar()[1]
-    g1, g2, g3 = st.columns([1, 1, 1])
-    upd_ped = g1.checkbox("Actualizar pedidos semana", value=True, key="mc2_upd_ped")
-    semana  = g2.number_input("Semana", 1, 53, sem_def, key="mc2_sem",
-                               disabled=not upd_ped)
-    anio    = g3.number_input("Ano", 2020, 2030, hoy.year, key="mc2_anio",
-                               disabled=not upd_ped)
+    g1, g2 = st.columns([1, 1])
+    upd_ped = g1.checkbox("Actualizar lineas de pedidos semana actual",
+                           value=True, key="mc3_upd_ped")
 
     if st.button(f"Guardar {len(cambios)} cambio(s)", type="primary",
-                 key="mc2_guardar"):
-
-        from excel_helper import editar_producto as _edit_prod
-
+                 key="mc3_guardar"):
         with st.spinner("Guardando..."):
-            n_cat, n_ped = 0, 0
+            n_cat = n_ped = 0
 
             if es_general:
                 for ch in cambios:
                     data = {}
                     if ch["c_cambia"]: data["costo"]  = ch["costo_nuevo"]
                     if ch["p_cambia"]: data["precio"] = ch["precio_nuevo"]
-                    if data:
+                    if data and ch["row_num"]:
                         _edit_prod(ch["row_num"], data, es_antigua=False)
                         n_cat += 1
             else:
@@ -318,15 +312,7 @@ def _tab_correccion():
                     n_cat += 1
 
             if upd_ped:
-                cambios_ped = [{"producto": ch["producto"],
-                                "precio_ant":  ch.get("precio_ant",  0),
-                                "precio_nuevo": ch.get("precio_nuevo", 0),
-                                "costo_ant":   ch.get("costo_ant",   0),
-                                "costo_nuevo": ch.get("costo_nuevo",  0),
-                                "p_cambia": ch.get("p_cambia", True),
-                                "c_cambia": ch.get("c_cambia", False)}
-                               for ch in cambios]
-                res = actualizar_precio_semana(cambios_ped, semana, anio,
+                res = actualizar_precio_semana(cambios, semana, anio,
                                                actualizar_catalogo=False)
                 n_ped = res.get("filas_pedidos", 0)
 
@@ -335,8 +321,9 @@ def _tab_correccion():
             msg += f" + {n_ped} linea(s) de pedidos semana {semana}"
         st.success(msg)
 
-        for k in [k for k in st.session_state if k.startswith("mc2_ag_")]:
-            st.session_state.pop(k, None)
+        for k in list(st.session_state.keys()):
+            if k.startswith("mc3_ag_") or k.startswith("mc3_ed_"):
+                st.session_state.pop(k, None)
         st.rerun()
 
 
