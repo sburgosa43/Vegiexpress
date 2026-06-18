@@ -5,7 +5,11 @@ Requiere: Google Forms API + Drive API habilitadas en el proyecto.
 import json
 import streamlit as st
 
-# ── Credenciales con scopes de Forms ──────────────────────────────────────────
+_FORM_SEL_KEY   = "hog_form_seleccion"
+_FORM_ORDER_KEY = "hog_form_orden"
+
+
+# ── Credenciales ──────────────────────────────────────────────────────────────
 def _creds():
     from google.oauth2.service_account import Credentials
     SCOPES = [
@@ -60,9 +64,8 @@ def _save_form_id(form_id: str) -> None:
         pass
 
 
-# ── Obtener productos Hogares para el formulario ───────────────────────────────
+# ── Productos Hogares para el formulario ──────────────────────────────────────
 def _productos_hogares() -> list[dict]:
-    """Retorna TODOS los productos con precio Hogares, ordenados por segmento."""
     from excel_helper import leer_productos_con_fila
     from data_helper  import leer_precios_capa
 
@@ -86,15 +89,8 @@ def _productos_hogares() -> list[dict]:
     return sorted(result, key=lambda x: (x["segmento"], x["nombre"]))
 
 
-# Keys para persistir seleccion del formulario en session_state
-_FORM_SEL_KEY = "hog_form_seleccion"
-_FORM_ORDER_KEY = "hog_form_orden"
-
-
-# ── Crear formulario nuevo ─────────────────────────────────────────────────────
-
+# ── Leer productos en formulario actual ──────────────────────────────────────
 def leer_productos_en_form(form_id: str) -> set:
-    """Retorna set de nombres de productos actualmente en el formulario."""
     import re as _re
     svc  = _forms_svc()
     form = svc.forms().get(formId=form_id).execute()
@@ -108,72 +104,87 @@ def leer_productos_en_form(form_id: str) -> set:
             nombres.add(m.group(1).strip())
     return nombres
 
+
+# ── Actualizar formulario (con secciones por segmento y dropdowns 1-6) ────────
 def actualizar_formulario(form_id: str,
                           titulo:    str  = None,
                           productos: list = None) -> dict:
     """
-    Limpia las preguntas de producto del formulario y agrega las actuales.
-    1. Lee el formulario y detecta preguntas de producto (formato "Nombre (U) - Q.")
-    2. Las elimina de mayor a menor índice (evita desplazamiento de índices)
-    3. Agrega las nuevas con precios del catálogo
+    Limpia preguntas de producto + page breaks del formulario y agrega los actuales.
+    Estructura:
+      Página 1: Info del cliente
+      Sección por segmento: page break + dropdown 1-6 por producto
+      Última sección: Productos Extra (texto libre) + Confirmación (radio)
     """
     import re as _re, time
 
     prods = productos if productos is not None else _productos_hogares()
     svc   = _forms_svc()
 
-    # ── Paso 1: leer estructura actual ───────────────────────────────────────
+    DESC_SECCION = (
+        "Por favor, antes de pasar a la siguiente sección, "
+        "verifica las cantidades de cada producto que quieres."
+    )
+    OPTS_CANT = [{"value": str(i)} for i in range(1, 7)]   # 1, 2, 3, 4, 5, 6
+
+    # ── Paso 1: leer estructura actual ────────────────────────────────────────
     form  = svc.forms().get(formId=form_id).execute()
     items = form.get("items", [])
 
-    # ── Paso 2: detectar índices de preguntas de producto ────────────────────
-    _pat = _re.compile(r"^.+?\s*\(.+?\)\s*[-–]\s*Q[.\s]*[\d.,]+")
-    prod_indices = sorted(
-        [i for i, item in enumerate(items)
-         if "questionItem" in item and _pat.match(item.get("title",""))],
-        reverse=True   # de mayor a menor para no desplazar índices
-    )
+    # ── Paso 2: detectar items a eliminar ─────────────────────────────────────
+    _pat = _re.compile(r"^.+?\s*\(.+?\)\s*[-\u2013]\s*Q[.\s]*[\d.,]+")
+    _SKIP_TITLES = {
+        "productos extra", "mi pedido está listo", "mi pedido esta listo",
+        "para finalizar",
+    }
+    del_indices = sorted([
+        i for i, item in enumerate(items)
+        if ("questionItem" in item and _pat.match(item.get("title", "")))
+        or "textItem"      in item
+        or "pageBreakItem" in item
+        or item.get("title", "").lower().strip() in _SKIP_TITLES
+    ], reverse=True)
 
-    # ── Paso 3: eliminar en bloques (de mayor a menor) ────────────────────────
-    if prod_indices:
+    if del_indices:
         del_reqs = [{"deleteItem": {"location": {"index": idx}}}
-                    for idx in prod_indices]
-        BLOQUE = 50
-        for i in range(0, len(del_reqs), BLOQUE):
+                    for idx in del_indices]
+        for i in range(0, len(del_reqs), 50):
             svc.forms().batchUpdate(
                 formId=form_id,
-                body={"requests": del_reqs[i:i+BLOQUE]}
+                body={"requests": del_reqs[i:i+50]}
             ).execute()
             time.sleep(0.5)
 
-    # ── Paso 4: re-leer para saber cuántos items NO-producto quedaron ─────────
-    form2         = svc.forms().get(formId=form_id).execute()
-    n_base        = len(form2.get("items", []))
+    # ── Paso 3: re-leer para saber cuántos items base quedan ──────────────────
+    form2  = svc.forms().get(formId=form_id).execute()
+    n_base = len(form2.get("items", []))
 
-    # ── Paso 5: agregar secciones + productos en orden ───────────────────────
-    # Agrupar por segmento (orden: Vegetales → Frutas → Hierbas → Otros)
+    # ── Paso 4: agrupar por segmento ─────────────────────────────────────────
     from collections import defaultdict as _dd
     seg_prods = _dd(list)
     for p in prods:
         seg_prods[p["segmento"]].append(p)
 
-    # Orden de segmentos: los que tengan productos, primero los "conocidos"
-    _SEG_ORD = ["Vegetales","Frutas","Hierbas","Congelados",
-                "Especias","Flores","Otros"]
-    segmentos_ord = [s for s in _SEG_ORD if s in seg_prods] +                     [s for s in seg_prods if s not in _SEG_ORD]
+    _SEG_ORD = ["Vegetales","Frutas","Hierbas","Congelados","Especias","Flores","Otros"]
+    segmentos = [s for s in _SEG_ORD if s in seg_prods] + \
+                [s for s in seg_prods if s not in _SEG_ORD]
 
+    # ── Paso 5: construir requests ────────────────────────────────────────────
     add_reqs = []
     pos = n_base
-    for seg in segmentos_ord:
-        # textItem como separador visual (no cambia navegación)
+
+    for seg in segmentos:
+        # Page break = nueva sección con título del segmento
         add_reqs.append({"createItem": {
             "item": {
-                "title":    seg,
-                "textItem": {}
+                "title":         seg,
+                "description":   DESC_SECCION,
+                "pageBreakItem": {}
             },
             "location": {"index": pos}
         }})
         pos += 1
+
         for p in seg_prods[seg]:
             nombre_p = f"{p['nombre']} ({p['unidad']}) - Q.{p['precio']:.2f}"
             add_reqs.append({"createItem": {
@@ -181,13 +192,61 @@ def actualizar_formulario(form_id: str,
                     "title": nombre_p,
                     "questionItem": {"question": {
                         "required": False,
-                        "textQuestion": {"paragraph": False}
+                        "choiceQuestion": {
+                            "type":    "DROP_DOWN",
+                            "options": OPTS_CANT,
+                        }
                     }}
                 },
                 "location": {"index": pos}
             }})
             pos += 1
 
+    # Sección final
+    add_reqs.append({"createItem": {
+        "item": {
+            "title":         "Para finalizar",
+            "description":   "Revisá tu pedido antes de confirmar.",
+            "pageBreakItem": {}
+        },
+        "location": {"index": pos}
+    }})
+    pos += 1
+
+    # Productos Extra — texto libre largo
+    add_reqs.append({"createItem": {
+        "item": {
+            "title": "Productos Extra",
+            "questionItem": {"question": {
+                "required": False,
+                "textQuestion": {"paragraph": True}
+            }}
+        },
+        "location": {"index": pos}
+    }})
+    pos += 1
+
+    # Confirmación — radio requerido
+    add_reqs.append({"createItem": {
+        "item": {
+            "title": (
+                "Mi pedido está listo, he seleccionado los productos "
+                "y cantidades que quiero. Mi total a pagar me lo "
+                "enviarán por Whatsapp."
+            ),
+            "questionItem": {"question": {
+                "required": True,
+                "choiceQuestion": {
+                    "type":    "RADIO",
+                    "options": [{"value": "Confirmo mi pedido"}]
+                }
+            }}
+        },
+        "location": {"index": pos}
+    }})
+    pos += 1
+
+    # ── Paso 6: ejecutar en bloques ───────────────────────────────────────────
     BLOQUE = 50
     for i in range(0, len(add_reqs), BLOQUE):
         svc.forms().batchUpdate(
@@ -197,120 +256,41 @@ def actualizar_formulario(form_id: str,
         time.sleep(0.5)
 
     _save_form_id(form_id)
-
     return {
         "form_url":   f"https://docs.google.com/forms/d/{form_id}/viewform",
         "edit_url":   f"https://docs.google.com/forms/d/{form_id}/edit",
-        "eliminados": len(prod_indices),
-        "agregados":  len(prods),
+        "eliminados": len(del_indices),
+        "agregados":  len(add_reqs),
     }
 
 
+# ── Alias de compatibilidad ───────────────────────────────────────────────────
 def crear_formulario(titulo: str = "Pedidos Veggi Hogares",
                      productos: list = None) -> dict:
-    """Alias mantenido por compatibilidad — delega a actualizar_formulario."""
     form_id = get_form_id()
     if not form_id:
         raise ValueError(
             "No hay formulario configurado. "
-            "Ingresá el ID del formulario en el campo de abajo.")
+            "Ingresá el ID del formulario primero.")
     return actualizar_formulario(form_id, titulo=titulo, productos=productos)
 
 
+# ── Sincronizar (alias de actualizar) ────────────────────────────────────────
 def sincronizar_formulario(form_id: str) -> dict:
-    """
-    Actualiza los precios de productos existentes en el formulario.
-    NO elimina preguntas — actualiza solo los títulos que matcheen.
-    Retorna {actualizados, agregados, sin_cambio}.
-    """
-    prods    = _productos_hogares()
-    prod_map = {p["nombre"].lower(): p for p in prods}
-    svc      = _forms_svc()
-
-    # Leer formulario actual
-    form    = svc.forms().get(formId=form_id).execute()
-    items   = form.get("items", [])
-
-    requests   = []
-    actualizados = 0
-    sin_cambio   = 0
-    nombres_en_form = set()
-
-    import re as _re
-
-    for item in items:
-        if "questionItem" not in item:
-            continue
-        titulo = item.get("title", "")
-        # Detectar si es pregunta de producto: "Nombre (Unidad) - Q.precio"
-        m = _re.match(r'^(.+?)\s*\((.+?)\)\s*[-–]\s*Q[.\s]*([\d.,]+)', titulo)
-        if not m:
-            continue
-        nombre_f = m.group(1).strip().lower()
-        nombres_en_form.add(nombre_f)
-        prod = prod_map.get(nombre_f)
-        if not prod:
-            continue
-        nuevo_titulo = (f"{prod['nombre']} ({prod['unidad']}) "
-                        f"- Q.{prod['precio']:.2f}")
-        if nuevo_titulo == titulo:
-            sin_cambio += 1
-            continue
-        # Actualizar título
-        requests.append({"updateItem": {
-            "item": {
-                "itemId": item["itemId"],
-                "title":  nuevo_titulo,
-                "questionItem": item["questionItem"]
-            },
-            "updateMask": "title",
-            "location":   {"index": item.get("index", 0)}
-        }})
-        actualizados += 1
-
-    # Agregar productos nuevos (no estaban en el formulario)
-    agregados = 0
-    nuevos = [p for p in prods if p["nombre"].lower() not in nombres_en_form]
-    for p in nuevos:
-        titulo_prod = f"{p['nombre']} ({p['unidad']}) - Q.{p['precio']:.2f}"
-        requests.append({"createItem": {
-            "item": {"title": titulo_prod, "questionItem": {"question": {
-                "required": False,
-                "textQuestion": {"paragraph": False}
-            }}},
-            "location": {"index": len(items) + agregados}
-        }})
-        agregados += 1
-
-    if requests:
-        svc.forms().batchUpdate(
-            formId=form_id, body={"requests": requests}
-        ).execute()
-
-    return {"actualizados": actualizados,
-            "agregados":    agregados,
-            "sin_cambio":   sin_cambio}
+    return actualizar_formulario(form_id)
 
 
-# ── Leer respuestas desde Forms API ───────────────────────────────────────────
+# ── Leer respuestas via Forms API ─────────────────────────────────────────────
 def leer_respuestas_api(form_id: str) -> tuple[dict, list]:
-    """
-    Lee respuestas directamente via Forms API.
-    Retorna (q_map, responses).
-    q_map: {questionId → title}
-    """
     svc  = _forms_svc()
     form = svc.forms().get(formId=form_id).execute()
-
     q_map = {}
     for item in form.get("items", []):
         if "questionItem" in item:
             q_id = item["questionItem"]["question"].get("questionId")
             if q_id:
                 q_map[q_id] = item.get("title", "")
-
-    all_resp = []
-    page_token = None
+    all_resp, page_token = [], None
     while True:
         params = {"formId": form_id}
         if page_token:
@@ -320,5 +300,4 @@ def leer_respuestas_api(form_id: str) -> tuple[dict, list]:
         page_token = result.get("nextPageToken")
         if not page_token:
             break
-
     return q_map, all_resp

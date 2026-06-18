@@ -132,15 +132,25 @@ def _parsear_respuesta(headers: list, row: list,
         cli = cli_map.get(email_l)
 
     # Parsear productos
-    lineas, sin_match = [], []
+    lineas, sin_match, prod_extra = [], [], []
     for i, h in enumerate(headers):
         if _norm(h)[:30] in _SKIP_COLS:
             continue
+        # Detectar campo especial Productos Extra
+        if _norm(h)[:15] == "productos extra":
+            val_extra = str(row[i] if i < len(row) else "").strip()
+            if val_extra:
+                prod_extra.append(val_extra)
+            continue
+        # Saltar campo de confirmación
+        if "confirmo mi pedido" in h.lower() or "total a pagar" in h.lower():
+            continue
+
         parsed = _parse_col_header(h)
         if not parsed:
             continue
         val = str(row[i] if i < len(row) else "").strip()
-        if not val or val == "0":
+        if not val or val in ("0", "—", ""):
             continue
         try:
             cant = float(val)
@@ -168,6 +178,7 @@ def _parsear_respuesta(headers: list, row: list,
         "email": email, "telefono": telefono,
         "cliente": cli,
         "lineas": lineas, "sin_match": sin_match,
+        "prod_extra": prod_extra,
     }
 
 
@@ -467,6 +478,12 @@ def _tab_importar():
                     f"font-weight:bold;color:#2D7A2D'>"
                     f"Total estimado: Q{total_est:,.2f}</div>",
                     unsafe_allow_html=True)
+
+            # Productos Extra (campo libre)
+            if resp.get("prod_extra"):
+                st.warning(
+                    f"📝 **Productos Extra** (no importados automáticamente):\n"
+                    + "\n".join(f"  · {t}" for t in resp["prod_extra"]))
 
             # Sin match
             if resp["sin_match"]:
