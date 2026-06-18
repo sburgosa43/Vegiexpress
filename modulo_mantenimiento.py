@@ -9,146 +9,174 @@ from datetime import date
 def _tab_correccion():
     st.markdown("#### Correccion Masiva de Precios / Costos")
     from excel_helper import leer_pedidos, actualizar_precio_semana
-    from data_helper  import cargar_productos
+    from data_helper  import cargar_clientes, cargar_productos
+    from config       import ZONAS_MAP as _ZM
+    import datetime, pandas as pd
 
-    hoy     = date.today()
+    hoy     = datetime.date.today()
     sem_def = hoy.isocalendar()[1]
-
-    from data_helper import cargar_clientes
-    from config import ZONAS_MAP as _ZM
 
     c1, c2, c3 = st.columns(3)
     semana = c1.number_input("Semana", 1, 53, sem_def, key="mc_sem")
-    anio   = c2.number_input("Año",  2020, 2030, hoy.year, key="mc_anio")
-
-    # Filtro de zona — limita a clientes de la zona seleccionada
+    anio   = c2.number_input("Ano",  2020, 2030, hoy.year, key="mc_anio")
     zona_opts = ["Todas"] + [k for k in _ZM.keys() if k != "Todas"]
-    zona_sel  = c3.selectbox("Zona", zona_opts, key="mc_zona",
-                              help="Filtra a clientes de la zona elegida")
+    zona_sel  = c3.selectbox("Zona", zona_opts, key="mc_zona")
 
-    todos      = leer_pedidos()
-    clientes   = {c["nombre"].lower().strip(): c for c in cargar_clientes()}
-    prods_map  = {p["nombre"]: p for p in cargar_productos()}
+    todos    = leer_pedidos()
+    clientes = {c["nombre"].lower().strip(): c for c in cargar_clientes()}
 
-    def _en_zona(cliente_nombre: str) -> bool:
-        if zona_sel == "Todas":
-            return True
-        cli = clientes.get(cliente_nombre.lower().strip())
-        if not cli:
-            return False
-        codigos_zona = _ZM.get(zona_sel, [])
-        return cli.get("codigo_lugar", "") in codigos_zona
+    def _en_zona(nombre):
+        if zona_sel == "Todas": return True
+        cli = clientes.get(nombre.lower().strip())
+        if not cli: return False
+        return cli.get("codigo_lugar","") in _ZM.get(zona_sel, [])
 
     pedidos_sem = [p for p in todos
                    if p["semana"] == semana and p["año"] == anio
-                   and p["status"] != "Cancelado"
-                   and _en_zona(p["cliente"])]
+                   and p["status"] != "Cancelado" and _en_zona(p["cliente"])]
 
     if not pedidos_sem:
-        st.info(f"Sin pedidos activos en semana {semana}/{anio}"
-                + (f" para zona {zona_sel}." if zona_sel != "Todas" else "."))
+        st.info(f"Sin pedidos en semana {semana}/{anio}"
+                + (f" para {zona_sel}." if zona_sel != "Todas" else "."))
         return
 
     prods_sem = sorted({p["producto"] for p in pedidos_sem})
-    st.caption(f"{len(pedidos_sem)} lineas · {len(prods_sem)} productos distintos")
+    st.caption(f"{len(pedidos_sem)} lineas - {len(prods_sem)} productos distintos")
 
-    import pandas as pd
     rows = []
     for prod in prods_sem:
         lineas = [p for p in pedidos_sem if p["producto"] == prod]
-        precio_actual = lineas[0]["precio"] if lineas else 0
-        costo_actual  = lineas[0].get("costo", 0) or 0
+        precio_actual = float(lineas[0]["precio"] or 0)
+        costo_actual  = float(lineas[0].get("costo", 0) or 0)
         rows.append({
-            "Producto":   prod,
-            "Precio Act": precio_actual,
-            "Nuevo Precio": precio_actual,
-            "Costo Act":  costo_actual,
-            "Nuevo Costo": costo_actual,
+            "Producto": prod,
+            "P.Act":    precio_actual,
+            "C.Act":    costo_actual,
+            "P.Nuevo":  precio_actual,
+            "C.Nuevo":  costo_actual,
         })
 
-    # ── Margen en vivo ───────────────────────────────────────────────────────
-    IVA, ISR = 0.12, 0.05
+    df = pd.DataFrame(rows)
 
-    def _mg(costo, precio):
-        if float(precio) <= 0: return 0.0
-        return (1 - ISR) * (float(precio) - float(costo) * (1 + IVA)) / float(precio) * 100
+    try:
+        from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
-    def _mg_txt(mg_nuevo, mg_saved=None):
-        badge = "[+]" if mg_nuevo >= 35 else ("[~]" if mg_nuevo >= 20 else "[!]")
-        s = f"{badge} {mg_nuevo:.1f}%"
-        if mg_saved is not None and abs(mg_nuevo - mg_saved) > 0.05:
-            d = mg_nuevo - mg_saved
-            s += f" +{d:.1f}pt" if d > 0 else f" {d:.1f}pt"
-        return s
+        MG_ACT = JsCode("""function(p){
+            var c=p.data['C.Act'],v=p.data['P.Act'];
+            if(!v||v<=0)return'';
+            var m=(1-0.05)*(v-c*1.12)/v*100;
+            var b=m>=35?'[+]':(m>=20?'[~]':'[!]');
+            return b+' '+m.toFixed(1)+'%';
+        }""")
 
-    # Leer edits previos para margen en vivo
-    prev_edits = {}
-    ed_state = st.session_state.get("mc_editor")
-    if isinstance(ed_state, dict):
-        prev_edits = ed_state.get("edited_rows", {})
+        MG_NEW = JsCode("""function(p){
+            var ca=p.data['C.Act'],pa=p.data['P.Act'];
+            var cn=p.data['C.Nuevo'],pn=p.data['P.Nuevo'];
+            if(!pn||pn<=0)return'';
+            var ma=(pa>0)?(1-0.05)*(pa-ca*1.12)/pa*100:0;
+            var mn=(1-0.05)*(pn-cn*1.12)/pn*100;
+            var b=mn>=35?'[+]':(mn>=20?'[~]':'[!]');
+            var s=b+' '+mn.toFixed(1)+'%';
+            var d=mn-ma;
+            if(Math.abs(d)>0.05) s+=d>0?' +'+d.toFixed(1)+'pt':' '+d.toFixed(1)+'pt';
+            return s;
+        }""")
 
-    # Agregar márgenes al DataFrame
-    # IMPORTANTE: NO sobreescribir Nuevo Precio / Nuevo Costo en el base
-    # (si lo hacemos, el data_editor limpia el delta y se pierden los cambios)
-    rows_mg = []
-    for idx, row in enumerate(rows):
-        edits   = prev_edits.get(idx, prev_edits.get(str(idx), {}))
-        # Valores efectivos = base + cualquier delta pendiente del usuario
-        p_nuevo = float(edits.get("Nuevo Precio", row["Nuevo Precio"]))
-        c_nuevo = float(edits.get("Nuevo Costo",  row["Nuevo Costo"]))
-        mg_act  = _mg(row["Costo Act"], row["Precio Act"])
-        mg_new  = _mg(c_nuevo, p_nuevo)
-        rows_mg.append({**row,           # mantiene Nuevo Precio/Costo SIN cambiar
-                        "Margen Act":   _mg_txt(mg_act),
-                        "Margen Nuevo": _mg_txt(mg_new, mg_act)})
+        MG_STYLE = JsCode("""function(p){
+            var cn=p.data['C.Nuevo'],pn=p.data['P.Nuevo'];
+            if(!pn||pn<=0)return{};
+            var mn=(1-0.05)*(pn-cn*1.12)/pn*100;
+            if(mn>=35)return{color:'#1B5E20',fontWeight:'bold'};
+            if(mn>=20)return{color:'#E65100',fontWeight:'bold'};
+            return{color:'#B71C1C',fontWeight:'bold'};
+        }""")
 
-    df = pd.DataFrame(rows_mg)
+        gb = GridOptionsBuilder.from_dataframe(df)
+        gb.configure_default_column(resizable=True, sortable=True, editable=False)
+        gb.configure_column("Producto", width=120, pinned="left")
+        gb.configure_column("P.Act",    width=75, type=["numericColumn"],
+                            valueFormatter="'Q'+value.toFixed(2)")
+        gb.configure_column("C.Act",    width=75, type=["numericColumn"],
+                            valueFormatter="'Q'+value.toFixed(2)")
+        gb.configure_column("P.Nuevo",  width=90, editable=True,
+                            type=["numericColumn"],
+                            valueFormatter="'Q'+value.toFixed(2)",
+                            cellStyle={"backgroundColor":"#E8F5E9"})
+        gb.configure_column("C.Nuevo",  width=90, editable=True,
+                            type=["numericColumn"],
+                            valueFormatter="'Q'+value.toFixed(2)",
+                            cellStyle={"backgroundColor":"#E8F5E9"})
 
-    edited = st.data_editor(
-        df,
-        column_config={
-            "Producto":     st.column_config.TextColumn(disabled=True, width="large"),
-            "Precio Act":   st.column_config.NumberColumn("Precio Act",  format="Q%.2f", disabled=True),
-            "Costo Act":    st.column_config.NumberColumn("Costo Act",   format="Q%.2f", disabled=True),
-            "Margen Act":   st.column_config.TextColumn("Margen Act",   disabled=True),
-            "Nuevo Precio": st.column_config.NumberColumn("Nuevo Precio", format="Q%.2f", step=0.25),
-            "Nuevo Costo":  st.column_config.NumberColumn("Nuevo Costo",  format="Q%.2f", step=0.25),
-            "Margen Nuevo": st.column_config.TextColumn("Margen Nuevo", disabled=True),
-        },
-        hide_index=True, use_container_width=True, key="mc_editor",
-        height=min(600, 60 + len(df) * 35),
-    )
+        go = gb.build()
+        # Append computed margin columns
+        go["columnDefs"].append({"field":"_mga","headerName":"Mg.Act",
+                                  "width":95,"valueGetter":MG_ACT})
+        go["columnDefs"].append({"field":"_mgn","headerName":"Mg.Nuevo",
+                                  "width":125,"valueGetter":MG_NEW,
+                                  "cellStyle":MG_STYLE})
 
+        result = AgGrid(
+            df,
+            gridOptions=go,
+            update_mode=GridUpdateMode.VALUE_CHANGED,
+            allow_unsafe_jscode=True,
+            key="mc_aggrid",
+            height=min(550, 50 + len(df) * 40),
+            fit_columns_on_grid_load=True,
+        )
+        edited = result["data"]
+
+    except ImportError:
+        st.warning("streamlit-aggrid no instalado aun — usando tabla basica.")
+        edited = st.data_editor(
+            df,
+            column_config={
+                "Producto": st.column_config.TextColumn(disabled=True, width="small"),
+                "P.Act":    st.column_config.NumberColumn("P.Act", disabled=True, format="Q%.2f", width="small"),
+                "C.Act":    st.column_config.NumberColumn("C.Act", disabled=True, format="Q%.2f", width="small"),
+                "P.Nuevo":  st.column_config.NumberColumn("P.Nuevo", format="Q%.2f", step=0.25, width="small"),
+                "C.Nuevo":  st.column_config.NumberColumn("C.Nuevo", format="Q%.2f", step=0.25, width="small"),
+            },
+            hide_index=True, use_container_width=True,
+            key="mc_editor", height=min(550, 60+len(df)*35))
+
+    # Detectar cambios y guardar
     cambios = []
     for _, row in edited.iterrows():
-        p_cambia = abs(row["Nuevo Precio"] - row["Precio Act"]) > 0.001
-        c_cambia = abs(row["Nuevo Costo"]  - row["Costo Act"])  > 0.001
-        if p_cambia or c_cambia:
-            cambios.append({
-                "producto":    row["Producto"],
-                "precio_ant":  row["Precio Act"],
-                "precio_nuevo": row["Nuevo Precio"],
-                "costo_ant":   row["Costo Act"],
-                "costo_nuevo": row["Nuevo Costo"],
-                "p_cambia": p_cambia,
-                "c_cambia": c_cambia,
-            })
+        try:
+            p_act   = float(row.get("P.Act",  0) or 0)
+            c_act   = float(row.get("C.Act",  0) or 0)
+            p_nuevo = float(row.get("P.Nuevo", p_act) or p_act)
+            c_nuevo = float(row.get("C.Nuevo", c_act) or c_act)
+        except Exception:
+            continue
+        if abs(p_nuevo - p_act) > 0.001 or abs(c_nuevo - c_act) > 0.001:
+            cambios.append({"producto": row["Producto"],
+                            "precio_ant": p_act,  "precio_nuevo": p_nuevo,
+                            "costo_ant":  c_act,  "costo_nuevo":  c_nuevo,
+                            "p_cambia": abs(p_nuevo-p_act)>0.001,
+                            "c_cambia": abs(c_nuevo-c_act)>0.001})
 
     if not cambios:
         st.info("Sin cambios detectados.")
         return
 
-    st.warning(f"{len(cambios)} producto(s) con cambios")
-    upd_cat = st.checkbox("Actualizar en catalogo (aplica a pedidos futuros)",
+    st.warning(f"{len(cambios)} producto(s) con cambios pendientes")
+    upd_cat = st.checkbox("Actualizar tambien en el catalogo",
                           value=True, key="mc_cat")
 
-    if st.button(f"Aplicar {len(cambios)} cambio(s)", type="primary", key="mc_guardar"):
+    if st.button(f"Aplicar {len(cambios)} cambio(s)", type="primary",
+                 key="mc_guardar"):
         with st.spinner("Actualizando..."):
             res = actualizar_precio_semana(cambios, semana, anio,
                                            actualizar_catalogo=upd_cat)
         st.success(f"{res['filas_pedidos']} lineas actualizadas"
-                   + (f" + catalogo ({res['prods_catalogo']} campos)" if upd_cat else ""))
+                   + (f" + catalogo ({res['prods_catalogo']} campos)"
+                      if upd_cat else ""))
+        st.session_state.pop("mc_aggrid", None)
         st.rerun()
+
+
 
 
 # ── TAB 2: Migracion ──────────────────────────────────────────────────────────

@@ -200,7 +200,7 @@ def _importar_pedido(resp: dict, fecha_ent: date,
             precio = float(prod.get("precio") or 0)
         items.append({
             "nombre":   l["prod_cat"],
-            "unidad":   prod.get("unidad", l["unidad_form"]),
+            "unidad":   prod.get("unidad") or "",  # siempre del catálogo, nunca del form
             "cantidad": l["cantidad"],
             "precio":   precio,
             "costo":    float(prod.get("costo") or 0),
