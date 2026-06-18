@@ -341,32 +341,44 @@ def _tab_listas():
         st.info("La lista de clientes individuales está vacía por ahora. "
                 "Podés agregar un cliente escribiendo su nombre exacto.")
 
-    # Precio general reference map
-    gen_prods = leer_productos_con_fila(es_antigua=False)
-    gen_map   = {p["nombre"].lower(): p["precio"] for p in gen_prods}
-    gen_names = [p["nombre"] for p in gen_prods]
+    # Mapa completo: nombre → {precio, unidad}
+    gen_prods  = leer_productos_con_fila(es_antigua=False)
+    gen_map    = {p["nombre"].lower(): p for p in gen_prods}
+    gen_names  = [p["nombre"] for p in gen_prods]
+    # Opciones de selectbox con unidad visible
+    gen_opts   = ["—"] + [f"{p['nombre']}  ({p['unidad']})" for p in gen_prods]
+    gen_nombre_de_opt = {f"{p['nombre']}  ({p['unidad']})": p["nombre"]
+                         for p in gen_prods}
 
     filas = leer_precios_capa(hoja, lista)
 
     if filas:
         st.markdown(f"**{lista}** — {len(filas)} producto(s) con precio especial")
+        # Cabecera de columnas
+        hh1, hh2, hh3, hh4, hh5 = st.columns([2.8, 1, 1.2, 1.2, 0.8])
+        hh1.caption("Producto");  hh2.caption("Unidad")
+        hh3.caption("General Q"); hh4.caption("Precio lista")
         for f in filas:
-            gen_ref = gen_map.get(f["producto"].lower(), 0)
-            c1, c2, c3, c4 = st.columns([3, 1.5, 1.5, 0.8])
+            pi      = gen_map.get(f["producto"].lower(), {})
+            gen_ref = float(pi.get("precio", 0) or 0)
+            unidad  = pi.get("unidad", "—")
+            c1, c2, c3, c4, c5 = st.columns([2.8, 1, 1.2, 1.2, 0.8])
             c1.write(f["producto"])
-            c2.caption(f"General: Q{gen_ref:.2f}" if gen_ref else "⚠️ no en General")
-            nuevo_p = c3.number_input("Q", value=float(f["precio"]),
+            c2.caption(unidad)
+            c3.caption(f"Q{gen_ref:.2f}" if gen_ref else "⚠️")
+            nuevo_p = c4.number_input("Q", value=float(f["precio"]),
                                        min_value=0.0, step=0.5,
                                        label_visibility="collapsed",
                                        key=f"lp_{lista}_{f['producto']}")
-            if c4.button("💾", key=f"lp_s_{lista}_{f['producto']}",
-                         help="Guardar"):
+            col_save, col_del = c5.columns(2)
+            if col_save.button("💾", key=f"lp_s_{lista}_{f['producto']}",
+                               help="Guardar"):
                 guardar_precio_especial(hoja, lista, f["producto"], nuevo_p)
                 limpiar_cache_precios()
                 st.success(f"Q{nuevo_p:.2f} guardado para {f['producto']}.")
                 st.rerun()
-            if c4.button("🗑️", key=f"lp_d_{lista}_{f['producto']}",
-                         help="Quitar de esta lista"):
+            if col_del.button("🗑️", key=f"lp_d_{lista}_{f['producto']}",
+                              help="Quitar de esta lista"):
                 eliminar_precio_especial(hoja, lista, f["producto"])
                 limpiar_cache_precios()
                 st.rerun()
@@ -375,19 +387,26 @@ def _tab_listas():
 
     st.divider()
     st.markdown("**Agregar producto a esta lista**")
-    a1, a2, a3 = st.columns([3, 1.5, 1])
-    prod_add  = a1.selectbox("Producto", ["—"] + gen_names, key="lp_add_prod")
+    a1, a2, a3 = st.columns([3.5, 1.5, 1])
+    opt_add    = a1.selectbox("Producto (unidad)", gen_opts, key="lp_add_prod")
+    prod_add   = gen_nombre_de_opt.get(opt_add, "")
+    # Mostrar precio General como referencia al seleccionar
+    if prod_add:
+        _pi = gen_map.get(prod_add.lower(), {})
+        a1.caption(f"Unidad: {_pi.get('unidad','—')} · "
+                   f"Precio General: Q{float(_pi.get('precio',0)):.2f}")
     precio_add = a2.number_input("Precio Q", min_value=0.0, step=0.5,
                                   key="lp_add_precio")
     if a3.button("➕ Agregar", key="lp_add_btn"):
-        if prod_add == "—":
+        if not prod_add:
             st.warning("Seleccioná un producto.")
         elif precio_add <= 0:
             st.warning("El precio debe ser mayor a 0.")
         else:
             guardar_precio_especial(hoja, lista, prod_add, precio_add)
             limpiar_cache_precios()
-            st.success(f"'{prod_add}' agregado a {lista} con Q{precio_add:.2f}.")
+            st.success(f"'{prod_add}' ({gen_map.get(prod_add.lower(),{}).get('unidad','')}) "
+                       f"agregado a {lista} con Q{precio_add:.2f}.")
             st.rerun()
 
 
