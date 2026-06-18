@@ -686,7 +686,7 @@ def generar_lista_compras_proveedor(prov: str, items: list,
                                     semana: int, año: int) -> bytes:
     """
     PDF portrait A4 B&W para UN proveedor.
-    Columnas: Producto | Unidad | Ant-Chim | Chimalt | GT-Stgo | Río | Total | A Comprar
+    Columnas: Producto | Unidad | Antigua | Río | Hogares | Total | A Comprar
     Máx 50 filas por página — paginación manual con header y footer en cada página.
     """
     from reportlab.lib.pagesizes import A4
@@ -725,22 +725,21 @@ def generar_lista_compras_proveedor(prov: str, items: list,
                               textColor=NEGRO, alignment=TA_CENTER, leading=8)
 
     # ── Anchos de columna ────────────────────────────────────────────────────
-    wP  = CW * 0.30
-    wU  = CW * 0.09
-    wA  = CW * 0.11
-    wT  = CW * 0.08
-    wC  = CW * 0.09
-    col_w = [wP, wU, wA, wA, wA, wA, wT, wC]
+    wP  = CW * 0.32
+    wU  = CW * 0.10
+    wA  = CW * 0.13
+    wT  = CW * 0.09
+    wC  = CW * 0.10
+    col_w = [wP, wU, wA, wA, wA, wT, wC]
 
     # ── Fila de encabezado de columnas ───────────────────────────────────────
     def header_row():
         return [
             _p("Producto",  s_th_l),
             _p("Unidad",    s_th),
-            _p("Ant-Chim",  s_th),
-            _p("Chimalt",   s_th),
-            _p("GT-Stgo",   s_th),
+            _p("Antigua",   s_th),
             _p("Río",       s_th),
+            _p("Hogares",   s_th),
             _p("Total",     s_th),
             _p("A Comprar", s_th),
         ]
@@ -754,10 +753,9 @@ def generar_lista_compras_proveedor(prov: str, items: list,
         return [
             _p(_s(it["producto"]),          s_td),
             _p(_s(it.get("unidad", "")),    s_td_c),
-            area_val("Ant-Chim"),
-            area_val("Chimalt"),
-            area_val("GT-Stgo"),
+            area_val("Antigua"),
             area_val("Río"),
+            area_val("Hogares"),
             _p(f"{float(it.get('cantidad', 0) or 0):g}", s_td_c),
             cmp,
         ]

@@ -558,8 +558,8 @@ def mostrar():
                         f"<h2 style='page-break-before:always;margin:0 0 4px 0;"
                         f"font-size:15px'>📦 {_prov} — Semana {semana}/{año}</h2>"
                         "<table><tr><th style='text-align:left'>Producto</th>"
-                        "<th>Unidad</th><th>Ant-Chim</th><th>Chimalt</th>"
-                        "<th>GT-Stgo</th><th>Río</th><th>Total</th>"
+                        "<th>Unidad</th><th>Antigua</th>"
+                        "<th>Río</th><th>Hogares</th><th>Total</th>"
                         "<th style='min-width:70px'>A Comprar</th></tr>")
                     for _, r in _df.iterrows():
                         def _v(a):
@@ -569,8 +569,8 @@ def mostrar():
                         rows_html += (
                             f"<tr><td style='text-align:left'>{r['Producto']}</td>"
                             f"<td>{r['Unidad']}</td>"
-                            f"<td>{_v('Ant-Chim')}</td><td>{_v('Chimalt')}</td>"
-                            f"<td>{_v('GT-Stgo')}</td><td>{_v('Río')}</td>"
+                            f"<td>{_v('Antigua')}</td>"
+                            f"<td>{_v('Río')}</td><td>{_v('Hogares')}</td>"
                             f"<td><b>{_v('Total')}</b></td><td></td></tr>")
                     rows_html += "</table>"
                 return f"""<!DOCTYPE html><html><head><meta charset='utf-8'>
@@ -610,7 +610,7 @@ Imprimir: Ctrl+P (o Compartir → Imprimir en el teléfono)</p>
                         "unidad":    row["Unidad"],
                         "cantidad":  float(row["Total"]),
                     }
-                    for _a in ["Ant-Chim","Chimalt","GT-Stgo","Río"]:
+                    for _a in ["Antigua","Río","Hogares"]:
                         base_item[_a] = float(row[_a]) if _a in row.index else 0.0
 
                     items_completa.append({**base_item, "a_comprar": ""})
