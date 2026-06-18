@@ -196,42 +196,43 @@ def _tab_actualizar(es_antigua: bool = False):
 
     st.caption(f"{len(filtrados)} de {len(todos)} productos")
 
-    # ── Cabecera de columnas ──────────────────────────────────────────────────
-    hh1, hh2, hh3, hh4, hh5 = st.columns([3, 1, 1.3, 1.3, 0.6])
-    hh1.caption("**Producto**"); hh2.caption("**Unidad**")
-    hh3.caption("**Costo Q**");  hh4.caption("**Precio Q**")
+    # ── Fragment aislado: reruns locales sin cambiar de tab ───────────────────
+    _fragment = getattr(st, "fragment", None) or                 getattr(st, "experimental_fragment", None) or (lambda f: f)
 
-    # ── Filas editables ───────────────────────────────────────────────────────
-    for p in filtrados:
-        rn = p["row_num"]
-        c1, c2, c3, c4, c5 = st.columns([3, 1, 1.3, 1.3, 0.6])
-        c1.write(p["nombre"])
-        c2.caption(p.get("unidad",""))
+    @_fragment
+    def _filas(filtrados_f, lbl_f, todos_f, es_ant_f):
+        hh1, hh2, hh3, hh4, hh5 = st.columns([3, 1, 1.3, 1.3, 0.6])
+        hh1.caption("**Producto**"); hh2.caption("**Unidad**")
+        hh3.caption("**Costo Q**");  hh4.caption("**Precio Q**")
 
-        nuevo_costo = c3.number_input("C", value=float(p.get("costo") or 0),
-                                       min_value=0.0, step=0.5, format="%.2f",
-                                       label_visibility="collapsed",
-                                       key=f"upd_c_{lbl}_{rn}")
-        nuevo_precio = c4.number_input("P", value=float(p.get("precio") or 0),
-                                        min_value=0.0, step=0.5, format="%.2f",
-                                        label_visibility="collapsed",
-                                        key=f"upd_p_{lbl}_{rn}")
-        if c5.button("💾", key=f"upd_s_{lbl}_{rn}", help="Guardar"):
-            costo_cambio = abs(nuevo_costo - float(p.get("costo") or 0)) > 0.001
-            with st.spinner("Guardando..."):
-                editar_producto(rn, {**p,
-                                     "costo":  nuevo_costo,
-                                     "precio": nuevo_precio}, es_antigua)
-            for _k in [k for k in st.session_state
-                       if k.startswith(f"upd_c_{lbl}_{rn}")
-                       or k.startswith(f"upd_p_{lbl}_{rn}")]:
-                st.session_state.pop(_k, None)
-            if costo_cambio:
-                _cascade_parent(p["nombre"], nuevo_costo, todos)
-            _conf("prod_upd",
-                  f"✅ {p['nombre']} — Costo: Q{nuevo_costo:.2f} · "
-                  f"Precio: Q{nuevo_precio:.2f}")
-            st.rerun()
+        for p in filtrados_f:
+            rn = p["row_num"]
+            c1, c2, c3, c4, c5 = st.columns([3, 1, 1.3, 1.3, 0.6])
+            c1.write(p["nombre"])
+            c2.caption(p.get("unidad",""))
+            nuevo_costo = c3.number_input("C",
+                                           value=float(p.get("costo") or 0),
+                                           min_value=0.0, step=0.5, format="%.2f",
+                                           label_visibility="collapsed",
+                                           key=f"upd_c_{lbl_f}_{rn}")
+            nuevo_precio = c4.number_input("P",
+                                            value=float(p.get("precio") or 0),
+                                            min_value=0.0, step=0.5, format="%.2f",
+                                            label_visibility="collapsed",
+                                            key=f"upd_p_{lbl_f}_{rn}")
+            if c5.button("💾", key=f"upd_s_{lbl_f}_{rn}", help="Guardar"):
+                costo_cambio = abs(nuevo_costo -
+                                   float(p.get("costo") or 0)) > 0.001
+                with st.spinner("Guardando..."):
+                    editar_producto(rn, {**p, "costo": nuevo_costo,
+                                         "precio": nuevo_precio}, es_ant_f)
+                st.toast(f"✅ {p['nombre']} — "
+                         f"Costo Q{nuevo_costo:.2f} · Precio Q{nuevo_precio:.2f}",
+                         icon="✅")
+                if costo_cambio:
+                    _cascade_parent(p["nombre"], nuevo_costo, todos_f)
+
+    _filas(filtrados, lbl, todos, es_antigua)
 
     # ── Edición completa (expander) ───────────────────────────────────────────
     st.divider()
@@ -551,7 +552,6 @@ def _tab_validacion():
 
 # ── MOSTRAR ────────────────────────────────────────────────────────────────────
 def mostrar():
-    _show_conf("prod_upd")
     _show_conf("nuevo_prod")
     st.markdown("## 📦 Productos")
     if st.button("Inicio", key="btn_home_prod", type="secondary"):
