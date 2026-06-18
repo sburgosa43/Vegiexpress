@@ -227,11 +227,17 @@ def _tab_formulario():
     form_id = get_form_id()
     if form_id:
         form_url = f"https://docs.google.com/forms/d/{form_id}/viewform"
-        col_a, col_b = st.columns([3,1])
+        col_a, col_b, col_c = st.columns([3, 0.8, 0.8])
         col_a.success(f"✅ Formulario activo — "
                       f"[Link para familias]({form_url})")
-        if col_b.button("📋 Copiar link", key="hog_copy_link"):
+        if col_b.button("📋 Link", key="hog_copy_link"):
             st.write(f"`{form_url}`")
+        if col_c.button("🔀 Cambiar", key="hog_change_form",
+                        help="Configurar un formulario diferente"):
+            from forms_helper import _save_form_id
+            _save_form_id("")
+            st.session_state.pop(_HOG_INIT_KEY, None)
+            st.rerun()
 
     # ── Selector de productos ────────────────────────────────────────────────
     todos = _productos_hogares()
@@ -239,7 +245,17 @@ def _tab_formulario():
 
     # Inicializar con todos seleccionados la primera vez
     if _HOG_INIT_KEY not in st.session_state:
-        st.session_state[_HOG_SEL_KEY] = set(nombres_todos)
+        if form_id:
+            try:
+                from forms_helper import leer_productos_en_form as _lpf2
+                en_form_init = _lpf2(form_id)
+                st.session_state[_HOG_SEL_KEY] = {
+                    n for n in en_form_init if n in set(nombres_todos)}
+            except Exception:
+                # 404 o sin acceso — empezar con todos seleccionados
+                st.session_state[_HOG_SEL_KEY] = set(nombres_todos)
+        else:
+            st.session_state[_HOG_SEL_KEY] = set(nombres_todos)
         st.session_state[_HOG_INIT_KEY] = True
     ver = st.session_state.get(_HOG_VER_KEY, 0)
 
@@ -325,16 +341,18 @@ def _tab_formulario():
                "seleccionados y sus precios actuales del catálogo. "
                "El link para las familias **no cambia**.")
 
-    # Campo para ingresar / confirmar el ID del formulario
+    # Campo para ingresar / cambiar el ID del formulario
+    if not form_id:
+        st.info("📋 Ingresá el ID del formulario que querés usar. "
+                "Lo encontrás en la URL: `docs.google.com/forms/d/`**[ID]**`/edit`  ·  "
+                "Compartilo con `rio-veggi-app@rio-veggi-app.iam.gserviceaccount.com` "
+                "como **Editor** antes de actualizar.")
     fid_input = st.text_input(
-        "ID del formulario (de la URL)",
+        "ID del formulario",
         value=form_id or "",
         placeholder="1FAIpQLSe...",
         key="hog_form_id_input",
-        help="Encontralo en la URL del formulario: "
-             "docs.google.com/forms/d/**[ESTE-ID]**/edit. "
-             "Compartí el formulario con rio-veggi-app@rio-veggi-app.iam.gserviceaccount.com "
-             "como Editor antes de actualizar."
+        label_visibility="collapsed" if form_id else "visible",
     )
 
     prods_sel = [p for p in todos
