@@ -196,95 +196,75 @@ def _tab_actualizar(es_antigua: bool = False):
 
     st.caption(f"{len(filtrados)} de {len(todos)} productos")
 
-    # ── Fragment aislado: reruns locales sin cambiar de tab ───────────────────
-    _fragment = getattr(st, "fragment", None) or                 getattr(st, "experimental_fragment", None) or (lambda f: f)
+    # ── Cabecera ──────────────────────────────────────────────────────────────
+    IVA, ISR = 0.12, 0.05
 
-    @_fragment
-    def _filas(filtrados_f, lbl_f, todos_f, es_ant_f):
-        IVA, ISR = 0.12, 0.05
+    def _mg(costo, precio):
+        if precio <= 0: return 0.0
+        return (1 - ISR) * (precio - costo * (1 + IVA)) / precio * 100
 
-        def _mg(costo, precio):
-            if precio <= 0: return 0.0
-            return (1 - ISR) * (precio - costo * (1 + IVA)) / precio * 100
+    def _mg_badge(mg):
+        return "🟢" if mg >= 35 else ("🟡" if mg >= 20 else "🔴")
 
-        def _mg_badge(mg):
-            return "🟢" if mg >= 35 else ("🟡" if mg >= 20 else "🔴")
-
-        def _mg_html(mg_nuevo, mg_saved):
-            badge = _mg_badge(mg_nuevo)
-            delta = mg_nuevo - mg_saved
-            base  = f"{badge} {mg_nuevo:.1f}%"
-            if abs(delta) > 0.05:
-                col   = "green" if delta > 0 else "red"
-                arrow = f"↑+{delta:.1f}pt" if delta > 0 else f"↓{delta:.1f}pt"
-                return (f"{base} <span style='color:{col};"
-                        f"font-size:.75rem'>{arrow}</span>")
-            return base
-
-        def _mg_cell(col, mg_nuevo, mg_saved):
-            col.markdown(
-                f"<div style='padding:5px 0;font-size:.84rem'>"
-                f"{_mg_html(mg_nuevo, mg_saved)}</div>",
-                unsafe_allow_html=True)
-
-        # ── Cabecera con separador visual Actual | Nuevo ───────────────────────
-        C = [2.0, 0.7, 0.85, 0.9, 1.0, 0.85, 0.9, 1.05, 0.4]
-        hh = st.columns(C)
-        hh[0].caption("**Producto**"); hh[1].caption("**Unidad**")
-        # Actual
-        hh[2].caption("Costo act.")
-        hh[3].caption("Precio act.")
-        hh[4].caption("Margen act.")
-        # Nuevo
-        hh[5].caption("**Costo nuevo**")
-        hh[6].caption("**Precio nuevo**")
-        hh[7].caption("**Margen nuevo**")
-
-        # Thin divider line under header
-        st.markdown(
-            "<hr style='margin:2px 0 6px 0;border-color:#e0e0e0'>",
+    def _mg_cell(container, mg_nuevo, mg_saved):
+        badge = _mg_badge(mg_nuevo)
+        delta = mg_nuevo - mg_saved
+        txt   = f"{badge} {mg_nuevo:.1f}%"
+        if abs(delta) > 0.05:
+            col   = "green" if delta > 0 else "red"
+            arrow = f"↑+{delta:.1f}pt" if delta > 0 else f"↓{delta:.1f}pt"
+            txt  += f" <span style='color:{col};font-size:.75rem'>{arrow}</span>"
+        container.markdown(
+            f"<div style='padding:5px 0;font-size:.84rem'>{txt}</div>",
             unsafe_allow_html=True)
 
-        for p in filtrados_f:
-            rn           = p["row_num"]
-            costo_saved  = float(p.get("costo")  or 0)
-            precio_saved = float(p.get("precio") or 0)
-            mg_saved     = _mg(costo_saved, precio_saved)
+    C  = [2.0, 0.7, 0.85, 0.9, 1.0, 0.85, 0.9, 1.05, 0.4]
+    hh = st.columns(C)
+    for i, txt in enumerate(["**Producto**","**Unidad**",
+                              "Costo act.","Precio act.","Margen act.",
+                              "**Costo nuevo**","**Precio nuevo**","**Margen nuevo**",""]):
+        if txt: hh[i].caption(txt)
+    st.markdown("<hr style='margin:2px 0 6px 0;border-color:#ddd'>",
+                unsafe_allow_html=True)
 
-            col = st.columns(C)
-            col[0].write(p["nombre"])
-            col[1].caption(p.get("unidad",""))
+    for p in filtrados:
+        rn           = p["row_num"]
+        costo_saved  = float(p.get("costo")  or 0)
+        precio_saved = float(p.get("precio") or 0)
+        mg_saved     = _mg(costo_saved, precio_saved)
 
-            # ── Actual (read-only) ─────────────────────────────────────────────
-            col[2].caption(f"Q{costo_saved:.2f}")
-            col[3].caption(f"Q{precio_saved:.2f}")
-            _mg_cell(col[4], mg_saved, mg_saved)   # sin delta
+        col = st.columns(C)
+        col[0].write(p["nombre"])
+        col[1].caption(p.get("unidad",""))
 
-            # ── Nuevo (editable) ───────────────────────────────────────────────
-            nuevo_costo = col[5].number_input("C",
-                value=costo_saved, min_value=0.0, step=0.25, format="%.2f",
-                label_visibility="collapsed", key=f"upd_c_{lbl_f}_{rn}")
-            nuevo_precio = col[6].number_input("P",
-                value=precio_saved, min_value=0.0, step=0.25, format="%.2f",
-                label_visibility="collapsed", key=f"upd_p_{lbl_f}_{rn}")
+        # ── Actual (solo lectura) ──────────────────────────────────────────────
+        col[2].caption(f"Q{costo_saved:.2f}")
+        col[3].caption(f"Q{precio_saved:.2f}")
+        _mg_cell(col[4], mg_saved, mg_saved)
 
-            mg_nuevo = _mg(nuevo_costo, nuevo_precio)
-            _mg_cell(col[7], mg_nuevo, mg_saved)   # con delta vs actual
+        # ── Nuevo (editable) ───────────────────────────────────────────────────
+        nuevo_costo = col[5].number_input("C",
+            value=costo_saved, min_value=0.0, step=0.25, format="%.2f",
+            label_visibility="collapsed", key=f"upd_c_{lbl}_{rn}")
+        nuevo_precio = col[6].number_input("P",
+            value=precio_saved, min_value=0.0, step=0.25, format="%.2f",
+            label_visibility="collapsed", key=f"upd_p_{lbl}_{rn}")
+        mg_nuevo = _mg(nuevo_costo, nuevo_precio)
+        _mg_cell(col[7], mg_nuevo, mg_saved)
 
-            if col[8].button("💾", key=f"upd_s_{lbl_f}_{rn}", help="Guardar"):
-                costo_cambio = abs(nuevo_costo - costo_saved) > 0.001
-                with st.spinner(""):
-                    editar_producto(rn, {**p, "costo": nuevo_costo,
-                                         "precio": nuevo_precio}, es_ant_f)
-                st.toast(
-                    f"✅ {p['nombre']}  "
-                    f"Q{costo_saved:.2f}→Q{nuevo_costo:.2f}  |  "
-                    f"Q{precio_saved:.2f}→Q{nuevo_precio:.2f}  |  "
-                    f"Margen {mg_nuevo:.1f}%", icon="✅")
-                if costo_cambio:
-                    _cascade_parent(p["nombre"], nuevo_costo, todos_f)
-
-    _filas(filtrados, lbl, todos, es_antigua)
+        if col[8].button("💾", key=f"upd_s_{lbl}_{rn}", help="Guardar"):
+            costo_cambio = abs(nuevo_costo - costo_saved) > 0.001
+            with st.spinner(""):
+                editar_producto(rn, {**p, "costo": nuevo_costo,
+                                     "precio": nuevo_precio}, es_antigua)
+            st.toast(
+                f"✅ {p['nombre']}  "
+                f"Q{costo_saved:.2f}→Q{nuevo_costo:.2f} | "
+                f"Q{precio_saved:.2f}→Q{nuevo_precio:.2f} | "
+                f"Margen {mg_nuevo:.1f}%", icon="✅")
+            if costo_cambio:
+                _cascade_parent(p["nombre"], nuevo_costo, todos)
+            st.rerun()
 
     # ── Edición completa (expander) ───────────────────────────────────────────
     st.divider()
