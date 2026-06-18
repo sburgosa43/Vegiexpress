@@ -216,7 +216,8 @@ def _tab_formulario():
     """Tab para crear/sincronizar el formulario Google Forms."""
     import pandas as pd
     from forms_helper import (crear_formulario, sincronizar_formulario,
-                               get_form_id, _productos_hogares)
+                               get_form_id, _productos_hogares,
+                               leer_productos_en_form)
 
     st.markdown("#### Formulario Google Forms — Hogares")
     st.caption("Seleccioná los productos que querés incluir, "
@@ -249,7 +250,8 @@ def _tab_formulario():
         if st.button("🔄 Recargar lista desde el formulario actual",
                      key="hog_reload_form"):
             try:
-                en_form = leer_productos_en_form(form_id)
+                from forms_helper import leer_productos_en_form as _lpf
+                en_form = _lpf(form_id)
                 st.session_state[_HOG_SEL_KEY] = {
                     n for n in en_form if n in set(nombres_todos)}
                 st.session_state[_HOG_VER_KEY] = ver + 1
