@@ -693,6 +693,7 @@ def generar_cotizacion_formal(
     cotizador: str = "",
     cotizador_tel: str = "",
     num_cot: str = "",
+    notas: str = "",
 ) -> bytes:
     """
     PDF de cotizacion formal para empresas procesadoras.
@@ -908,6 +909,14 @@ def generar_cotizacion_formal(
     story.append(_p("CONDICIONES GENERALES", S["cond_titulo"]))
     for cond in condiciones:
         story.append(_p(f"• {cond}", S["cond_item"]))
+    story.append(Spacer(1, 4*mm))
+
+    # Observaciones adicionales (si las hay)
+    if notas and notas.strip():
+        story.append(_p("OBSERVACIONES ADICIONALES", S["cond_titulo"]))
+        for linea in _s(notas).split("\n"):
+            if linea.strip():
+                story.append(_p(linea.strip(), S["cond_item"]))
     story.append(Spacer(1, 6*mm))
 
     # ── 7. CIERRE Y FIRMA ─────────────────────────────────────────────────────

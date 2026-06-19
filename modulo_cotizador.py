@@ -357,9 +357,9 @@ def _cotizacion():
 
     # Encabezado — diferente por tipo
     if is_formal:
-        hdr = st.columns([2.0, 1.8, 0.7, 1.0, 0.85, 0.85])
+        hdr = st.columns([2.0, 1.6, 0.65, 0.75, 0.9, 0.75, 0.75])
         for h, lbl in zip(hdr, ["Producto","Especificacion","Vol/Sem",
-                                  "Precio Cotizar","Margen %","Margen Q"]):
+                                  "Pto.Eq.","Precio","Mg%","MgQ"]):
             h.markdown(f"<small><b>{lbl}</b></small>", unsafe_allow_html=True)
     else:
         hdr = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
@@ -374,7 +374,7 @@ def _cotizacion():
         k_vol  = f"cot_vol_{i}"
 
         if is_formal:
-            r = st.columns([2.0, 1.8, 0.7, 1.0, 0.85, 0.85])
+            r = st.columns([2.0, 1.6, 0.65, 0.75, 0.9, 0.75, 0.75])
         else:
             r = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
 
@@ -397,32 +397,46 @@ def _cotizacion():
                     f"<div style='padding-top:8px;font-size:.78rem;color:#888'>"
                     f"{txt}</div>", unsafe_allow_html=True)
 
-            r[1].markdown(
-                f"<div style='padding-top:8px;font-size:.82rem'>"
-                f"{p.get('unidad','')}</div>", unsafe_allow_html=True)
-            _ref(r[2], f"Q{costo:,.2f}" if costo else "—")
-            _ref(r[3], f"Q{pto_eq:,.2f}" if pto_eq else "—")
-            _ref(r[4], f"Q{p_imp:,.2f}"  if p_imp  else "—")
+            if not is_formal:
+                r[1].markdown(
+                    f"<div style='padding-top:8px;font-size:.82rem'>"
+                    f"{p.get('unidad','')}</div>", unsafe_allow_html=True)
+                _ref(r[2], f"Q{costo:,.2f}" if costo else "—")
+                _ref(r[3], f"Q{pto_eq:,.2f}" if pto_eq else "—")
+                _ref(r[4], f"Q{p_imp:,.2f}"  if p_imp  else "—")
 
-            precio_ed = r[5].number_input("", min_value=0.0,
+            # En formal: r[3]=precio, r[4]=margen%, r[5]=margenQ
+
+            prec_col  = r[3] if is_formal else r[5]
+            precio_ed = prec_col.number_input("", min_value=0.0,
                 value=float(st.session_state[k_prec]),
                 step=0.25, key=k_prec, label_visibility="collapsed")
 
-            # Cálculos por unidad en tiempo real
+            # Calculos por unidad en tiempo real
             if precio_ed > 0 and costo > 0:
                 margen_pct = round(0.95 * (1 - costo * 1.12 / precio_ed) * 100, 1)
                 margen_q   = round(0.95 * (precio_ed - costo * 1.12), 2)
                 iva_u      = round(precio_ed - precio_ed / 1.12, 2)
                 isr_u      = round(precio_ed / 1.12 * 0.05, 2)
                 color_m    = "#2D7A2D" if margen_pct >= 20 else "#E65100"
-                _ref(r[6], f"<span style='color:{color_m}'><b>{margen_pct}%</b></span>")
-                _ref(r[7], f"<span style='color:{color_m}'>Q{margen_q:,.2f}</span>")
-                _ref(r[8], f"Q{iva_u:,.2f}")
-                _ref(r[9], f"Q{isr_u:,.2f}")
+                if is_formal:
+                    _ref(r[4], f"<span style='color:{color_m}'><b>{margen_pct}%</b></span>")
+                    _ref(r[5], f"<span style='color:{color_m}'>Q{margen_q:,.2f}</span>")
+                else:
+                    _ref(r[6], f"<span style='color:{color_m}'><b>{margen_pct}%</b></span>")
+                    _ref(r[7], f"<span style='color:{color_m}'>Q{margen_q:,.2f}</span>")
+                    _ref(r[8], f"Q{iva_u:,.2f}")
+                    _ref(r[9], f"Q{isr_u:,.2f}")
             elif precio_ed > 0:
-                for col in r[6:]: _ref(col, "—")
+                if is_formal:
+                    _ref(r[4], "—"); _ref(r[5], "—")
+                else:
+                    for col in r[6:]: _ref(col, "—")
             else:
-                for col in r[6:]: col.write("")
+                if is_formal:
+                    r[4].write(""); r[5].write("")
+                else:
+                    for col in r[6:]: col.write("")
 
             grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed}
 
@@ -475,14 +489,26 @@ def _cotizacion():
     if lineas_pdf:
         st.success(f"**{len(lineas_pdf)} producto(s)** listos para el PDF.")
 
-        notas_cot = st.text_area(
-            "",
-            placeholder="Ej: Precios sin IVA · Precios sujetos a cambio · "
-                        "Disponibilidad sujeta a programa de siembra...",
-            height=90,
-            key="cot_notas",
-            label_visibility="collapsed",
-        )
+        if is_formal:
+            st.markdown("**Observaciones adicionales** (aparecen al final del PDF):")
+            notas_cot = st.text_area(
+                "Observaciones",
+                placeholder="Ej: Entrega sujeta a programa semanal acordado. "
+                            "Certificados de calidad disponibles a solicitud. "
+                            "Empaque segun especificacion del cliente...",
+                height=100,
+                key="cot_notas_formal",
+                label_visibility="collapsed",
+            )
+        else:
+            notas_cot = st.text_area(
+                "",
+                placeholder="Ej: Precios sin IVA · Precios sujetos a cambio · "
+                            "Disponibilidad sujeta a programa de siembra...",
+                height=90,
+                key="cot_notas",
+                label_visibility="collapsed",
+            )
 
         btn_lbl = "📄 Generar Cotizacion Formal" if is_formal else "📄 Generar PDF"
         if st.button(btn_lbl, type="primary"):
@@ -496,6 +522,7 @@ def _cotizacion():
                         cotizador=cotizador_nombre,
                         cotizador_tel=cotizador_tel,
                         num_cot=st.session_state.get("cot_num","VX-001"),
+                        notas=st.session_state.get("cot_notas_formal",""),
                     )
                     nombre = (f"Cotizacion_Formal_VeggiExpress_"
                               f"{st.session_state.get('cot_num','').replace('-','_')}.pdf")
