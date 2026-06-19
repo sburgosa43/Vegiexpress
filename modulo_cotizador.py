@@ -373,8 +373,14 @@ def _cotizacion():
         k_spec = f"cot_spec_{i}"
         k_vol  = f"cot_vol_{i}"
 
+        def _ref(col, txt):
+            col.markdown(
+                f"<div style='padding-top:8px;font-size:.78rem;color:#888'>"
+                f"{txt}</div>", unsafe_allow_html=True)
+
+        # ── Columnas según modo ───────────────────────────────────────────────
         if is_formal:
-            r = st.columns([2.0, 1.6, 0.65, 0.75, 0.9, 0.75, 0.75])
+            r = st.columns([2.0, 1.8, 0.7, 1.0, 0.85, 0.85])
         else:
             r = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
 
@@ -392,79 +398,73 @@ def _cotizacion():
             if k_prec not in st.session_state:
                 st.session_state[k_prec] = float(p.get("precio", 0))
 
-            def _ref(col, txt):
-                col.markdown(
-                    f"<div style='padding-top:8px;font-size:.78rem;color:#888'>"
-                    f"{txt}</div>", unsafe_allow_html=True)
+            if is_formal:
+                # Formal: r[1]=spec, r[2]=vol, r[3]=precio, r[4]=mg%, r[5]=mgQ
+                especif = r[1].text_input("", value=fila.get("especificacion",""),
+                                           key=k_spec, label_visibility="collapsed",
+                                           placeholder="Especificacion del producto")
+                vol_sem = r[2].number_input("", value=float(fila.get("volumen_semanal",0)),
+                                             min_value=0.0, step=100.0, key=k_vol,
+                                             label_visibility="collapsed")
+                precio_ed = r[3].number_input("", min_value=0.0,
+                    value=float(st.session_state[k_prec]),
+                    step=0.25, key=k_prec, label_visibility="collapsed")
 
-            if not is_formal:
-                r[1].markdown(
-                    f"<div style='padding-top:8px;font-size:.82rem'>"
-                    f"{p.get('unidad','')}</div>", unsafe_allow_html=True)
+                if precio_ed > 0 and costo > 0:
+                    mp  = round(0.95 * (1 - costo * 1.12 / precio_ed) * 100, 1)
+                    mq  = round(0.95 * (precio_ed - costo * 1.12), 2)
+                    col = "#2D7A2D" if mp >= 20 else "#E65100"
+                    _ref(r[4], f"<span style='color:{col}'><b>{mp}%</b></span>")
+                    _ref(r[5], f"<span style='color:{col}'>Q{mq:,.2f}</span>")
+                else:
+                    r[4].write(""); r[5].write("")
+
+                grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed,
+                              "especificacion": especif, "volumen_semanal": vol_sem}
+
+            else:
+                # Simple: r[1]=unidad, r[2]=costo, r[3]=pto_eq, r[4]=p_imp,
+                #         r[5]=precio, r[6]=mg%, r[7]=mgQ, r[8]=IVA, r[9]=ISR
+                r[1].markdown(f"<div style='padding-top:8px;font-size:.82rem'>"
+                              f"{p.get('unidad','')}</div>", unsafe_allow_html=True)
                 _ref(r[2], f"Q{costo:,.2f}" if costo else "—")
                 _ref(r[3], f"Q{pto_eq:,.2f}" if pto_eq else "—")
                 _ref(r[4], f"Q{p_imp:,.2f}"  if p_imp  else "—")
 
-            # En formal: r[3]=precio, r[4]=margen%, r[5]=margenQ
+                precio_ed = r[5].number_input("", min_value=0.0,
+                    value=float(st.session_state[k_prec]),
+                    step=0.25, key=k_prec, label_visibility="collapsed")
 
-            prec_col  = r[3] if is_formal else r[5]
-            precio_ed = prec_col.number_input("", min_value=0.0,
-                value=float(st.session_state[k_prec]),
-                step=0.25, key=k_prec, label_visibility="collapsed")
-
-            # Calculos por unidad en tiempo real
-            if precio_ed > 0 and costo > 0:
-                margen_pct = round(0.95 * (1 - costo * 1.12 / precio_ed) * 100, 1)
-                margen_q   = round(0.95 * (precio_ed - costo * 1.12), 2)
-                iva_u      = round(precio_ed - precio_ed / 1.12, 2)
-                isr_u      = round(precio_ed / 1.12 * 0.05, 2)
-                color_m    = "#2D7A2D" if margen_pct >= 20 else "#E65100"
-                if is_formal:
-                    _ref(r[4], f"<span style='color:{color_m}'><b>{margen_pct}%</b></span>")
-                    _ref(r[5], f"<span style='color:{color_m}'>Q{margen_q:,.2f}</span>")
-                else:
-                    _ref(r[6], f"<span style='color:{color_m}'><b>{margen_pct}%</b></span>")
-                    _ref(r[7], f"<span style='color:{color_m}'>Q{margen_q:,.2f}</span>")
-                    _ref(r[8], f"Q{iva_u:,.2f}")
-                    _ref(r[9], f"Q{isr_u:,.2f}")
-            elif precio_ed > 0:
-                if is_formal:
-                    _ref(r[4], "—"); _ref(r[5], "—")
-                else:
+                if precio_ed > 0 and costo > 0:
+                    mp  = round(0.95 * (1 - costo * 1.12 / precio_ed) * 100, 1)
+                    mq  = round(0.95 * (precio_ed - costo * 1.12), 2)
+                    iva = round(precio_ed - precio_ed / 1.12, 2)
+                    isr = round(precio_ed / 1.12 * 0.05, 2)
+                    col = "#2D7A2D" if mp >= 20 else "#E65100"
+                    _ref(r[6], f"<span style='color:{col}'><b>{mp}%</b></span>")
+                    _ref(r[7], f"<span style='color:{col}'>Q{mq:,.2f}</span>")
+                    _ref(r[8], f"Q{iva:,.2f}")
+                    _ref(r[9], f"Q{isr:,.2f}")
+                elif precio_ed > 0:
                     for col in r[6:]: _ref(col, "—")
-            else:
-                if is_formal:
-                    r[4].write(""); r[5].write("")
                 else:
                     for col in r[6:]: col.write("")
 
-            grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed}
-
-            # Campos formales (especificacion + volumen)
-            if is_formal:
-                especif = r[1].text_input("", value=fila.get("especificacion",""),
-                                           key=k_spec, label_visibility="collapsed",
-                                           placeholder="Ej: Descolada, calibre mediano")
-                vol_sem = r[2].number_input("", value=float(fila.get("volumen_semanal",0)),
-                                             min_value=0.0, step=100.0, key=k_vol,
-                                             label_visibility="collapsed")
                 grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed,
-                              "especificacion": especif, "volumen_semanal": vol_sem}
-            else:
-                grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed,
-                              "especificacion":"", "volumen_semanal": 0.0}
+                              "especificacion": "", "volumen_semanal": 0.0}
 
             if precio_ed > 0:
-                lineas_pdf.append({"producto": prod_sel,
-                                   "unidad":   p.get("unidad",""),
-                                   "precio_cotizar":  precio_ed,
-                                   "especificacion":  grilla[i].get("especificacion",""),
-                                   "volumen_semanal": grilla[i].get("volumen_semanal",0.0)})
+                lineas_pdf.append({
+                    "producto":        prod_sel,
+                    "unidad":          p.get("unidad",""),
+                    "precio_cotizar":  precio_ed,
+                    "especificacion":  grilla[i].get("especificacion",""),
+                    "volumen_semanal": grilla[i].get("volumen_semanal", 0.0),
+                })
         else:
             grilla[i] = {"producto":"","precio_cotizar":0.0,
                           "especificacion":"","volumen_semanal":0.0}
             for col in r[1:]: col.write("")
-
     st.session_state["cot_grilla"] = grilla
 
     # Botones de fila
@@ -522,7 +522,6 @@ def _cotizacion():
                         cotizador=cotizador_nombre,
                         cotizador_tel=cotizador_tel,
                         num_cot=st.session_state.get("cot_num","VX-001"),
-                        notas=st.session_state.get("cot_notas_formal",""),
                     )
                     nombre = (f"Cotizacion_Formal_VeggiExpress_"
                               f"{st.session_state.get('cot_num','').replace('-','_')}.pdf")
