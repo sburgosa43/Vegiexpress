@@ -128,26 +128,6 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
                 r[3].write(f"Q{l['precio']:,.2f}")
                 r[4].write(f"Q{l['total']:,.2f}")
 
-            # Boton Remision por semana
-            try:
-                from pdf_helper import generar_remision as _gen_rem
-                _lineas_rem = [{"producto": l["producto"],
-                                "unidad":   l.get("unidad",""),
-                                "cantidad": float(l.get("cantidad") or 0),
-                                "total":    float(l.get("total") or 0)}
-                               for l in lineas_sem]
-                _fecha_rem  = fecha_sem.strftime("%d/%m/%Y")
-                _rem_bytes  = _gen_rem(cli_nombre, _lineas_rem,
-                                       int(sem_num), int(año), _fecha_rem)
-                _nom_rem    = f"Remision_{cli_nombre.replace(' ','_')}_Sem{sem_num}.pdf"
-                st.download_button(f"🖨️ Remisión Sem {sem_num}",
-                    data=_rem_bytes, file_name=_nom_rem,
-                    mime="application/pdf",
-                    key=f"fac_rem_{cli_nombre}_{sem_num}_{año}",
-                    type="secondary")
-            except Exception as _re:
-                st.caption(f"Remision error: {_re}")
-
         st.divider()
 
         # Resumen por producto

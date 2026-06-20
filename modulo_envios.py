@@ -141,6 +141,7 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
 
         with col_rem:
             try:
+                import streamlit.components.v1 as _comp, base64 as _b64
                 from pdf_helper import generar_remision as _gen_rem
                 _lineas_rem = [{"producto": l["producto"],
                                 "unidad":   l.get("unidad",""),
@@ -148,15 +149,29 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
                                 "total":    round(float(l.get("precio") or 0)
                                                   * float(l.get("cantidad") or 0), 2)}
                                for l in lineas_pdf]
-                _fecha_rem  = fecha_ped.strftime("%d/%m/%Y")
-                _rem_bytes  = _gen_rem(l0["cliente"], _lineas_rem,
-                                       int(l0["semana"]), int(l0["año"]),
-                                       _fecha_rem)
-                _nom_rem    = f"Remision_{l0['cliente'].replace(' ','_')}_Sem{l0['semana']}.pdf"
-                col_rem.download_button("🖨️ Remisión", data=_rem_bytes,
-                    file_name=_nom_rem, mime="application/pdf",
-                    key=f"env_rem_{sufijo}_{unico}", type="secondary",
-                    use_container_width=True)
+                _fecha_rem = fecha_ped.strftime("%d/%m/%Y")
+                _rem_bytes = _gen_rem(l0["cliente"], _lineas_rem,
+                                      int(l0["semana"]), int(l0["año"]),
+                                      _fecha_rem)
+                _b64_rem   = _b64.b64encode(_rem_bytes).decode()
+                _fn_id     = f"rem_{sufijo}_{unico}".replace("-","_")
+                _comp.html(f"""
+                <script>
+                function imp_{_fn_id}(){{
+                    var raw=atob('{_b64_rem}');
+                    var arr=new Uint8Array(raw.length);
+                    for(var i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+                    var blob=new Blob([arr],{{type:'application/pdf'}});
+                    var url=URL.createObjectURL(blob);
+                    var win=window.open(url,'_blank');
+                    win.onload=function(){{win.print();}};
+                }}
+                </script>
+                <button onclick="imp_{_fn_id}()" style="
+                    background:#555;color:white;border:none;border-radius:6px;
+                    padding:6px 10px;font-size:13px;cursor:pointer;width:100%;
+                    font-family:sans-serif">🖨️ Remisión</button>
+                """, height=40)
             except Exception as _e:
                 col_rem.caption(f"Rem: {_e}")
 
