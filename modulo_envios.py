@@ -142,20 +142,40 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
 
         with col_rem:
             try:
-                from pdf_helper import generar_remision as _gr
-                _lr = [{"producto": l["producto"],"unidad": l.get("unidad",""),
-                        "cantidad": float(l.get("cantidad") or 0),
-                        "total": round(float(l.get("precio") or 0)*float(l.get("cantidad") or 0),2)}
-                       for l in lineas_pdf]
-                _rb  = base64.b64encode(
-                           _gr(l0["cliente"], _lr, int(l0["semana"]),
-                               int(l0["año"]), fecha_ped.strftime("%d/%m/%Y"))
-                       ).decode()
-                _fid = ("rf_"+sufijo+"_"+str(unico)).replace("-","_").replace(".","_")
-                _sty = "background:#555;color:white;border:none;border-radius:6px;padding:6px 10px;font-size:13px;cursor:pointer;width:100%;font-family:sans-serif"
-                _js  = "<script>function " + _fid + "(){var b=atob('" + _rb + "');var a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);var blob=new Blob([a],{type:'application/pdf'});var u=URL.createObjectURL(blob);var w=window.open(u,'_blank');if(w){setTimeout(function(){try{w.print();}catch(e){}},1500);}}</script>"
-                _btn = "<button onclick='" + _fid + "()' style='" + _sty + "'>🖨 Remisión</button>"
-                components.html(_js + _btn, height=40)
+                from pdf_helper import generar_remision as _gen_rem
+                _lr = [
+                    {"producto": l["producto"], "unidad": l.get("unidad",""),
+                     "cantidad": float(l.get("cantidad") or 0),
+                     "total": round(float(l.get("precio") or 0)*float(l.get("cantidad") or 0),2)}
+                    for l in lineas_pdf
+                ]
+                _rb = base64.b64encode(
+                    _gen_rem(l0["cliente"], _lr, int(l0["semana"]),
+                             int(l0["áño"]), fecha_ped.strftime("%d/%m/%Y"))
+                ).decode()
+                _fn = ("rfn_"+sufijo+"_"+str(unico)).replace("-","_").replace(".","_")
+                # Mismo patron que modulo_gestion — placeholders evitan confusion de f-string
+                _tmpl = (
+                    "<script>"
+                    "function FN(){"
+                    "var b64='B64';"
+                    "var raw=atob(b64);"
+                    "var arr=new Uint8Array(raw.length);"
+                    "for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);"
+                    "var blob=new Blob([arr],{type:'application/pdf'});"
+                    "var url=URL.createObjectURL(blob);"
+                    "var win=window.open(url,'_blank');"
+                    "if(win){win.onload=function(){win.print()};}"
+                    "}"
+                    "</script>"
+                    "<button onclick='FN()' style='"
+                    "background:#2D7A2D;color:white;border:none;border-radius:6px;"
+                    "padding:6px 12px;font-size:13px;cursor:pointer;width:100%;"
+                    "font-family:sans-serif'>"
+                    "🖨 Remisión</button>"
+                )
+                _html = _tmpl.replace("FN", _fn).replace("B64", _rb)
+                components.html(_html, height=42)
             except Exception as _e:
                 col_rem.caption("Rem: " + str(_e))
 
