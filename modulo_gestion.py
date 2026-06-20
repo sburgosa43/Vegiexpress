@@ -322,14 +322,16 @@ def _modificar(todos):
                                 f"({_cas_f}): Q{_cas_p:,.2f}</small>",
                                 unsafe_allow_html=True)
 
-                    # Indicadores de cambio
+                    # Indicadores de cambio (solo si NO está marcada para eliminar)
+                    _va_eliminar = st.session_state.get(f"del_row_{rn}", False)
                     hay_diff = []
-                    if prod_nuevo and prod_nuevo != linea["producto"]:
-                        hay_diff.append("producto")
-                    if abs(cant_nueva - float(linea["cantidad"] or 0)) > 0.001:
-                        hay_diff.append("cantidad")
-                    if abs(prec_nuevo - float(linea["precio"] or 0)) > 0.001:
-                        hay_diff.append("precio")
+                    if not _va_eliminar:
+                        if prod_nuevo and prod_nuevo != linea["producto"]:
+                            hay_diff.append("producto")
+                        if abs(cant_nueva - float(linea["cantidad"] or 0)) > 0.001:
+                            hay_diff.append("cantidad")
+                        if abs(prec_nuevo - float(linea["precio"] or 0)) > 0.001:
+                            hay_diff.append("precio")
                     if hay_diff:
                         st.caption(f"📝 {linea['producto']}: cambió {', '.join(hay_diff)}")
                         cambios_pedido += 1
