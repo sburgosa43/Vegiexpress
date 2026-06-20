@@ -16,6 +16,7 @@ from config       import (ZONAS_MAP as _ZONAS_CFG, excluido_dashboard, es_hogar,
 
 ZONAS_ENVIO = _ZONAS_CFG   # Fuente única: config.py
 
+@st.cache_data(ttl=300)
 def _get_cli_map():
     try:
         from data_helper import cargar_clientes
@@ -151,7 +152,7 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
                 ]
                 _rb = base64.b64encode(
                     _gen_rem(l0["cliente"], _lr, int(l0["semana"]),
-                             int(l0["áño"]), fecha_ped.strftime("%d/%m/%Y"))
+                             int(l0["año"]), fecha_ped.strftime("%d/%m/%Y"))
                 ).decode()
                 _fn = ("rfn_"+sufijo+"_"+str(unico)).replace("-","_").replace(".","_")
                 # Mismo patron que modulo_gestion — placeholders evitan confusion de f-string
