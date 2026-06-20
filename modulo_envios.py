@@ -64,11 +64,12 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
             extra_txt = f"ISR: Q{isr_ped:,.2f}  ·  "
         elif desc_ped > 0:
             extra_txt = f"Descuento: Q{desc_ped:,.2f}  ·  "
+        _nit = (cliente_info or {}).get("nit") or "—"
         st.markdown(
             f"<div style='background:#2D7A2D;color:white;padding:6px 10px;"
             f"border-radius:4px;font-size:.82rem;font-weight:bold;"
             f"margin:0 0 8px 0'>"
-            f"Total: Q{total_orig:,.2f}  ·  Base IVA: Q{base_iva:,.2f}"
+            f"NIT: {_nit}  ·  Total: Q{total_orig:,.2f}  ·  Base IVA: Q{base_iva:,.2f}"
             f"<br><span style='font-weight:normal;font-size:.78rem;opacity:.95'>"
             f"{extra_txt}"
             f"Líquido: Q{liq_ped:,.2f}  ·  "
@@ -115,7 +116,7 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
             st.caption("⚠️ Hay precios modificados.")
         st.divider()
 
-        col_save, col_pdf, col_acc = st.columns(3)
+        col_save, col_pdf, col_rem, col_acc = st.columns(4)
         with col_save:
             if st.button("💾 Guardar cambios" if hay_cambios else "✅ Sin cambios",
                          key=f"env_save_{sufijo}_{unico}",
@@ -137,6 +138,27 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
                     key=f"env_pdf_{sufijo}_{unico}", type="primary")
             except Exception as e:
                 st.error(f"Error PDF: {e}")
+
+        with col_rem:
+            try:
+                from pdf_helper import generar_remision as _gen_rem
+                _lineas_rem = [{"producto": l["producto"],
+                                "unidad":   l.get("unidad",""),
+                                "cantidad": float(l.get("cantidad") or 0),
+                                "total":    round(float(l.get("precio") or 0)
+                                                  * float(l.get("cantidad") or 0), 2)}
+                               for l in lineas_pdf]
+                _fecha_rem  = fecha_ped.strftime("%d/%m/%Y")
+                _rem_bytes  = _gen_rem(l0["cliente"], _lineas_rem,
+                                       int(l0["semana"]), int(l0["año"]),
+                                       _fecha_rem)
+                _nom_rem    = f"Remision_{l0['cliente'].replace(' ','_')}_Sem{l0['semana']}.pdf"
+                col_rem.download_button("🖨️ Remisión", data=_rem_bytes,
+                    file_name=_nom_rem, mime="application/pdf",
+                    key=f"env_rem_{sufijo}_{unico}", type="secondary",
+                    use_container_width=True)
+            except Exception as _e:
+                col_rem.caption(f"Rem: {_e}")
 
         with col_acc:
             if not cancelado:
