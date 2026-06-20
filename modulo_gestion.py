@@ -171,6 +171,27 @@ def _modificar(todos):
     if not sel:
         st.info("Seleccioná al menos un pedido."); return
 
+    # ── Snapshot inmutable de valores originales ──────────────────────────────
+    # Se crea UNA SOLA VEZ al abrir la selección; evita falsos positivos
+    # causados por session_state obsoleto de sesiones anteriores de edición.
+    snap_key = f"mod_snap_{'_'.join(str(u) for u in sorted(sel))}"
+    if snap_key not in st.session_state:
+        _snap = {}
+        for _u in sel:
+            for _l in grupos[_u]:
+                _rn = _l["row_num"]
+                _snap[_rn] = {
+                    "producto": _l["producto"],
+                    "cantidad": float(_l["cantidad"] or 0),
+                    "precio":   float(_l["precio"]   or 0),
+                }
+                # Limpiar session_state obsoleto para estos widgets
+                _uid = f"mod_{_rn}"
+                for _sfx in ("_prec", "_cant", "_prod"):
+                    st.session_state.pop(f"{_uid}{_sfx}", None)
+        st.session_state[snap_key] = _snap
+    _snap = st.session_state[snap_key]
+
     # Acumular cambios de todos los pedidos seleccionados
     lineas_originales = {}   # row_num → linea original
     total_cambios     = 0
@@ -252,11 +273,11 @@ def _modificar(todos):
                     uid = f"mod_{rn}"
                     lineas_originales[rn] = linea
 
-                    # Pre-inicializar con valores actuales si no hay edición en curso
+                    # Pre-inicializar desde snapshot (garantiza valor limpio)
                     if f"{uid}_cant" not in st.session_state:
-                        st.session_state[f"{uid}_cant"] = float(linea["cantidad"] or 0)
-                    if f"{uid}_prec" not in st.session_state or                             st.session_state[f"{uid}_prec"] == 0.0:
-                        st.session_state[f"{uid}_prec"] = float(linea["precio"] or 0)
+                        st.session_state[f"{uid}_cant"] = _snap.get(rn,{}).get("cantidad", float(linea["cantidad"] or 0))
+                    if f"{uid}_prec" not in st.session_state:
+                        st.session_state[f"{uid}_prec"] = _snap.get(rn,{}).get("precio",   float(linea["precio"]   or 0))
 
                     ec1, ec2, ec3, ec4 = st.columns([3.5, 1.2, 1.5, 0.7])
                     prod_nuevo = ec1.selectbox("",  prods_lista,
@@ -322,15 +343,16 @@ def _modificar(todos):
                                 f"({_cas_f}): Q{_cas_p:,.2f}</small>",
                                 unsafe_allow_html=True)
 
-                    # Indicadores de cambio (solo si NO está marcada para eliminar)
+                    # Indicadores de cambio — comparar vs snapshot, no vs linea en vivo
                     _va_eliminar = st.session_state.get(f"del_row_{rn}", False)
+                    _orig = _snap.get(rn, {})
                     hay_diff = []
                     if not _va_eliminar:
-                        if prod_nuevo and prod_nuevo != linea["producto"]:
+                        if prod_nuevo and prod_nuevo != _orig.get("producto", linea["producto"]):
                             hay_diff.append("producto")
-                        if abs(cant_nueva - float(linea["cantidad"] or 0)) > 0.001:
+                        if abs(cant_nueva - _orig.get("cantidad", float(linea["cantidad"] or 0))) > 0.001:
                             hay_diff.append("cantidad")
-                        if abs(prec_nuevo - float(linea["precio"] or 0)) > 0.001:
+                        if abs(prec_nuevo - _orig.get("precio", float(linea["precio"] or 0))) > 0.001:
                             hay_diff.append("precio")
                     if hay_diff:
                         st.caption(f"📝 {linea['producto']}: cambió {', '.join(hay_diff)}")
@@ -439,9 +461,10 @@ def _modificar(todos):
                 }
                 if prod_n and prod_n != linea["producto"]:
                     cambio["producto_nuevo"] = prod_n
-                if abs(float(cant_n or 0) - float(linea["cantidad"] or 0)) > 0.001:
+                _orig_sv = st.session_state.get(snap_key, {}).get(rn, {})
+                if abs(float(cant_n or 0) - _orig_sv.get("cantidad", float(linea["cantidad"] or 0))) > 0.001:
                     cambio["cantidad_nueva"] = float(cant_n)
-                if abs(float(prec_n or 0) - float(linea["precio"] or 0)) > 0.001:
+                if abs(float(prec_n or 0) - _orig_sv.get("precio", float(linea["precio"] or 0))) > 0.001:
                     cambio["precio_nuevo"] = float(prec_n)
                 if len(cambio) > 4:   # más que solo los 4 campos base
                     cambios_batch.append(cambio)
@@ -489,6 +512,7 @@ def _modificar(todos):
                 st.session_state.pop(f"mod_nuevas_{unico}", None)
             for rn in list(lineas_originales.keys()):
                 st.session_state.pop(f"del_row_{rn}", None)
+            st.session_state.pop(snap_key, None)   # reset snapshot tras guardar
 
             partes = []
             if res["ediciones"]:   partes.append(f"{res['ediciones']} edición(es)")
