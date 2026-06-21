@@ -40,6 +40,7 @@ PAGES = [
     ("👥 Clientes (Nuevos y Mantenimiento)",    "modulo_clientes"),
     ("🧮 Cotizador",                            "modulo_cotizador"),
     ("🔍 Precios La Torre",                     "modulo_scraper"),
+    ("🌱 Producción",                           "modulo_produccion"),
 ]
 
 MENU   = [label  for label, _      in PAGES]

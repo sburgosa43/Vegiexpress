@@ -197,7 +197,8 @@ def _tab_actualizar(es_antigua: bool = False):
     st.caption(f"{len(filtrados)} de {len(todos)} productos")
 
     # ── Margen ────────────────────────────────────────────────────────────────
-    IVA, ISR = 0.12, 0.05
+    from config import IVA_FACTOR, ISR_FACTOR
+    IVA, ISR = 0.12, 0.05  # legacy locals (helpers de config disponibles)
 
     def _mg(costo, precio):
         if precio <= 0: return 0.0

@@ -252,6 +252,13 @@ def mostrar():
                 _card(cols[j], emoji, tit, desc, nk, bk)
         st.markdown("&nbsp;", unsafe_allow_html=True)
 
+    # ── Widget de Producción (cosechas + alertas fertilización) ────────────────
+    try:
+        from modulo_produccion import widget_inicio as _prod_widget
+        _prod_widget()
+    except Exception:
+        pass
+
     _seccion("⚡ Operación", [
         ("📥", "Pedidos Entrantes",  "Pedidos recibidos de clientes",      "📥 Pedidos Entrantes",                    "b00"),
         ("🛒", "Nuevo Pedido",       "Ingresar pedidos de clientes",        "🛒 Nuevo Pedido",                          "b01"),
@@ -268,6 +275,9 @@ def mostrar():
         ("💰", "Flujo de Caja",      "Liquidez semanal y proyecciones",     "💰 Flujo de Caja",                         "b08"),
         ("💳", "Gastos",             "Gastos operativos y personales",      "💳 Gastos",                                "b09"),
         ("📊", "Dashboard",          "KPIs y análisis de negocio",          "📊 Dashboard",                             "b10"),
+    ])
+    _seccion("🌱 Producción", [
+        ("🌱", "Producción",         "Siembras, cosechas y fertilización",  "🌱 Producción",                            "b13"),
     ])
     _seccion("🔧 Herramientas", [
         ("🔧", "Mantenimiento",      "Corrección de datos y migraciones",   "🔧 Mantenimiento",                         "b11"),

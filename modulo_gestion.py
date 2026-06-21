@@ -598,27 +598,12 @@ def _tab_remision(todos: list):
     # ── Botones ────────────────────────────────────────────────────────────
     bb1, bb2 = st.columns(2)
 
-    # Botón imprimir directo (nueva pestaña, sin descarga)
-    html_print = f"""
-    <script>
-    function imprimirRemision() {{
-        var b64  = '{pdf_b64}';
-        var raw  = atob(b64);
-        var arr  = new Uint8Array(raw.length);
-        for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
-        var blob = new Blob([arr], {{type:'application/pdf'}});
-        var url  = URL.createObjectURL(blob);
-        var win  = window.open(url, '_blank');
-        win.onload = function() {{ win.print(); }};
-    }}
-    </script>
-    <button onclick="imprimirRemision()" style="
-        background:#2D7A2D;color:white;border:none;border-radius:6px;
-        padding:8px 16px;font-size:14px;cursor:pointer;width:100%;
-        font-family:sans-serif">🖨️ Imprimir</button>
-    """
+    # Botón imprimir directo (nueva pestaña, sin descarga) — helper compartido
+    from pdf_helper import boton_imprimir_html as _btn_imp
     with bb1:
-        components.html(html_print, height=48)
+        components.html(
+            _btn_imp(pdf_bytes, f"gest_rem_{nom_file}", "🖨️ Imprimir"),
+            height=48)
 
     bb2.download_button(
         "📥 Descargar PDF",

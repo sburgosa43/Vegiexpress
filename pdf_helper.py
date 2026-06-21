@@ -1368,3 +1368,43 @@ def generar_remision(cliente: str, lineas: list,
 
     doc.build(story)
     return buf.getvalue()
+
+
+# ── Helper de impresión compartido ────────────────────────────────────────────
+def boton_imprimir_html(pdf_bytes: bytes, fn_id: str,
+                        label: str = "Imprimir",
+                        color: str = "#2D7A2D") -> str:
+    """
+    Genera el HTML+JS de un botón que abre el PDF en nueva pestaña e imprime.
+    Patrón unificado: usado por modulo_gestion, modulo_envios.
+    Usa placeholders (no f-string) en el bloque JS para evitar corrupción de
+    llaves. Renderizar con: components.html(boton_imprimir_html(...), height=44)
+
+    fn_id: identificador único de la función JS (sin guiones ni puntos).
+    """
+    import base64
+    b64 = base64.b64encode(pdf_bytes).decode()
+    fn  = "imp_" + str(fn_id).replace("-", "_").replace(".", "_").replace(" ", "_")
+
+    tmpl = (
+        "<script>"
+        "function FN(){"
+        "var b64='B64';"
+        "var raw=atob(b64);"
+        "var arr=new Uint8Array(raw.length);"
+        "for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);"
+        "var blob=new Blob([arr],{type:'application/pdf'});"
+        "var url=URL.createObjectURL(blob);"
+        "var win=window.open(url,'_blank');"
+        "if(win){setTimeout(function(){try{win.print();}catch(e){}},800);}"
+        "}"
+        "</script>"
+        "<button onclick='FN()' style='"
+        "background:COLOR;color:white;border:none;border-radius:6px;"
+        "padding:7px 14px;font-size:13px;cursor:pointer;width:100%;"
+        "font-family:sans-serif'>LABEL</button>"
+    )
+    return (tmpl.replace("FN", fn)
+                .replace("B64", b64)
+                .replace("COLOR", color)
+                .replace("LABEL", label))

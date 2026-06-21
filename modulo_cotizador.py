@@ -11,8 +11,8 @@ Fórmulas base (las mismas del Listado Productos):
 import streamlit as st
 import pandas as pd
 
-IVA_RATE = 0.12
-ISR_RATE = 0.05
+from config import (IVA_RATE, ISR_RATE, IVA_FACTOR, ISR_FACTOR,
+                    margen_neto_pct, margen_neto_q, punto_equilibrio)
 
 
 # ── CÁLCULOS ──────────────────────────────────────────────────────────────────
@@ -522,6 +522,7 @@ def _cotizacion():
                         cotizador=cotizador_nombre,
                         cotizador_tel=cotizador_tel,
                         num_cot=st.session_state.get("cot_num","VX-001"),
+                        notas=notas_cot,
                     )
                     nombre = (f"Cotizacion_Formal_VeggiExpress_"
                               f"{st.session_state.get('cot_num','').replace('-','_')}.pdf")

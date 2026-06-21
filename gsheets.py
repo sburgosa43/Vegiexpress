@@ -24,6 +24,10 @@ HOJAS = {
     "datoscompletos": "DatosCompletos",
     "formimports":    "FormImports",
     "backup":       "Pedidos_Backup",
+    "produccion":         "Produccion",
+    "produccioncultivos": "ProduccionCultivos",
+    "produccionaplic":    "ProduccionAplicaciones",
+    "produccionfert":     "ProduccionFertilizantes",
 }
 
 SCOPES = [
@@ -181,3 +185,27 @@ def cell_value(nombre: str, row: int, col: int):
 def clear_ws_cache():
     """Limpia el caché para forzar reconexión."""
     _gc.clear()
+
+
+def ensure_ws(nombre: str, headers: list, rows_iniciales: list = None) -> bool:
+    """
+    Garantiza que la hoja exista. Si no existe, la crea con encabezados
+    y filas iniciales opcionales. Retorna True si la creó, False si ya existia.
+    nombre: clave en HOJAS. headers: lista de encabezados (fila 1).
+    """
+    real = HOJAS.get(nombre, nombre)
+    wb = _wb()
+    try:
+        wb.worksheet(real)
+        return False  # ya existe
+    except Exception:
+        pass
+    # Crear
+    ncols = max(len(headers), 4)
+    nrows = max(len(rows_iniciales or []) + 5, 20)
+    nueva = wb.add_worksheet(title=real, rows=nrows, cols=ncols)
+    data = [headers]
+    if rows_iniciales:
+        data.extend(rows_iniciales)
+    nueva.update(f"A1", data, value_input_option="USER_ENTERED")
+    return True

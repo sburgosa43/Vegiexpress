@@ -125,3 +125,25 @@ HOJA_PRODUCTOS        = "Listado Productos"
 HOJA_PRODUCTOS_ANTIGUA= "Listado Productos Antigua"
 HOJA_CONFIG           = "Config"
 HOJA_HISTORIAL        = "Historial Cambios"
+
+
+# ── Constantes fiscales y de margen ───────────────────────────────────────────
+# Centralizadas aquí para que un cambio de tasa se refleje en toda la app.
+IVA_RATE = 0.12          # Impuesto al Valor Agregado (12%)
+ISR_RATE = 0.05          # Retención ISR (5%)
+IVA_FACTOR = 1 + IVA_RATE     # 1.12 — multiplicador de costo con IVA
+ISR_FACTOR = 1 - ISR_RATE     # 0.95 — factor neto tras retención ISR
+
+def margen_neto_pct(costo: float, precio: float) -> float:
+    """Margen neto en % según fórmula acordada: ISR_FACTOR·(1 - costo·IVA_FACTOR/precio)·100."""
+    if not precio or precio <= 0:
+        return 0.0
+    return ISR_FACTOR * (1 - costo * IVA_FACTOR / precio) * 100
+
+def margen_neto_q(costo: float, precio: float) -> float:
+    """Margen neto en Quetzales: ISR_FACTOR·(precio - costo·IVA_FACTOR)."""
+    return ISR_FACTOR * (precio - costo * IVA_FACTOR)
+
+def punto_equilibrio(costo: float) -> float:
+    """Precio mínimo sin ganar ni perder: costo·IVA_FACTOR."""
+    return costo * IVA_FACTOR
