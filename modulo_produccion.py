@@ -40,11 +40,11 @@ _FERT_INICIAL = [
 
 _CULT_INICIAL = [
     # Cultivo, Variedad, Dias_Ciclo, Germinacion, Rend_Min, Rend_Max, Productos_Cosecha
-    ["Zanahoria Baby", "Mercedes", 88, 0.75, 7, 10,
+    ["Zanahoria Baby", "Mercedes", 88, 0.75, 10, 7,
      "Mini,Zanahoria Baby,Zanahoria Babyr,Zanahoria Babyl"],
-    ["Zanahoria Baby", "Crofton",  85, 0.75, 7, 10,
+    ["Zanahoria Baby", "Crofton",  85, 0.75, 10, 7,
      "Mini,Zanahoria Baby,Zanahoria Babyr,Zanahoria Babyl"],
-    ["Zanahoria Baby", "Romance",  90, 0.75, 7, 10,
+    ["Zanahoria Baby", "Romance",  90, 0.75, 10, 7,
      "Mini,Zanahoria Baby,Zanahoria Babyr,Zanahoria Babyl"],
 ]
 
@@ -352,11 +352,18 @@ def _rendimiento_por_ventas(siembra: dict) -> dict:
 
 
 def _proyectar_lbs(semillas: float, germinacion: float,
-                   rend_min: float, rend_max: float) -> tuple:
-    """Plantas = semillas * germinacion. Lbs = plantas / rend (zanahorias/lb)."""
+                   rend_a: float, rend_b: float) -> tuple:
+    """Plantas = semillas * germinacion. Lbs = plantas / (zanahorias por libra).
+    Robusto al orden: el MENOR valor de zanahorias/lb (raíz grande) da MÁS libras;
+    el MAYOR (raíz chica) da MENOS libras. Así no importa cómo se nombren las
+    columnas Rend_Min / Rend_Max — el cálculo siempre es correcto."""
     plantas = semillas * germinacion
-    lbs_max = round(plantas / rend_min, 1) if rend_min > 0 else 0  # menos z/lb = más lbs
-    lbs_min = round(plantas / rend_max, 1) if rend_max > 0 else 0
+    z_lb = [v for v in (rend_a, rend_b) if v and v > 0]
+    if not z_lb:
+        return 0.0, 0.0
+    z_bajo, z_alto = min(z_lb), max(z_lb)
+    lbs_max = round(plantas / z_bajo, 1)   # menos zanahorias/lb = más libras
+    lbs_min = round(plantas / z_alto, 1)   # más zanahorias/lb = menos libras
     return lbs_min, lbs_max
 
 
@@ -1255,6 +1262,8 @@ def _tab_config():
         "Rend_Min": c["rend_min"], "Rend_Max": c["rend_max"],
         "Productos_Cosecha": ",".join(c["productos_cosecha"]),
     } for c in cultivos])
+    st.caption("**Rend_Min** = zanahorias/lb máximo (raíz más chica, menos libras) · "
+               "**Rend_Max** = zanahorias/lb mínimo (raíz más grande, más libras)")
 
     edited_cult = st.data_editor(df_cult, num_rows="dynamic",
                                   hide_index=True, use_container_width=True,
