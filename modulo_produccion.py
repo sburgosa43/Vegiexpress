@@ -1121,6 +1121,92 @@ def _tab_proyeccion():
                    f"en {len(prox)} cosecha(s)")
 
 
+# ── Vista: Historial (siembras cosechadas) ────────────────────────────────────
+def _tab_historial():
+    siembras = _leer_siembras()
+    cerradas = [s for s in siembras if s["estado"] != "Activa"]
+
+    if not cerradas:
+        st.info("No hay siembras cerradas todavía. Las cosechadas aparecerán acá.")
+        return
+
+    st.caption(f"{len(cerradas)} siembra(s) cerrada(s)")
+
+    import pandas as pd
+    rows = []
+    for s in cerradas:
+        prom_proy = (s["lbs_proyectadas_min"] + s["lbs_proyectadas_max"]) / 2
+        acierto = (s["lbs_cosechadas_real"] / prom_proy * 100) if prom_proy > 0 else 0
+        rows.append({
+            "Variedad":   s["variedad"],
+            "Lugar":      s["lugar"],
+            "Siembra":    s["fecha_siembra"].strftime("%d/%m/%Y") if s["fecha_siembra"] else "—",
+            "Cosecha":    s["fecha_cosecha_est"].strftime("%d/%m/%Y") if s["fecha_cosecha_est"] else "—",
+            "Real (lbs)": s["lbs_cosechadas_real"],
+            "Proyectado": round(prom_proy, 0),
+            "Acierto %":  round(acierto, 0),
+            "Estado":     s["estado"],
+        })
+    df = pd.DataFrame(rows)
+    st.dataframe(df, hide_index=True, use_container_width=True)
+
+    st.divider()
+    st.markdown("##### Gestionar siembra cerrada")
+    opts = {f"{s['variedad']} · {s['lugar']} · "
+            f"{s['fecha_siembra'].strftime('%d/%m/%Y') if s['fecha_siembra'] else '?'} "
+            f"({s['estado']})": s for s in cerradas}
+    sel = st.selectbox("Seleccioná una siembra cerrada", list(opts.keys()),
+                       key="hist_sel")
+    s = opts[sel]
+
+    # Detalle de cosecha
+    if s["cosecha_detalle"]:
+        st.markdown("**Detalle de cosecha:**")
+        det = s["cosecha_detalle"]
+        total = sum(det.values()) if det else 0
+        cols = st.columns(min(len(det), 4))
+        for i, (prod, lbs) in enumerate(det.items()):
+            cols[i % len(cols)].metric(prod, f"{lbs:.0f} lbs")
+        if total > 0:
+            st.caption("**Mix:** " + " · ".join(
+                f"{p}: {l/total*100:.0f}%" for p, l in det.items() if l > 0))
+
+    # Reabrir
+    h1, h2 = st.columns(2)
+    if h1.button("🔄 Reabrir (volver a Activa)", key=f"hist_reopen_{s['id_siembra']}",
+                 use_container_width=True,
+                 help="Vuelve a marcar la siembra como Activa para corregir o re-cosechar."):
+        from gsheets import update_cells
+        rn = s["row_num"]
+        with st.spinner("Reabriendo..."):
+            update_cells(_K_PROD, [
+                {"range": f"{_col_letra(13)}{rn}", "values": [["Activa"]]},
+            ])
+        _leer_siembras.clear()
+        st.success(f"✅ Siembra reabierta — vuelve a aparecer en Siembras Activas.")
+        st.rerun()
+
+    if h2.button("🗑️ Eliminar definitivamente", key=f"hist_del_{s['id_siembra']}",
+                 use_container_width=True):
+        st.session_state[f"hist_delconf_{s['id_siembra']}"] = True
+
+    if st.session_state.get(f"hist_delconf_{s['id_siembra']}", False):
+        st.error(f"¿Eliminar definitivamente **{s['variedad']} · {s['lugar']}**? "
+                 f"Se borra el registro y sus aplicaciones.")
+        dc1, dc2 = st.columns(2)
+        if dc1.button("✅ Sí, eliminar", key=f"hist_delok_{s['id_siembra']}",
+                      type="primary", use_container_width=True):
+            with st.spinner("Eliminando..."):
+                _eliminar_siembra(s["id_siembra"], s["row_num"])
+            st.session_state.pop(f"hist_delconf_{s['id_siembra']}", None)
+            st.success("Siembra eliminada.")
+            st.rerun()
+        if dc2.button("Cancelar", key=f"hist_delno_{s['id_siembra']}",
+                      use_container_width=True):
+            st.session_state.pop(f"hist_delconf_{s['id_siembra']}", None)
+            st.rerun()
+
+
 # ── Vista: Configuración (cultivos, fertilizantes) ────────────────────────────
 def _tab_config():
     import pandas as pd
@@ -1203,10 +1289,12 @@ def mostrar():
         "📋 Siembras Activas",
         "🥕 Cosecha / Cierre",
         "📊 Proyección",
+        "📚 Historial",
         "⚙️ Configuración",
     ])
     with tabs[0]: _tab_nueva_siembra()
     with tabs[1]: _tab_siembras_activas()
     with tabs[2]: _tab_cosecha()
     with tabs[3]: _tab_proyeccion()
-    with tabs[4]: _tab_config()
+    with tabs[4]: _tab_historial()
+    with tabs[5]: _tab_config()
