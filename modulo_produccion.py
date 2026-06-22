@@ -205,6 +205,24 @@ def _leer_aplicaciones(id_siembra: str = None) -> list:
     return out
 
 
+def _eliminar_siembra(id_siembra: str, row_num: int):
+    """Elimina una siembra y todas sus aplicaciones de fertilización."""
+    from gsheets import delete_rows, get_all_rows, ws
+    # Borrar fila de la siembra
+    delete_rows(_K_PROD, [row_num])
+    # Borrar sus aplicaciones (reescribir hoja sin ellas)
+    todas = get_all_rows(_K_APLIC)
+    conservar = [r for r in todas if r and str(r[0]) != id_siembra]
+    headers = ["id_siembra", "aplicacion", "dia_desde", "dia_hasta",
+               "temporada", "fertilizante", "lbs", "aplicado_real",
+               "fecha_aplicado"]
+    w = ws(_K_APLIC)
+    w.clear()
+    w.update("A1", [headers] + conservar, value_input_option="USER_ENTERED")
+    _leer_siembras.clear()
+    _leer_aplicaciones.clear()
+
+
 def _reescribir_aplicaciones(id_siembra: str, nuevas_filas: list):
     """Borra todas las aplicaciones de una siembra y escribe las nuevas.
     nuevas_filas: lista de listas con las 9 columnas."""
@@ -686,97 +704,115 @@ def _tab_siembras_activas():
             # ── Editar siembra ────────────────────────────────────────────────
             st.divider()
             _edit_key = f"prod_edit_{s['id_siembra']}"
-            if st.button("✏️ Editar datos", key=f"btn_edit_{s['id_siembra']}"):
+            ce1, ce2 = st.columns(2)
+            if ce1.button("✏️ Editar datos", key=f"btn_edit_{s['id_siembra']}",
+                          use_container_width=True):
                 st.session_state[_edit_key] = not st.session_state.get(_edit_key, False)
+            _del_key = f"prod_del_{s['id_siembra']}"
+            if ce2.button("🗑️ Eliminar siembra", key=f"btn_del_{s['id_siembra']}",
+                          use_container_width=True):
+                st.session_state[_del_key] = True
+
+            # Confirmación de eliminación
+            if st.session_state.get(_del_key, False):
+                st.error(f"¿Eliminar definitivamente la siembra **{s['variedad']} "
+                         f"· {s['lugar']}**? Se borrarán también sus aplicaciones "
+                         f"de fertilización.")
+                dc1, dc2 = st.columns(2)
+                if dc1.button("✅ Sí, eliminar", key=f"del_ok_{s['id_siembra']}",
+                              type="primary", use_container_width=True):
+                    with st.spinner("Eliminando..."):
+                        _eliminar_siembra(s["id_siembra"], s["row_num"])
+                    st.session_state.pop(_del_key, None)
+                    st.success("Siembra eliminada.")
+                    st.rerun()
+                if dc2.button("Cancelar", key=f"del_no_{s['id_siembra']}",
+                              use_container_width=True):
+                    st.session_state.pop(_del_key, None)
+                    st.rerun()
 
             if st.session_state.get(_edit_key, False):
-                with st.form(key=f"form_edit_{s['id_siembra']}"):
-                    st.markdown("**Editar siembra**")
-                    ec1, ec2 = st.columns(2)
-                    nv_fecha_siembra = ec1.date_input(
-                        "Fecha de siembra",
-                        value=s["fecha_siembra"] or date.today(),
-                        key=f"ed_fs_{s['id_siembra']}")
-                    nv_semillas = ec2.number_input(
-                        "Cantidad de semillas", min_value=0,
-                        value=int(s["cantidad_semillas"]), step=10000,
-                        key=f"ed_sem_{s['id_siembra']}")
-                    ec3, ec4 = st.columns(2)
-                    nv_lugar = ec3.text_input(
-                        "Lugar", value=s["lugar"],
-                        key=f"ed_lug_{s['id_siembra']}")
-                    nv_tablones = ec4.number_input(
-                        "Tablones", min_value=0.0,
-                        value=float(s["tablones"]), step=1.0,
-                        key=f"ed_tab_{s['id_siembra']}")
-                    ec5, ec6 = st.columns(2)
-                    nv_dias = ec5.number_input(
-                        "Días de ciclo", min_value=1,
-                        value=int(s["dias_ciclo"]), step=1,
-                        key=f"ed_dias_{s['id_siembra']}")
-                    # Fecha cosecha: auto desde siembra+dias, pero editable.
-                    # Si se pidió recalcular en el render anterior, usar el auto.
-                    _auto_cos = nv_fecha_siembra + timedelta(days=int(nv_dias))
-                    _recalc_flag = f"ed_recalc_{s['id_siembra']}"
-                    if st.session_state.get(_recalc_flag):
-                        _fc_default = _auto_cos
-                        st.session_state[_recalc_flag] = False
-                    else:
-                        _fc_default = s["fecha_cosecha_est"] or _auto_cos
+                # NOTA: fuera de st.form para que la fecha de cosecha recalcule en vivo
+                st.markdown("**Editar siembra**")
+                ec1, ec2 = st.columns(2)
+                nv_fecha_siembra = ec1.date_input(
+                    "Fecha de siembra",
+                    value=s["fecha_siembra"] or date.today(),
+                    key=f"ed_fs_{s['id_siembra']}")
+                nv_semillas = ec2.number_input(
+                    "Cantidad de semillas", min_value=0,
+                    value=int(s["cantidad_semillas"]), step=10000,
+                    key=f"ed_sem_{s['id_siembra']}")
+                ec3, ec4 = st.columns(2)
+                nv_lugar = ec3.text_input(
+                    "Lugar", value=s["lugar"],
+                    key=f"ed_lug_{s['id_siembra']}")
+                nv_tablones = ec4.number_input(
+                    "Tablones", min_value=0.0,
+                    value=float(s["tablones"]), step=1.0,
+                    key=f"ed_tab_{s['id_siembra']}")
+                ec5, ec6 = st.columns(2)
+                nv_dias = ec5.number_input(
+                    "Días de ciclo", min_value=1,
+                    value=int(s["dias_ciclo"]), step=1,
+                    key=f"ed_dias_{s['id_siembra']}")
+
+                # Fecha cosecha: recalcula EN VIVO desde siembra + días (fuera del form)
+                _auto_cos = nv_fecha_siembra + timedelta(days=int(nv_dias))
+                _usar_auto = ec6.checkbox(
+                    "Recalcular cosecha automáticamente",
+                    value=True, key=f"ed_auto_{s['id_siembra']}",
+                    help="Activado: cosecha = siembra + días de ciclo. "
+                         "Desactivá para ajustar manual (adelantos/atrasos).")
+                if _usar_auto:
+                    nv_fecha_cosecha = _auto_cos
+                    ec6.markdown(
+                        f"<small style='color:#2D7A2D'>Cosecha estimada: "
+                        f"<b>{_auto_cos.strftime('%d/%m/%Y')}</b></small>",
+                        unsafe_allow_html=True)
+                else:
                     nv_fecha_cosecha = ec6.date_input(
-                        "Fecha cosecha estimada",
-                        value=_fc_default,
-                        key=f"ed_fc_{s['id_siembra']}",
-                        help="Se sugiere siembra + días de ciclo. Ajustá ± según temporada.")
-                    nv_notas = st.text_input(
-                        "Notas", value=s["notas"],
-                        key=f"ed_not_{s['id_siembra']}")
+                        "Fecha cosecha (manual)",
+                        value=s["fecha_cosecha_est"] or _auto_cos,
+                        key=f"ed_fc_{s['id_siembra']}")
 
-                    cg1, cg2 = st.columns(2)
-                    guardar = cg1.form_submit_button("💾 Guardar cambios",
-                                                      type="primary",
-                                                      use_container_width=True)
-                    recalc = cg2.form_submit_button(
-                        "🔄 Recalcular cosecha (siembra + ciclo)",
-                        use_container_width=True)
+                nv_notas = st.text_input(
+                    "Notas", value=s["notas"],
+                    key=f"ed_not_{s['id_siembra']}")
 
-                    if recalc:
-                        # No tocar el widget directamente — usar bandera + limpiar
-                        st.session_state[_recalc_flag] = True
-                        st.session_state.pop(f"ed_fc_{s['id_siembra']}", None)
-                        st.rerun()
+                if st.button("💾 Guardar cambios", type="primary",
+                             key=f"ed_save_{s['id_siembra']}",
+                             use_container_width=True):
+                    from gsheets import update_cells
+                    cultivos = _leer_cultivos()
+                    cult_s = next((c for c in cultivos
+                                   if c["variedad"] == s["variedad"]), None)
+                    if cult_s:
+                        lmin, lmax = _proyectar_lbs(
+                            nv_semillas, cult_s["germinacion"],
+                            cult_s["rend_min"], cult_s["rend_max"])
+                    else:
+                        lmin, lmax = s["lbs_proyectadas_min"], s["lbs_proyectadas_max"]
+                    sem_cos = nv_fecha_cosecha.isocalendar()[1]
+                    rn = s["row_num"]
+                    with st.spinner("Guardando cambios..."):
+                        update_cells(_K_PROD, [
+                            {"range": f"{_col_letra(3)}{rn}",  "values": [[nv_fecha_siembra.strftime("%d/%m/%Y")]]},
+                            {"range": f"{_col_letra(4)}{rn}",  "values": [[nv_semillas]]},
+                            {"range": f"{_col_letra(5)}{rn}",  "values": [[nv_lugar.strip()]]},
+                            {"range": f"{_col_letra(6)}{rn}",  "values": [[nv_tablones]]},
+                            {"range": f"{_col_letra(7)}{rn}",  "values": [[nv_fecha_cosecha.strftime("%d/%m/%Y")]]},
+                            {"range": f"{_col_letra(8)}{rn}",  "values": [[sem_cos]]},
+                            {"range": f"{_col_letra(9)}{rn}",  "values": [[int(nv_dias)]]},
+                            {"range": f"{_col_letra(10)}{rn}", "values": [[lmin]]},
+                            {"range": f"{_col_letra(11)}{rn}", "values": [[lmax]]},
+                            {"range": f"{_col_letra(14)}{rn}", "values": [[nv_notas.strip()]]},
+                        ])
+                    _leer_siembras.clear()
+                    st.session_state[_edit_key] = False
+                    st.success("✅ Siembra actualizada.")
+                    st.rerun()
 
-                    if guardar:
-                        from gsheets import update_cells
-                        cultivos = _leer_cultivos()
-                        cult_s = next((c for c in cultivos
-                                       if c["variedad"] == s["variedad"]), None)
-                        # Recalcular proyección con nuevas semillas
-                        if cult_s:
-                            lmin, lmax = _proyectar_lbs(
-                                nv_semillas, cult_s["germinacion"],
-                                cult_s["rend_min"], cult_s["rend_max"])
-                        else:
-                            lmin, lmax = s["lbs_proyectadas_min"], s["lbs_proyectadas_max"]
-                        sem_cos = nv_fecha_cosecha.isocalendar()[1]
-                        with st.spinner("Guardando cambios..."):
-                            rn = s["row_num"]
-                            update_cells(_K_PROD, [
-                                {"range": f"{_col_letra(3)}{rn}",  "values": [[nv_fecha_siembra.strftime("%d/%m/%Y")]]},
-                                {"range": f"{_col_letra(4)}{rn}",  "values": [[nv_semillas]]},
-                                {"range": f"{_col_letra(5)}{rn}",  "values": [[nv_lugar.strip()]]},
-                                {"range": f"{_col_letra(6)}{rn}",  "values": [[nv_tablones]]},
-                                {"range": f"{_col_letra(7)}{rn}",  "values": [[nv_fecha_cosecha.strftime("%d/%m/%Y")]]},
-                                {"range": f"{_col_letra(8)}{rn}",  "values": [[sem_cos]]},
-                                {"range": f"{_col_letra(9)}{rn}",  "values": [[int(nv_dias)]]},
-                                {"range": f"{_col_letra(10)}{rn}", "values": [[lmin]]},
-                                {"range": f"{_col_letra(11)}{rn}", "values": [[lmax]]},
-                                {"range": f"{_col_letra(14)}{rn}", "values": [[nv_notas.strip()]]},
-                            ])
-                        _leer_siembras.clear()
-                        st.session_state[_edit_key] = False
-                        st.success("✅ Siembra actualizada.")
-                        st.rerun()
             # ── Editar fertilización ──────────────────────────────────────────
             _fert_key = f"prod_fert_{s['id_siembra']}"
             if st.button("🧪 Editar fertilización", key=f"btn_fert_{s['id_siembra']}"):
