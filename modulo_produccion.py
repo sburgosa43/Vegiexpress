@@ -562,11 +562,18 @@ def _tab_siembras_activas():
                         "Días de ciclo", min_value=1,
                         value=int(s["dias_ciclo"]), step=1,
                         key=f"ed_dias_{s['id_siembra']}")
-                    # Fecha cosecha: auto desde siembra+dias, pero editable
+                    # Fecha cosecha: auto desde siembra+dias, pero editable.
+                    # Si se pidió recalcular en el render anterior, usar el auto.
                     _auto_cos = nv_fecha_siembra + timedelta(days=int(nv_dias))
+                    _recalc_flag = f"ed_recalc_{s['id_siembra']}"
+                    if st.session_state.get(_recalc_flag):
+                        _fc_default = _auto_cos
+                        st.session_state[_recalc_flag] = False
+                    else:
+                        _fc_default = s["fecha_cosecha_est"] or _auto_cos
                     nv_fecha_cosecha = ec6.date_input(
                         "Fecha cosecha estimada",
-                        value=s["fecha_cosecha_est"] or _auto_cos,
+                        value=_fc_default,
                         key=f"ed_fc_{s['id_siembra']}",
                         help="Se sugiere siembra + días de ciclo. Ajustá ± según temporada.")
                     nv_notas = st.text_input(
@@ -582,7 +589,9 @@ def _tab_siembras_activas():
                         use_container_width=True)
 
                     if recalc:
-                        st.session_state[f"ed_fc_{s['id_siembra']}"] = _auto_cos
+                        # No tocar el widget directamente — usar bandera + limpiar
+                        st.session_state[_recalc_flag] = True
+                        st.session_state.pop(f"ed_fc_{s['id_siembra']}", None)
                         st.rerun()
 
                     if guardar:
