@@ -64,34 +64,48 @@ _DOSIS_SUGERIDAS = {
 
 
 # ── Inicialización de hojas ───────────────────────────────────────────────────
-def _init_hojas():
-    """Crea las hojas con datos precargados si no existen."""
+def _ensure_safe(nombre, headers, rows_iniciales=None):
+    """ensure_ws tolerante a 'already exists' (cache de workbook desactualizada)."""
     from gsheets import ensure_ws
+    try:
+        return ensure_ws(nombre, headers, rows_iniciales)
+    except Exception as e:
+        # Si ya existe (carrera con cache del workbook), no es error real
+        if "already exists" in str(e).lower():
+            return False
+        raise
 
-    ensure_ws(_K_FERT,
-              ["Fertilizante", "N", "P", "K"],
-              [[r[0], r[1], r[2], r[3]] for r in _FERT_INICIAL])
 
-    ensure_ws(_K_CULT,
-              ["Cultivo", "Variedad", "Dias_Ciclo", "Germinacion",
-               "Rend_Min", "Rend_Max", "Productos_Cosecha"],
-              [[r[0], r[1], r[2], r[3], r[4], r[5], r[6]] for r in _CULT_INICIAL])
+def _init_hojas():
+    """Crea las hojas con datos precargados si no existen.
+    Se ejecuta UNA VEZ por sesión (flag en session_state) para no
+    consultar Sheets en cada navegación — clave para la velocidad."""
+    if st.session_state.get("_prod_hojas_ok"):
+        return
 
-    ensure_ws(_K_PROD,
-              ["id_siembra", "variedad", "fecha_siembra", "cantidad_semillas",
-               "lugar", "tablones", "fecha_cosecha_est", "semana_cosecha",
-               "dias_ciclo", "lbs_proyectadas_min", "lbs_proyectadas_max",
-               "lbs_cosechadas_real", "estado", "notas", "cultivo",
-               "cosecha_detalle"])
+    _ensure_safe(_K_FERT,
+                 ["Fertilizante", "N", "P", "K"],
+                 [[r[0], r[1], r[2], r[3]] for r in _FERT_INICIAL])
+    _ensure_safe(_K_CULT,
+                 ["Cultivo", "Variedad", "Dias_Ciclo", "Germinacion",
+                  "Rend_Min", "Rend_Max", "Productos_Cosecha"],
+                 [[r[0], r[1], r[2], r[3], r[4], r[5], r[6]] for r in _CULT_INICIAL])
+    _ensure_safe(_K_PROD,
+                 ["id_siembra", "variedad", "fecha_siembra", "cantidad_semillas",
+                  "lugar", "tablones", "fecha_cosecha_est", "semana_cosecha",
+                  "dias_ciclo", "lbs_proyectadas_min", "lbs_proyectadas_max",
+                  "lbs_cosechadas_real", "estado", "notas", "cultivo",
+                  "cosecha_detalle"])
+    _ensure_safe(_K_APLIC,
+                 ["id_siembra", "aplicacion", "dia_desde", "dia_hasta",
+                  "temporada", "fertilizante", "lbs", "aplicado_real",
+                  "fecha_aplicado"])
 
-    ensure_ws(_K_APLIC,
-              ["id_siembra", "aplicacion", "dia_desde", "dia_hasta",
-               "temporada", "fertilizante", "lbs", "aplicado_real",
-               "fecha_aplicado"])
+    st.session_state["_prod_hojas_ok"] = True
 
 
 # ── Lectores cacheados ────────────────────────────────────────────────────────
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def _leer_fertilizantes() -> dict:
     """Retorna {nombre: {N, P, K}}."""
     from gsheets import get_all_rows
@@ -107,7 +121,7 @@ def _leer_fertilizantes() -> dict:
     return out
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=900, show_spinner=False)
 def _leer_cultivos() -> list:
     """Retorna lista de dicts con cultivos y variedades."""
     from gsheets import get_all_rows
@@ -265,6 +279,60 @@ def _calc_mezcla(aplicaciones: list, fert_map: dict) -> dict:
     return {"grado": grado, "reales": reales, "total_lbs": total_lbs}
 
 
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _ventas_por_semana_cultivo() -> dict:
+    """
+    Suma las ventas (libras/cantidad) de los productos de cosecha por semana/año.
+    Retorna {(año, semana): {producto: cantidad}}.
+    Lee una sola vez y cachea — usado para rendimiento por cruce de ventas.
+    """
+    from excel_helper import leer_pedidos
+    # Productos de cosecha de todos los cultivos
+    cultivos = _leer_cultivos()
+    productos_cosecha = set()
+    for c in cultivos:
+        productos_cosecha.update(p.lower() for p in c["productos_cosecha"])
+
+    out = {}
+    for p in leer_pedidos():
+        if p["status"] == "Cancelado":
+            continue
+        prod_l = str(p["producto"]).lower().strip()
+        if prod_l not in productos_cosecha:
+            continue
+        clave = (int(p["año"]), int(p["semana"]))
+        out.setdefault(clave, {})
+        out[clave][p["producto"]] = out[clave].get(p["producto"], 0) + float(p["cantidad"] or 0)
+    return out
+
+
+def _rendimiento_por_ventas(siembra: dict) -> dict:
+    """
+    Calcula el rendimiento real estimado de una siembra cruzando con las ventas
+    de la semana de cosecha (semana_siembra + ciclo en semanas).
+    Retorna {total, detalle, semana_venta, año_venta} o None.
+    """
+    if not siembra["fecha_siembra"]:
+        return None
+    # Lag automático por días de ciclo de esta siembra
+    semanas_lag = round(siembra["dias_ciclo"] / 7)
+    fecha_venta_est = siembra["fecha_siembra"] + timedelta(weeks=semanas_lag)
+    año_v, sem_v, _ = fecha_venta_est.isocalendar()
+
+    ventas = _ventas_por_semana_cultivo()
+    detalle = ventas.get((año_v, sem_v), {})
+    total = sum(detalle.values())
+    return {
+        "total": total,
+        "detalle": detalle,
+        "semana_venta": sem_v,
+        "año_venta": año_v,
+        "semanas_lag": semanas_lag,
+    }
+
+
 def _proyectar_lbs(semillas: float, germinacion: float,
                    rend_min: float, rend_max: float) -> tuple:
     """Plantas = semillas * germinacion. Lbs = plantas / rend (zanahorias/lb)."""
@@ -276,6 +344,45 @@ def _proyectar_lbs(semillas: float, germinacion: float,
 
 def _es_lluvia(fecha) -> bool:
     return fecha and fecha.month in MESES_LLUVIA
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _ventas_por_semana_prod(productos_cosecha: tuple) -> dict:
+    """Ventas de productos de cosecha por (año, semana, producto).
+    Retorna {(año, semana): {producto: lbs}}. Cacheado (1 sola lectura de pedidos)."""
+    from excel_helper import leer_pedidos
+    prods_map = {p.lower().strip(): p for p in productos_cosecha}
+    acum = {}
+    for p in leer_pedidos():
+        if p["status"] == "Cancelado":
+            continue
+        pl = p["producto"].lower().strip()
+        if pl in prods_map:
+            clave = (p["año"], p["semana"])
+            nombre = prods_map[pl]
+            acum.setdefault(clave, {})
+            acum[clave][nombre] = acum[clave].get(nombre, 0) + p["cantidad"]
+    return acum
+
+
+def _rendimiento_por_ventas(siembra: dict, productos_cosecha: list) -> dict:
+    """Rendimiento teórico cruzando ventas. Lag automático = días ciclo → semanas.
+    Lo vendido en (semana_siembra + lag) es el rendimiento de esa siembra.
+    Retorna detalle por producto + total + semana de venta."""
+    if not siembra["fecha_siembra"]:
+        return {"total": 0, "detalle": {}, "semana_venta": 0,
+                "año_venta": 0, "semanas_lag": 0}
+
+    lag_sem = round(siembra["dias_ciclo"] / 7)
+    fecha_venta_est = siembra["fecha_siembra"] + timedelta(days=siembra["dias_ciclo"])
+    año_v, sem_v, _ = fecha_venta_est.isocalendar()
+
+    ventas = _ventas_por_semana_prod(tuple(productos_cosecha))
+    detalle = ventas.get((año_v, sem_v), {})
+    total = sum(detalle.values())
+
+    return {"total": total, "detalle": detalle, "semana_venta": sem_v,
+            "año_venta": año_v, "semanas_lag": lag_sem}
 
 
 def _etapa_siembra(siembra: dict) -> tuple:
@@ -526,8 +633,8 @@ def _tab_siembras_activas():
 
     st.caption(f"{len(activas)} siembra(s) activa(s)")
 
-    from gsheets import get_all_rows
-    aplic_rows = get_all_rows(_K_APLIC)
+    # Lectura cacheada de TODAS las aplicaciones (1 sola vez por render)
+    todas_aplic = _leer_aplicaciones()
 
     for s in sorted(activas, key=lambda x: x["fecha_siembra"] or date.today()):
         dias, etapa, color = _etapa_siembra(s)
@@ -551,21 +658,22 @@ def _tab_siembras_activas():
             m3.metric("Proyección",
                       f"{s['lbs_proyectadas_min']:.0f}–{s['lbs_proyectadas_max']:.0f} lbs")
 
-            # Aplicaciones de esta siembra
-            mias = [r for r in aplic_rows if r and str(r[0]) == s["id_siembra"]]
+            # Aplicaciones de esta siembra (desde lectura cacheada)
+            mias = [a for a in todas_aplic if a["id_siembra"] == s["id_siembra"]]
             if mias:
                 st.markdown("**Programa de fertilización:**")
-                for app_num in (1, 2):
-                    app_lineas = [(str(r[5]), _sf(r[6]))
-                                  for r in mias if str(r[1]) == str(app_num)]
+                apps_nums = sorted({a["aplicacion"] for a in mias})
+                for app_num in apps_nums:
+                    app_lineas = [(a["fertilizante"], a["lbs"])
+                                  for a in mias if a["aplicacion"] == app_num]
                     if not app_lineas:
                         continue
                     mezcla = _calc_mezcla(app_lineas, fert_map)
                     g, rr = mezcla["grado"], mezcla["reales"]
                     detalle = " + ".join(f"{f} {l:.0f}lb" for f, l in app_lineas if l > 0)
-                    r0 = next((r for r in mias if str(r[1]) == str(app_num)), None)
-                    dia_info = f"Día {r0[2]}–{r0[3]}" if r0 else ""
-                    aplicado = (r0 and len(r0) > 7 and str(r0[7]).strip().lower() == "sí")
+                    a0 = next((a for a in mias if a["aplicacion"] == app_num), None)
+                    dia_info = f"Día {a0['dia_desde']}–{a0['dia_hasta']}" if a0 else ""
+                    aplicado = a0 and a0["aplicado_real"].strip().lower() in ("sí", "si")
                     chk = "✅" if aplicado else "⏳"
                     st.caption(
                         f"{chk} **App {app_num}** ({dia_info}): {detalle}  →  "
@@ -862,13 +970,27 @@ def _tab_cosecha():
     if not productos:
         productos = ["Mini", "Zanahoria Baby", "Zanahoria Babyr", "Zanahoria Babyl"]
 
+    # ── Rendimiento estimado por ventas (cruce semana siembra → semana venta) ──
+    rend_ventas = _rendimiento_por_ventas(s, productos)
+    sugeridos = {}
+    if rend_ventas and rend_ventas["total"] > 0:
+        sugeridos = rend_ventas["detalle"]
+        st.success(
+            f"💡 **Rendimiento estimado por ventas:** "
+            f"{rend_ventas['total']:.0f} lbs vendidas en semana "
+            f"{rend_ventas['semana_venta']}/{rend_ventas['año_venta']} "
+            f"(lag {rend_ventas['semanas_lag']} sem). "
+            f"Se cargan abajo como sugerencia — podés ajustarlos.")
+
     st.markdown("##### 🥕 Libras cosechadas por producto")
+    st.caption("Valores sugeridos desde ventas. Editá si pesaste en campo.")
     detalle = {}
     total_real = 0.0
     cols = st.columns(min(len(productos), 4))
     for i, prod in enumerate(productos):
         col = cols[i % len(cols)]
-        lbs = col.number_input(prod, min_value=0.0, value=0.0, step=1.0,
+        val_sug = float(sugeridos.get(prod, 0))
+        lbs = col.number_input(prod, min_value=0.0, value=val_sug, step=1.0,
                                 key=f"cos_{s['id_siembra']}_{i}")
         detalle[prod] = lbs
         total_real += lbs
@@ -1031,12 +1153,14 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    # Crear hojas si no existen (primera vez)
-    try:
-        _init_hojas()
-    except Exception as e:
-        st.error(f"Error inicializando hojas: {e}")
-        return
+    # Crear hojas si no existen — solo una vez por sesión (evita 4 lecturas/render)
+    if not st.session_state.get("_prod_hojas_ok"):
+        try:
+            _init_hojas()
+            st.session_state["_prod_hojas_ok"] = True
+        except Exception as e:
+            st.error(f"Error inicializando hojas: {e}")
+            return
 
     tabs = st.tabs([
         "🌱 Nueva Siembra",
