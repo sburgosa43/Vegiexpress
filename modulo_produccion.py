@@ -659,8 +659,10 @@ def _tab_siembras_activas():
         cosecha_str = (s["fecha_cosecha_est"].strftime("%d/%m/%Y")
                        if s["fecha_cosecha_est"] else "—")
 
+        _fs_txt = s['fecha_siembra'].strftime('%d/%m/%Y') if s['fecha_siembra'] else '—'
         with st.expander(
-            f"🥕 {s['variedad']} · {s['lugar']} · Día {dias} · {etapa}",
+            f"🥕 {s['variedad']} · {s['lugar']} · Siembra {_fs_txt} · "
+            f"Día {dias} · {etapa}",
             expanded=False
         ):
             st.markdown(
@@ -979,10 +981,25 @@ def _editor_fertilizacion(s, fert_map):
 def _tab_cosecha():
     siembras = _leer_siembras()
     cultivos = _leer_cultivos()
-    activas = [s for s in siembras if s["estado"] == "Activa"]
+    # Mostrar activas Y cosechadas (para poder ver/ajustar libras ya cerradas)
+    disponibles = [s for s in siembras if s["estado"] in ("Activa", "Cosechada")]
 
-    if not activas:
-        st.info("No hay siembras activas para cosechar.")
+    if not disponibles:
+        st.info("No hay siembras para cosechar.")
+        return
+
+    # Filtro para enfocar
+    ver_filtro = st.radio("Mostrar:", ["Activas", "Cosechadas", "Todas"],
+                          horizontal=True, key="cos_filtro")
+    if ver_filtro == "Activas":
+        lista = [s for s in disponibles if s["estado"] == "Activa"]
+    elif ver_filtro == "Cosechadas":
+        lista = [s for s in disponibles if s["estado"] == "Cosechada"]
+    else:
+        lista = disponibles
+
+    if not lista:
+        st.info(f"No hay siembras {ver_filtro.lower()}.")
         return
 
     # Mapa cultivo → productos cosecha
@@ -990,11 +1007,20 @@ def _tab_cosecha():
     for c in cultivos:
         prod_cosecha_map.setdefault(c["cultivo"], c["productos_cosecha"])
 
-    opts = {f"{s['variedad']} · {s['lugar']} · "
-            f"siembra {s['fecha_siembra'].strftime('%d/%m') if s['fecha_siembra'] else '?'}"
-            : s for s in activas}
-    sel = st.selectbox("Siembra a cerrar", list(opts.keys()), key="cos_sel")
+    def _et(s):
+        marca = "✅" if s["estado"] == "Cosechada" else "🌱"
+        return (f"{marca} {s['variedad']} · {s['lugar']} · "
+                f"siembra {s['fecha_siembra'].strftime('%d/%m/%Y') if s['fecha_siembra'] else '?'}"
+                + (f" · {s['lbs_cosechadas_real']:.0f} lbs" if s["estado"]=="Cosechada" else ""))
+
+    opts = {_et(s): s for s in lista}
+    sel = st.selectbox("Siembra", list(opts.keys()), key="cos_sel")
     s = opts[sel]
+
+    if s["estado"] == "Cosechada":
+        st.info(f"Esta siembra ya fue cosechada con "
+                f"**{s['lbs_cosechadas_real']:.0f} lbs** totales. "
+                f"Podés ver el detalle abajo y reajustar si hace falta.")
 
     dias, etapa, color = _etapa_siembra(s)
     st.caption(f"Día {dias} de {s['dias_ciclo']} · {etapa} · "
@@ -1006,11 +1032,15 @@ def _tab_cosecha():
     if not productos:
         productos = ["Mini", "Zanahoria Baby", "Zanahoria Babyr", "Zanahoria Babyl"]
 
-    # ── Rendimiento estimado por ventas (cruce semana siembra → semana venta) ──
-    rend_ventas = _rendimiento_por_ventas(s, productos)
+    # ── Valores precargados ───────────────────────────────────────────────────
+    # Prioridad: 1) cosecha ya guardada, 2) estimado por ventas
     sugeridos = {}
-    if rend_ventas and rend_ventas["total"] > 0:
+    if s.get("cosecha_detalle"):
+        sugeridos = s["cosecha_detalle"]   # ya cosechada: mostrar lo guardado
+    rend_ventas = _rendimiento_por_ventas(s, productos)
+    if not sugeridos and rend_ventas and rend_ventas["total"] > 0:
         sugeridos = rend_ventas["detalle"]
+    if rend_ventas and rend_ventas["total"] > 0 and s["estado"] == "Activa":
         st.success(
             f"💡 **Rendimiento estimado por ventas:** "
             f"{rend_ventas['total']:.0f} lbs vendidas en semana "
@@ -1057,12 +1087,15 @@ def _tab_cosecha():
         st.caption(f"Días reales de ciclo: **{dias_reales}** "
                    f"(teórico: {s['dias_ciclo']})")
 
-    if st.button("✅ Cerrar cosecha", type="primary", key="cos_cerrar",
+    _btn_cos_lbl = ("💾 Actualizar cosecha" if s["estado"] == "Cosechada"
+                    else "✅ Cerrar cosecha")
+    if st.button(_btn_cos_lbl, type="primary", key="cos_cerrar",
                  disabled=total_real <= 0):
         from gsheets import update_cells
         dias_reales = ((date.today() - s["fecha_siembra"]).days
                        if s["fecha_siembra"] else s["dias_ciclo"])
-        with st.spinner("Cerrando cosecha..."):
+        _accion = "Actualizando" if s["estado"] == "Cosechada" else "Cerrando"
+        with st.spinner(f"{_accion} cosecha..."):
             rn = s["row_num"]
             update_cells(_K_PROD, [
                 {"range": f"{_col_letra(12)}{rn}", "values": [[round(total_real, 1)]]},
@@ -1071,7 +1104,8 @@ def _tab_cosecha():
                 {"range": f"{_col_letra(16)}{rn}", "values": [[json.dumps(detalle)]]},
             ])
         _leer_siembras.clear()
-        st.success(f"✅ Cosecha cerrada — {total_real:.1f} lbs totales.")
+        _verbo = "actualizada" if s["estado"] == "Cosechada" else "cerrada"
+        st.success(f"✅ Cosecha {_verbo} — {total_real:.1f} lbs totales.")
         st.rerun()
 
 
