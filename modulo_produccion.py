@@ -165,6 +165,50 @@ def _leer_siembras() -> list:
         })
     return out
 
+@st.cache_data(ttl=120, show_spinner=False)
+def _leer_aplicaciones(id_siembra: str = None) -> list:
+    """Lee aplicaciones. Si id_siembra, filtra por esa siembra."""
+    from gsheets import get_all_rows
+    out = []
+    for r in get_all_rows(_K_APLIC):
+        if not r or not r[0]:
+            continue
+        while len(r) < 9:
+            r.append("")
+        if id_siembra and str(r[0]) != id_siembra:
+            continue
+        out.append({
+            "id_siembra":   str(r[0]),
+            "aplicacion":   int(_sf(r[1])) if r[1] else 0,
+            "dia_desde":    int(_sf(r[2])) if r[2] else 0,
+            "dia_hasta":    int(_sf(r[3])) if r[3] else 0,
+            "temporada":    str(r[4]),
+            "fertilizante": str(r[5]),
+            "lbs":          _sf(r[6]),
+            "aplicado_real": str(r[7] or "No").strip(),
+            "fecha_aplicado": str(r[8]),
+        })
+    return out
+
+
+def _reescribir_aplicaciones(id_siembra: str, nuevas_filas: list):
+    """Borra todas las aplicaciones de una siembra y escribe las nuevas.
+    nuevas_filas: lista de listas con las 9 columnas."""
+    from gsheets import get_all_rows, ws, append_rows
+    # Leer todo, filtrar las de esta siembra, reescribir el resto + nuevas
+    todas = get_all_rows(_K_APLIC)
+    conservar = [r for r in todas if r and str(r[0]) != id_siembra]
+
+    headers = ["id_siembra", "aplicacion", "dia_desde", "dia_hasta",
+               "temporada", "fertilizante", "lbs", "aplicado_real",
+               "fecha_aplicado"]
+    w = ws(_K_APLIC)
+    w.clear()
+    data = [headers] + conservar + nuevas_filas
+    w.update("A1", data, value_input_option="USER_ENTERED")
+    _leer_aplicaciones.clear()
+
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _col_letra(n: int) -> str:
@@ -625,6 +669,166 @@ def _tab_siembras_activas():
                         st.session_state[_edit_key] = False
                         st.success("✅ Siembra actualizada.")
                         st.rerun()
+            # ── Editar fertilización ──────────────────────────────────────────
+            _fert_key = f"prod_fert_{s['id_siembra']}"
+            if st.button("🧪 Editar fertilización", key=f"btn_fert_{s['id_siembra']}"):
+                st.session_state[_fert_key] = not st.session_state.get(_fert_key, False)
+
+            if st.session_state.get(_fert_key, False):
+                _editor_fertilizacion(s, fert_map)
+
+
+
+
+
+def _editor_fertilizacion(s, fert_map):
+    """Editor de aplicaciones de fertilización de una siembra (editar/agregar/eliminar)."""
+    st.markdown("**Editar fertilización** — corregí, agregá o eliminá aplicaciones.")
+
+    sid = s["id_siembra"]
+    aplic = _leer_aplicaciones(sid)
+    fert_opts = sorted(fert_map.keys())
+
+    # Agrupar por número de aplicación
+    apps_existentes = sorted({a["aplicacion"] for a in aplic})
+
+    # Estado de cuántas aplicaciones mostrar (permite agregar nuevas)
+    _n_apps_key = f"fert_napps_{sid}"
+    if _n_apps_key not in st.session_state:
+        st.session_state[_n_apps_key] = max(len(apps_existentes), 2)
+
+    n_apps = st.session_state[_n_apps_key]
+
+    # Acumulador para N-P-K total de la siembra
+    total_n = total_p = total_k = 0.0
+    nuevas_filas = []
+
+    for app_num in range(1, int(n_apps) + 1):
+        lineas_prev = [a for a in aplic if a["aplicacion"] == app_num]
+        # Defaults de ventana
+        if lineas_prev:
+            dia_d = lineas_prev[0]["dia_desde"]
+            dia_h = lineas_prev[0]["dia_hasta"]
+            temp  = lineas_prev[0]["temporada"]
+            aplicado_prev = lineas_prev[0]["aplicado_real"]
+            fecha_prev = lineas_prev[0]["fecha_aplicado"]
+        else:
+            # Aplicación extra nueva
+            dia_d, dia_h = (22, 25) if app_num == 1 else \
+                           (50, 55) if app_num == 2 else (0, 0)
+            temp = "Seca"
+            aplicado_prev, fecha_prev = "No", ""
+
+        with st.expander(f"Aplicación {app_num}" +
+                         (f" (Día {dia_d}–{dia_h})" if dia_d else " (extra)"),
+                         expanded=True):
+            # Ventana de días (editable)
+            wc1, wc2, wc3 = st.columns(3)
+            nv_dia_d = wc1.number_input("Día desde", min_value=0, max_value=200,
+                                         value=int(dia_d),
+                                         key=f"fe_dd_{sid}_{app_num}")
+            nv_dia_h = wc2.number_input("Día hasta", min_value=0, max_value=200,
+                                         value=int(dia_h),
+                                         key=f"fe_dh_{sid}_{app_num}")
+            nv_temp = wc3.selectbox("Temporada", ["Seca", "Lluviosa", "Extra"],
+                                     index=["Seca","Lluviosa","Extra"].index(temp)
+                                           if temp in ["Seca","Lluviosa","Extra"] else 0,
+                                     key=f"fe_tmp_{sid}_{app_num}")
+
+            # Fertilizantes de esta aplicación
+            _n_lin_key = f"fert_nlin_{sid}_{app_num}"
+            if _n_lin_key not in st.session_state:
+                st.session_state[_n_lin_key] = max(len(lineas_prev), 1)
+            n_lin = st.session_state[_n_lin_key]
+
+            lineas_app = []
+            for i in range(int(n_lin)):
+                lc1, lc2 = st.columns([2, 1])
+                if i < len(lineas_prev):
+                    f_def = lineas_prev[i]["fertilizante"]
+                    l_def = lineas_prev[i]["lbs"]
+                    idx_def = fert_opts.index(f_def) if f_def in fert_opts else 0
+                else:
+                    idx_def, l_def = 0, 0.0
+                fert = lc1.selectbox(f"Fertilizante {i+1}", fert_opts,
+                                      index=idx_def,
+                                      key=f"fe_f_{sid}_{app_num}_{i}",
+                                      label_visibility="collapsed")
+                lbs = lc2.number_input(f"Lbs {i+1}", min_value=0.0,
+                                        value=float(l_def), step=1.0,
+                                        key=f"fe_l_{sid}_{app_num}_{i}",
+                                        label_visibility="collapsed")
+                lineas_app.append((fert, lbs))
+
+            bc1, bc2 = st.columns(2)
+            if bc1.button(f"+ Fertilizante", key=f"fe_addlin_{sid}_{app_num}"):
+                st.session_state[_n_lin_key] = int(n_lin) + 1
+                st.rerun()
+            if int(n_lin) > 1 and bc2.button(f"− Quitar último",
+                                              key=f"fe_dellin_{sid}_{app_num}"):
+                st.session_state[_n_lin_key] = int(n_lin) - 1
+                st.rerun()
+
+            # Mezcla en vivo
+            mezcla = _calc_mezcla(lineas_app, fert_map)
+            g, rr = mezcla["grado"], mezcla["reales"]
+            st.caption(f"**Grado:** {g[0]}-{g[1]}-{g[2]} · "
+                       f"**Real:** N {rr[0]:.1f} · P {rr[1]:.1f} · K {rr[2]:.1f} lbs")
+            total_n += rr[0]; total_p += rr[1]; total_k += rr[2]
+
+            # Registro de aplicación real
+            rc1, rc2 = st.columns([1, 2])
+            ya_aplicado = rc1.checkbox("Ya aplicado",
+                                        value=(aplicado_prev.lower() in ("sí","si")),
+                                        key=f"fe_ap_{sid}_{app_num}")
+            from datetime import datetime
+            fecha_def = None
+            if fecha_prev:
+                try:
+                    fecha_def = datetime.strptime(fecha_prev, "%d/%m/%Y").date()
+                except ValueError:
+                    fecha_def = None
+            fecha_aplic = ""
+            if ya_aplicado:
+                fa = rc2.date_input("Fecha aplicada",
+                                     value=fecha_def or date.today(),
+                                     key=f"fe_fa_{sid}_{app_num}")
+                fecha_aplic = fa.strftime("%d/%m/%Y")
+
+            # Acumular filas para guardar
+            for fert, lbs in lineas_app:
+                if lbs > 0:
+                    nuevas_filas.append([
+                        sid, app_num, nv_dia_d, nv_dia_h, nv_temp,
+                        fert, lbs, "Sí" if ya_aplicado else "No", fecha_aplic,
+                    ])
+
+    # Botones globales
+    st.divider()
+    gc1, gc2, gc3 = st.columns(3)
+    if gc1.button("➕ Agregar aplicación", key=f"fe_addapp_{sid}"):
+        st.session_state[_n_apps_key] = int(n_apps) + 1
+        st.rerun()
+    if int(n_apps) > 1 and gc2.button("➖ Quitar última aplicación",
+                                       key=f"fe_delapp_{sid}"):
+        st.session_state[_n_apps_key] = int(n_apps) - 1
+        st.rerun()
+
+    # N-P-K total de la siembra
+    st.info(f"📊 **N-P-K total de la siembra** (todas las aplicaciones): "
+            f"N {total_n:.1f} · P {total_p:.1f} · K {total_k:.1f} lbs reales")
+
+    if gc3.button("💾 Guardar fertilización", type="primary",
+                  key=f"fe_save_{sid}"):
+        with st.spinner("Guardando fertilización..."):
+            _reescribir_aplicaciones(sid, nuevas_filas)
+        # Limpiar estado de edición
+        for k in list(st.session_state.keys()):
+            if k.startswith(f"fert_nlin_{sid}") or k == f"fert_napps_{sid}":
+                st.session_state.pop(k, None)
+        st.session_state[f"prod_fert_{sid}"] = False
+        st.success("✅ Fertilización actualizada.")
+        st.rerun()
 
 
 # ── Vista: Cosecha / Cierre ───────────────────────────────────────────────────
