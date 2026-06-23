@@ -1,326 +1,1063 @@
 """
-modulo_datos.py — Sábana de datos completa.
-4 tipos: Pedidos | Gastos | Clientes | Productos
-Filtros + totales al pie + descarga CSV/Excel + sync a Sheet.
+modulo_dashboard.py — Dashboard VeggiExpress
+Períodos: Sem Actual | Sem Ant. | MTD | YTD | PYTD
 """
 import streamlit as st
+import plotly.graph_objects as go
+from config import (ZONAS_DASH, COLORES_ZONA_RUTAS, excluido_dashboard,
+                    EXCLUIR_DASHBOARD, es_hogar)
 import pandas as pd
-import io
+import plotly.express as px
 from datetime import date
+from excel_helper import leer_pedidos, leer_metas, guardar_metas
+from data_helper import cargar_clientes
 
-MESES = {1:"Ene",2:"Feb",3:"Mar",4:"Abr",5:"May",6:"Jun",
-         7:"Jul",8:"Ago",9:"Sep",10:"Oct",11:"Nov",12:"Dic"}
+# ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
+ZONAS_MAP = {
+    "Antigua & Chimal":     ["L03", "L04"],
+    "Guatemala & Santiago": ["L05", "L06"],
+    "Rio":                  ["L01"],
+    "Hogares":              ["L20"],
+}
+COLORES_ZONA = {
+    "Antigua & Chimal":     "#2D7A2D",
+    "Guatemala & Santiago": "#8DC63F",
+    "Rio":                  "#4A4A4A",
+    "Hogares":              "#E65100",
+}
+COLORES_PERIODO = {
+    "Sem Actual": "#2D7A2D",
+    "Sem Ant.":   "#8DC63F",
+    "MTD":        "#4A9E4A",
+    "YTD":        "#1A5C1A",
+    "PYTD":       "#AAAAAA",
+}
+PERIODOS_CORTO = ["Sem Actual", "Sem Ant.", "MTD"]
+PERIODOS_LARGO = ["YTD", "PYTD"]
+EXCLUIR = ["wilson"]   # Hogares ya no se excluye — es zona propia
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def _fq(v): return f"Q{float(v or 0):,.2f}"
 
-def _df_to_excel(df: pd.DataFrame) -> bytes:
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as w:
-        df.to_excel(w, index=False, sheet_name="Datos")
-    return buf.getvalue()
+# ── HELPERS ───────────────────────────────────────────────────────────────────
+def _excluido(n): return any(x in n.lower() for x in EXCLUIR)
+def _zona_de(cod):
+    for z, cs in ZONAS_MAP.items():
+        if cod in cs: return z
+    return None
 
-def _selectbox_all(label, opciones, key):
-    return st.selectbox(label, ["Todos"] + sorted(set(str(o) for o in opciones if o)),
-                        key=key)
+def _build_cli_map(clientes):
+    return {c["nombre"].lower(): {
+        "zona": _zona_de(c["codigo_lugar"]),
+        "credito": c["credito"], "nit": c["nit"], "nombre": c["nombre"],
+    } for c in clientes}
 
-# ── PEDIDOS ───────────────────────────────────────────────────────────────────
-def _sabana_pedidos():
-    from excel_helper import leer_pedidos
-    from data_helper  import cargar_clientes
-    from config       import calcular_liquido, ZONAS_MAP
+def _periodos(hoy):
+    año = hoy.year; sem = hoy.isocalendar()[1]; mes = hoy.month
+    sant_n = sem - 1; sant_a = año
+    if sant_n < 1: sant_n = 52; sant_a -= 1
+    try:    mdp = date(año-1, hoy.month, hoy.day)
+    except: mdp = date(año-1, hoy.month, 28)
+    return {
+        "Sem Actual": lambda p: p["semana"]==sem  and p["año"]==año,
+        "Sem Ant.":   lambda p: p["semana"]==sant_n and p["año"]==sant_a,
+        "MTD":        lambda p: p["año"]==año and p["fecha"] and p["fecha"].month==mes,
+        "YTD":        lambda p: p["año"]==año and p["fecha"] and p["fecha"]<=hoy,
+        "PYTD":       lambda p: p["año"]==año-1 and p["fecha"] and p["fecha"]<=mdp,
+    }
 
-    todos    = leer_pedidos()
-    clientes = {c["nombre"].lower().strip(): c for c in cargar_clientes()}
-
-    # Zona map inversa: codigo → nombre zona
-    cod_zona = {}
-    for zona, cods in ZONAS_MAP.items():
-        for c in cods: cod_zona[c] = zona
-
-    # ── Filtros ────────────────────────────────────────────────────────────────
-    f1, f2, f3, f4, f5, f6 = st.columns(6)
-    años_disp  = sorted({p["año"]  for p in todos}, reverse=True)
-    meses_disp = sorted({p["fecha"].month for p in todos if p["fecha"]})
-    año_sel    = f1.selectbox("Año",    años_disp,  key="dat_año")
-    mes_sel    = f2.selectbox("Mes", ["Todos"] + [MESES[m] for m in meses_disp],
-                               key="dat_mes")
-    cli_sel    = _selectbox_all("Cliente", [p["cliente"] for p in todos], f3.empty().__class__)
-    cli_sel    = f3.selectbox("Cliente", ["Todos"] + sorted({p["cliente"] for p in todos}),
-                               key="dat_cli")
-    zona_sel   = f4.selectbox("Zona",   ["Todas"] + list(ZONAS_MAP.keys()), key="dat_zona")
-    prod_sel   = f5.selectbox("Producto",["Todos"] + sorted({p["producto"] for p in todos}),
-                               key="dat_prod")
-    status_sel = f6.selectbox("Status", ["Todos","Pendiente","Entregado","Cancelado"],
-                               key="dat_status")
-
-    mes_num = next((k for k,v in MESES.items() if v == mes_sel), None)
-
-    # ── Filtrar ────────────────────────────────────────────────────────────────
-    filas = []
+def _filtrar(todos, fn, cli_map, zona_only=None):
+    r = []
     for p in todos:
-        if p["año"] != año_sel: continue
-        if mes_num and (not p["fecha"] or p["fecha"].month != mes_num): continue
-        if cli_sel != "Todos" and p["cliente"] != cli_sel: continue
-        if prod_sel != "Todos" and p["producto"] != prod_sel: continue
-        if status_sel != "Todos" and p["status"] != status_sel: continue
+        if p["status"]=="Cancelado" or _excluido(p["cliente"]): continue
+        if not fn(p): continue
+        info = cli_map.get(p["cliente"].lower(), {})
+        zona = info.get("zona")
+        if not zona: continue
+        if zona_only and zona != zona_only: continue
+        r.append({**p, "zona": zona})
+    return r
 
-        cli_d   = clientes.get(p["cliente"].lower().strip(), {})
-        cod     = cli_d.get("codigo_lugar","")
-        zona    = cod_zona.get(cod, "—")
-        if zona_sel != "Todas" and zona != zona_sel: continue
+def _agg_grupo(todos, periodos, cli_map, by="cliente", campo="total", zona_only=None):
+    result = {}
+    for pnm, fn in periodos.items():
+        for p in _filtrar(todos, fn, cli_map, zona_only):
+            key = (p[by], p["zona"]) if by=="producto" else p[by]
+            if key not in result:
+                result[key] = {k: 0 for k in periodos}
+                result[key]["zona"]    = p["zona"]
+                result[key]["_nombre"] = p[by]
+            result[key][pnm] += p[campo] or 0
+    return result
 
-        grupo   = cli_d.get("grupo","")
-        precio  = float(p.get("precio") or 0)
-        costo   = float(p.get("costo")  or 0)
-        cant    = float(p.get("cantidad") or 0)
-        total   = float(p.get("total")   or 0)
-        mb      = round((precio - costo) * cant, 2)
-        mn      = float(p.get("margen_q") or 0)
-        base_iv = round(total / 1.12, 2) if total else 0
-        liq, isr, desc = calcular_liquido(p["cliente"], total)
 
-        filas.append({
-            "Fecha":     p["fecha"].strftime("%d/%m/%Y") if p["fecha"] else "",
-            "Sem":       p["semana"],
-            "Mes":       MESES.get(p["fecha"].month,"") if p["fecha"] else "",
-            "Cliente":   p["cliente"],
-            "Zona":      zona,
-            "Grupo":     grupo,
-            "Producto":  p["producto"],
-            "Proveedor": p.get("proveedor",""),
-            "Cant":      cant,
-            "Precio Q":  precio,
-            "Costo Q":   costo,
-            "Total Q":   total,
-            "MB Q":      mb,
-            "MN Q":      mn,
-            "Base IVA":  base_iv,
-            "ISR Q":     isr,
-            "Líquido Q": liq,
-            "Status":    p["status"],
-        })
+# ── COMPONENTES REUTILIZABLES ─────────────────────────────────────────────────
+def _html_compacto(filas: list) -> str:
+    """
+    Genera tabla HTML compacta.
+    filas = [{"label": str, "vals": {periodo: valor}, "color": str}]
+    """
+    html = "<div style='font-size:.78rem'>"
+    for fila in filas:
+        items = "".join(
+            f"<div style='text-align:center;flex:1;min-width:75px'>"
+            f"<div style='font-size:.62rem;color:#888;margin-bottom:1px'>{per}</div>"
+            f"<div style='font-weight:bold;color:#2D2D2D'>Q{val:,.0f}</div></div>"
+            for per, val in fila["vals"].items()
+        )
+        color_val = fila["color"]
+        label_val = fila["label"]
+        html += (
+            f"<div style='margin:3px 0'>"
+            f"<span style='font-size:.7rem;font-weight:bold;"
+            f"color:{color_val}'>{label_val}</span>"
+            f"<div style='display:flex;gap:3px;flex-wrap:wrap;background:#f5f5f5;"
+            f"border-radius:5px;padding:5px 4px;margin-top:2px'>{items}</div></div>"
+        )
+    html += "</div>"
+    return html
 
-    if not filas:
-        st.info("Sin datos para los filtros seleccionados.")
-        return pd.DataFrame()
+def _dos_graficos(df_rows, x_col, titulo_corto, titulo_largo):
+    """Renderiza dos gráficos: corto plazo y largo plazo."""
+    df = pd.DataFrame(df_rows)
+    if df.empty: return
 
-    df = pd.DataFrame(filas)
+    gc, gl = st.columns(2)
+    for col_g, periodos_sel, titulo in [
+        (gc, PERIODOS_CORTO, titulo_corto),
+        (gl, PERIODOS_LARGO, titulo_largo),
+    ]:
+        df_sel = df[df["Período"].isin(periodos_sel)]
+        if df_sel.empty:
+            col_g.caption(f"Sin datos — {titulo}"); continue
+        fig = px.bar(df_sel, x=x_col, y="Valor", color="Período",
+                     barmode="group", title=titulo,
+                     color_discrete_map=COLORES_PERIODO,
+                     text_auto=".2s")
+        fig.update_traces(textposition="outside")
+        fig.update_layout(margin=dict(t=40,b=50,l=10,r=10),
+                          legend=dict(orientation="h", y=-0.25),
+                          xaxis_tickangle=-25)
+        col_g.plotly_chart(fig, use_container_width=True)
 
-    # Totales al pie
-    num_cols = ["Cant","Precio Q","Costo Q","Total Q","MB Q","MN Q",
-                "Base IVA","ISR Q","Líquido Q"]
-    tot = {c: df[c].sum() for c in num_cols}
-    st.dataframe(df, hide_index=True, use_container_width=True,
-                 height=min(600, 60 + len(df)*35))
+
+# ── WARNING ───────────────────────────────────────────────────────────────────
+def _warning_sin_pedido(todos, cli_map, periodos):
+    act = {p["cliente"].lower() for p in _filtrar(todos, periodos["Sem Actual"], cli_map)}
+    ant = {p["cliente"]         for p in _filtrar(todos, periodos["Sem Ant."],   cli_map)}
+    sin = sorted({c for c in ant if c.lower() not in act})
+    if sin:
+        st.warning("⚠️ **Sin pedido esta semana (compraron la anterior):** " +
+                   "  ·  ".join(f"**{c}**" for c in sin))
+
+
+# ── TAB 1: DESEMPEÑO ──────────────────────────────────────────────────────────
+def _tab_desempeno(todos, cli_map, periodos, campo, label_campo):
+
+    # Metas — persisten en hoja Config del Excel
+    with st.expander("⚙️ Metas semanales por zona (Q) — se guardan automáticamente",
+                     expanded=False):
+        mc = st.columns(len(ZONAS_MAP))
+        nuevas_metas = {}
+        for col, zona in zip(mc, ZONAS_MAP):
+            k = f"meta_{zona}"
+            nuevas_metas[zona] = col.number_input(
+                zona, min_value=0.0, step=100.0,
+                value=float(st.session_state.get(k, 0.0)), key=f"inp_{k}")
+        if st.button("💾 Guardar metas", type="primary"):
+            with st.spinner("Guardando metas en Excel..."):
+                guardar_metas(nuevas_metas)
+            for zona, val in nuevas_metas.items():
+                st.session_state[f"meta_{zona}"] = val
+            st.success("✅ Metas guardadas.")
+
+    st.divider()
+
+    # ── KPIs globales compactos ───────────────────────────────────────────────
+    vals_global = {
+        pnm: sum(p[campo] or 0 for p in _filtrar(todos, fn, cli_map))
+        for pnm, fn in periodos.items()
+    }
+    # Margen % solo para semana actual
+    v_act = vals_global["Sem Actual"]
+    v_ant = vals_global["Sem Ant."]
+    delta_txt = f"{'▲' if v_act>=v_ant else '▼'} Q{abs(v_act-v_ant):,.0f} vs sem ant."
 
     st.markdown(
-        f"<div style='background:#e8f5e9;border-radius:6px;padding:8px 12px;"
-        f"font-size:.82rem'>"
-        f"<b>{len(df)} líneas</b> · "
-        f"Ingreso: <b>{_fq(tot['Total Q'])}</b> · "
-        f"MB: <b>{_fq(tot['MB Q'])}</b> · "
-        f"MN: <b>{_fq(tot['MN Q'])}</b> · "
-        f"Líquido: <b>{_fq(tot['Líquido Q'])}</b>"
-        f"</div>", unsafe_allow_html=True)
-    return df
+        f"<div style='font-size:.7rem;color:#666;margin-bottom:2px'>"
+        f"{label_campo} total &nbsp;·&nbsp; {delta_txt}</div>",
+        unsafe_allow_html=True)
+    st.markdown(_html_compacto([{
+        "label": "Global", "vals": vals_global, "color": "#2D7A2D"
+    }]), unsafe_allow_html=True)
+
+    meta_total = sum(st.session_state.get(f"meta_{z}", 0) for z in ZONAS_MAP)
+    if meta_total > 0 and campo == "total":
+        pct = min(v_act / meta_total, 1.0)
+        st.progress(pct, text=f"Q{v_act:,.0f} / Meta Q{meta_total:,.0f} ({pct*100:.1f}%)")
+
+    st.divider()
+
+    # ── Detalle por zona (compacto, misma tipografía) ─────────────────────────
+    st.markdown(f"<div style='font-size:.75rem;font-weight:bold;color:#555;"
+                f"margin-bottom:4px'>Detalle por zona</div>", unsafe_allow_html=True)
+
+    for zona in ZONAS_MAP:
+        color  = COLORES_ZONA[zona]
+        vals_z = {pnm: sum(p[campo] or 0
+                           for p in _filtrar(todos, fn, cli_map, zona_only=zona))
+                  for pnm, fn in periodos.items()}
+        v_act  = vals_z["Sem Actual"]
+        v_ant  = vals_z["Sem Ant."]
+        delta  = v_act - v_ant
+        signo  = "▲" if delta >= 0 else "▼"
+        delta_txt = f"{signo} Q{abs(delta):,.0f} vs sem ant."
+
+        # Nombre de zona con delta
+        st.markdown(
+            f"<div style='border-left:4px solid {color};padding:3px 10px;"
+            f"margin:6px 0 2px 0;border-radius:4px'>"
+            f"<span style='font-size:.82rem;font-weight:bold'>{zona}</span>"
+            f"&nbsp;&nbsp;<span style='font-size:.7rem;"
+            f"color:{'#2D7A2D' if delta>=0 else '#C0392B'}'>{delta_txt}</span>"
+            f"</div>", unsafe_allow_html=True)
+
+        # Valores compactos
+        st.markdown(_html_compacto([{"label":"", "vals": vals_z, "color": color}]),
+                    unsafe_allow_html=True)
+
+        # Barra vs meta
+        meta_z = st.session_state.get(f"meta_{zona}", 0)
+        if meta_z > 0 and campo == "total":
+            pz = min(v_act / meta_z, 1.0)
+            st.progress(pz,
+                text=f"Q{v_act:,.0f} / Meta Q{meta_z:,.0f} ({pz*100:.1f}%)")
+
+    st.divider()
+
+    # ── Dos gráficos: corto y largo plazo ─────────────────────────────────────
+    rows = []
+    for zona in ZONAS_MAP:
+        for pnm, fn in periodos.items():
+            val = sum(p[campo] or 0
+                      for p in _filtrar(todos, fn, cli_map, zona_only=zona))
+            rows.append({"Zona": zona, "Período": pnm, "Valor": val})
+
+    _dos_graficos(rows, "Zona",
+                  f"{label_campo} — Sem Actual / Sem Ant. / MTD",
+                  f"{label_campo} — YTD vs PYTD")
 
 
-# ── GASTOS ────────────────────────────────────────────────────────────────────
-def _sabana_gastos():
-    from modulo_gastos import _leer_gastos
-    gastos = _leer_gastos()
+# ── TAB 2: TOP CLIENTES ───────────────────────────────────────────────────────
+def _tab_top_clientes(todos, cli_map, periodos, campo, label_campo):
+    agg = _agg_grupo(todos, periodos, cli_map, by="cliente", campo=campo)
+    if not agg:
+        st.info("Sin datos."); return
 
-    f1,f2,f3,f4,f5 = st.columns(5)
-    años   = sorted({g["fecha"].year for g in gastos if g["fecha"]}, reverse=True)
-    año_s  = f1.selectbox("Año", años, key="dg_año")
-    mes_s  = f2.selectbox("Mes", ["Todos"]+[MESES[m] for m in range(1,13)], key="dg_mes")
-    cat_s  = f3.selectbox("Categoría",
-                          ["Todas"]+sorted({g["categoria"] for g in gastos}), key="dg_cat")
-    area_s = f4.selectbox("Área",
-                          ["Todas"]+sorted({g["area"] for g in gastos if g["area"]}),
-                          key="dg_area")
-    prov_s = f5.selectbox("Proveedor",
-                          ["Todos"]+sorted({g["proveedor"] for g in gastos if g["proveedor"]}),
-                          key="dg_prov")
+    df_all = pd.DataFrame([
+        {"cliente": v["_nombre"], "zona": v["zona"],
+         **{p: v[p] for p in periodos}}
+        for v in agg.values()
+    ])
 
-    mes_num = next((k for k,v in MESES.items() if v == mes_s), None)
-    filas = []
-    for g in gastos:
-        if not g["fecha"] or g["fecha"].year != año_s: continue
-        if mes_num and g["fecha"].month != mes_num: continue
-        if cat_s  != "Todas"  and g["categoria"]  != cat_s:  continue
-        if area_s != "Todas"  and g["area"]        != area_s: continue
-        if prov_s != "Todos"  and g["proveedor"]   != prov_s: continue
-        filas.append({
-            "Fecha":       g["fecha"].strftime("%d/%m/%Y"),
-            "Sem":         g.get("semana",""),
-            "Mes":         MESES.get(g["fecha"].month,""),
-            "Categoría":   g["categoria"],
-            "SubCat":      g["subcat"],
-            "Área":        g["area"],
-            "Frecuencia":  g.get("frecuencia",""),
-            "Proveedor":   g["proveedor"],
-            "Concepto":    g["concepto"],
-            "Monto Q":     float(g["monto"] or 0),
-        })
+    for zona in ZONAS_MAP:
+        color  = COLORES_ZONA[zona]
+        top_n  = 5 if zona in ("Antigua & Chimal", "Rio") else 3
+        df_z   = df_all[df_all["zona"]==zona].nlargest(top_n, "YTD")
 
-    if not filas:
-        st.info("Sin gastos para los filtros."); return pd.DataFrame()
+        st.markdown(
+            f"<div style='border-left:4px solid {color};padding:3px 10px;"
+            f"margin:8px 0 4px 0;border-radius:4px;font-weight:bold;"
+            f"font-size:.85rem'>{zona} — Top {top_n} {label_campo}</div>",
+            unsafe_allow_html=True)
 
-    df = pd.DataFrame(filas)
-    st.dataframe(df, hide_index=True, use_container_width=True,
-                 height=min(600, 60+len(df)*35))
-    tot = df["Monto Q"].sum()
-    st.markdown(
-        f"<div style='background:#e8f5e9;border-radius:6px;padding:8px 12px;"
-        f"font-size:.82rem'><b>{len(df)} registros</b> · "
-        f"Total: <b>{_fq(tot)}</b></div>", unsafe_allow_html=True)
-    return df
+        if df_z.empty:
+            st.caption("Sin datos."); continue
+
+        # Tabla compacta
+        cols_show = ["cliente"] + list(periodos.keys())
+        df_show = df_z[cols_show].copy()
+        df_show.columns = ["Cliente"] + list(periodos.keys())
+        for col in periodos.keys():
+            df_show[col] = df_show[col].apply(lambda x: f"Q{x:,.2f}")
+        st.dataframe(df_show.reset_index(drop=True),
+                     use_container_width=True, hide_index=True)
+
+        # Dos gráficos
+        rows = []
+        for _, row in df_z.iterrows():
+            for per in periodos:
+                rows.append({"Cliente": row["cliente"][:20],
+                              "Período": per, "Valor": row[per]})
+        _dos_graficos(rows, "Cliente",
+                      f"Sem / MTD — {zona}",
+                      f"YTD vs PYTD — {zona}")
+
+        st.divider()
 
 
-# ── CLIENTES ──────────────────────────────────────────────────────────────────
-def _sabana_clientes():
-    from data_helper import cargar_clientes
-    from config      import ZONAS_MAP
+# ── TAB 3: TOP PRODUCTOS ──────────────────────────────────────────────────────
+def _tab_top_productos(todos, cli_map, periodos, campo, label_campo):
+    zona_f = st.selectbox("Zona", ["Todas"]+list(ZONAS_MAP.keys()), key="topprod_zona")
+    zona_only = zona_f if zona_f != "Todas" else None
 
-    cod_zona = {}
-    for zona, cods in ZONAS_MAP.items():
-        for c in cods: cod_zona[c] = zona
+    agg = _agg_grupo(todos, periodos, cli_map, by="producto",
+                     campo=campo, zona_only=zona_only)
+    if not agg:
+        st.info("Sin datos."); return
 
-    clientes = cargar_clientes()
-    f1,f2,f3,f4 = st.columns(4)
-    zona_s = f1.selectbox("Zona",   ["Todas"]+list(ZONAS_MAP.keys()), key="dc_zona")
-    tipo_s = f2.selectbox("Tipo",   ["Todos"]+sorted({c["tipo"] for c in clientes}),
-                           key="dc_tipo")
-    est_s  = f3.selectbox("Estatus",["Todos","Cliente","Pendiente","Inactivo"],
-                           key="dc_est")
-    grp_s  = f4.selectbox("Grupo",  ["Todos"]+sorted({c.get("grupo","") for c in clientes
-                                                       if c.get("grupo","")}), key="dc_grp")
+    df_all = pd.DataFrame([
+        {"producto": v["_nombre"], "zona": v["zona"],
+         **{p: v[p] for p in periodos}}
+        for v in agg.values()
+    ])
+    df_top = df_all.nlargest(10, "YTD")
+
+    # Tabla Top 10
+    cols_show = ["producto"] + list(periodos.keys())
+    df_show = df_top[cols_show].copy()
+    df_show.columns = ["Producto"] + list(periodos.keys())
+    for col in periodos.keys():
+        if campo == "cantidad":
+            df_show[col] = df_show[col].apply(lambda x: f"{x:,.1f}")
+        else:
+            df_show[col] = df_show[col].apply(lambda x: f"Q{x:,.2f}")
+    st.dataframe(df_show.reset_index(drop=True),
+                 use_container_width=True, hide_index=True)
+
+    # Dos gráficos Top 5
+    st.markdown("**Gráfico Top 5**")
+    df_t5 = df_top.head(5)
+    rows = []
+    for _, row in df_t5.iterrows():
+        for per in periodos:
+            rows.append({"Producto": row["producto"][:18],
+                          "Período": per, "Valor": row[per]})
+    _dos_graficos(rows, "Producto",
+                  f"Sem / MTD — {label_campo}",
+                  f"YTD vs PYTD — {label_campo}")
+
+
+# ── TAB 4: CRÉDITOS ───────────────────────────────────────────────────────────
+def _tab_creditos():
+    st.markdown("### 💰 Flujo de Caja Semanal")
+    st.info(
+        "Este módulo fue movido a su propio espacio para mayor comodidad. "
+        "Accedé desde el menú lateral o desde el botón de abajo."
+    )
+    if st.button("💰 Ir a Flujo de Caja", type="primary"):
+        st.session_state["_nav_target"] = "💰 Flujo de Caja"
+        st.rerun()
+
+
+def _tab_crm(todos, clientes, sem_act, año_act, cli_map=None):
+    hist: dict = {}
+    for p in todos:
+        if _excluido(p["cliente"]): continue
+        cli = p["cliente"]
+        if cli not in hist:
+            hist[cli] = {"pedidos":[], "total":0, "margen":0, "prods":{}}
+        hist[cli]["pedidos"].append(p)
+        hist[cli]["total"]  += p["total"]    or 0
+        hist[cli]["margen"] += p["margen_q"] or 0
+        prod = p["producto"]
+        hist[cli]["prods"][prod] = hist[cli]["prods"].get(prod,0) + (p["cantidad"] or 0)
+
+    def _status(peds):
+        sems = [p["semana"] for p in peds if p["año"]==año_act and p["semana"]]
+        if not sems: return "🔴 Inactivo"
+        d = sem_act - max(sems)
+        if d <= 0: return "🟢 Activo"
+        if d <= 2: return "🟡 En Riesgo"
+        return "🔴 Inactivo"
+
     filas = []
     for c in clientes:
-        cod  = c.get("codigo_lugar","")
-        zona = cod_zona.get(cod,"—")
-        if zona_s != "Todas"  and zona != zona_s: continue
-        if tipo_s != "Todos"  and c["tipo"] != tipo_s: continue
-        if est_s  != "Todos"  and c["estatus"] != est_s: continue
-        if grp_s  != "Todos"  and c.get("grupo","") != grp_s: continue
+        if _excluido(c["nombre"]): continue
+        info = hist.get(c["nombre"])
+        if not info: continue
+        peds  = info["pedidos"]
+        sems  = sorted({(p["año"],p["semana"]) for p in peds if p["semana"]}, reverse=True)
+        n     = len(sems)
+        zona  = _zona_de(c["codigo_lugar"]) or "—"
         filas.append({
-            "Nombre":   c["nombre"],
-            "Tipo":     c["tipo"],
-            "Zona":     zona,
-            "Código":   cod,
-            "Grupo":    c.get("grupo",""),
-            "Estatus":  c["estatus"],
-            "Empresa":  c.get("empresa",""),
-            "NIT":      c.get("nit",""),
-            "Crédito":  "Sí" if c.get("credito") else "No",
+            "Estado": _status(peds), "Cliente": c["nombre"], "Zona": zona,
+            "Última Sem": f"Sem {sems[0][1]}/{sems[0][0]}" if sems else "—",
+            "Sem. activas": n,
+            "Ticket Prom.": f"Q{info['total']/n:,.2f}" if n else "Q0",
+            "Total Hist.": f"Q{info['total']:,.2f}",
+            "Margen Hist.": f"Q{info['margen']:,.2f}",
+            "Top Producto": max(info["prods"], key=info["prods"].get) if info["prods"] else "—",
         })
-    if not filas:
-        st.info("Sin clientes para los filtros."); return pd.DataFrame()
+
+    if not filas: st.info("Sin datos."); return
     df = pd.DataFrame(filas)
+
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1: f_z = st.selectbox("Zona",   ["Todas"]+list(ZONAS_MAP.keys()), key="crm_z")
+    with fc2: f_e = st.selectbox("Estado", ["Todos","🟢 Activo","🟡 En Riesgo","🔴 Inactivo"], key="crm_e")
+    with fc3: f_b = st.text_input("Buscar", placeholder="Nombre...", key="crm_b")
+
+    if f_z != "Todas": df = df[df["Zona"]==f_z]
+    if f_e != "Todos": df = df[df["Estado"]==f_e]
+    if f_b:            df = df[df["Cliente"].str.lower().str.contains(f_b.lower())]
+
+    st.markdown(f"**{len(df)} clientes**")
+    st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
+
+    st.divider()
+    cli_sel = st.selectbox("Ver detalle", [""]+list(df["Cliente"]), key="crm_d")
+    if cli_sel and cli_sel in hist:
+        info = hist[cli_sel]; cli_obj = next((c for c in clientes if c["nombre"]==cli_sel), {})
+        st.markdown(f"#### 👤 {cli_sel}")
+        d1,d2,d3,d4 = st.columns(4)
+        d1.metric("Total hist.", f"Q{info['total']:,.2f}")
+        d2.metric("Margen hist.", f"Q{info['margen']:,.2f}")
+        sems_u = {(p["año"],p["semana"]) for p in info["pedidos"] if p["semana"]}
+        d3.metric("Sem. activas", len(sems_u))
+        d4.metric("Crédito", f"{cli_obj.get('credito',0)} días")
+        top5 = sorted(info["prods"].items(), key=lambda x: x[1], reverse=True)[:5]
+        st.markdown("**Top 5 productos:**")
+        for prod, cant in top5: st.caption(f"• {prod}: {cant:.1f} uds")
+        sems_ord = sorted(sems_u)[-8:]
+        sem_data = [{"Semana": f"S{s}/{a}",
+                     "Venta": sum(p["total"] or 0 for p in info["pedidos"]
+                                  if p["año"]==a and p["semana"]==s)}
+                    for a,s in sems_ord]
+        if sem_data:
+            fig = px.bar(pd.DataFrame(sem_data), x="Semana", y="Venta",
+                         color_discrete_sequence=["#2D7A2D"],
+                         title="Ventas últimas semanas")
+            fig.update_layout(margin=dict(t=40,b=20))
+            st.plotly_chart(fig, use_container_width=True)
+
+
+# ── ENTRY POINT ───────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB: MARGEN — tendencia mensual MB% por Cliente o por Producto
+# ══════════════════════════════════════════════════════════════════════════════
+def _tab_margen_clientes(todos: list):
+    """MB% mensual por cliente o producto — detecta perdida de rentabilidad."""
+    from datetime import date as _date
+    import pandas as _pd
+
+    st.markdown("#### Tendencia de Margen Bruto %")
+    st.caption("MB% = (precio − costo) × cantidad / ingreso. "
+               "Tendencia: ultimo mes vs promedio de los 3 anteriores.")
+
+    cc1, cc2 = st.columns([2, 1])
+    dimension = cc1.radio("Analizar por", ["Cliente", "Producto"],
+                           horizontal=True, key="mgc_dim")
+    if dimension == "Cliente":
+        hog_m = cc2.radio("Hogares", ["Todos","Solo","Excluir"],
+                           horizontal=True, key="mgc_hog")
+    else:
+        hog_m = "Todos"
+    cc3 = st.container()
+    n_meses   = cc3.selectbox("Meses", [6, 9, 12], index=0, key="mgc_n")
+
+    key_field = "cliente" if dimension == "Cliente" else "producto"
+
+    hoy = _date.today()
+    meses = []
+    y, m = hoy.year, hoy.month
+    for _ in range(n_meses):
+        meses.append((y, m))
+        m -= 1
+        if m == 0: m, y = 12, y - 1
+    meses.reverse()
+    lbl = {1:"Ene",2:"Feb",3:"Mar",4:"Abr",5:"May",6:"Jun",
+           7:"Jul",8:"Ago",9:"Sep",10:"Oct",11:"Nov",12:"Dic"}
+    cols_meses = [f"{lbl[mm]} {yy%100:02d}" for yy, mm in meses]
+
+    # Agregacion: {entidad: {(y,m): [ingreso, mb]}}
+    data: dict = {}
+    for p in todos:
+        if p["status"] == "Cancelado": continue
+        if not p["fecha"]: continue
+        if _excluido(p["cliente"]): continue
+        _es_hog = es_hogar(p["cliente"], {})
+        if dimension == "Cliente":
+            if hog_m == "Solo"    and not _es_hog: continue
+            if hog_m == "Excluir" and     _es_hog: continue
+        key = (p["fecha"].year, p["fecha"].month)
+        if key not in meses: continue
+        ent = str(p.get(key_field) or "").strip()
+        if not ent: continue
+        ing = float(p.get("total") or 0)
+        mb  = (float(p.get("precio") or 0) - float(p.get("costo") or 0)) \
+              * float(p.get("cantidad") or 0)
+        d = data.setdefault(ent, {})
+        acc = d.setdefault(key, [0.0, 0.0])
+        acc[0] += ing
+        acc[1] += mb
+
+    if not data:
+        st.info("Sin datos en el periodo seleccionado.")
+        return
+
+    rows = []
+    for ent, d in data.items():
+        fila = {dimension: ent}
+        pcts = []
+        for (yy, mm), col in zip(meses, cols_meses):
+            ing, mb = d.get((yy, mm), (0.0, 0.0))
+            pct = (mb / ing * 100) if ing > 0 else None
+            pcts.append(pct)
+            fila[col] = f"{pct:.0f}%" if pct is not None else "—"
+
+        ult  = pcts[-1]
+        prev = [x for x in pcts[-4:-1] if x is not None]
+        if ult is not None and prev:
+            delta = ult - (sum(prev) / len(prev))
+            fila["Tendencia"] = ("🔻" if delta < -3 else
+                                  "🔺" if delta >  3 else "→") + f" {delta:+.0f}pp"
+            fila["_delta"] = delta
+        else:
+            fila["Tendencia"] = "—"
+            fila["_delta"]    = 0.0
+        fila["_ing_total"] = sum(v[0] for v in d.values())
+        rows.append(fila)
+
+    # Para productos: limitar a los mas relevantes por ingreso (legibilidad)
+    if dimension == "Producto" and len(rows) > 40:
+        rows.sort(key=lambda r: -r["_ing_total"])
+        rows = rows[:40]
+        st.caption("Mostrando los 40 productos con mayor ingreso en el periodo.")
+
+    rows.sort(key=lambda r: (r["_delta"], -r["_ing_total"]))
+    df = _pd.DataFrame(rows).drop(columns=["_delta", "_ing_total"])
     st.dataframe(df, hide_index=True, use_container_width=True,
-                 height=min(600, 60+len(df)*35))
-    st.caption(f"{len(df)} clientes")
-    return df
+                 height=min(600, 60 + len(rows) * 35))
+
+    bajando = [r[dimension] for r in rows if r["Tendencia"].startswith("🔻")]
+    if bajando:
+        st.warning(f"⚠️ Margen en descenso (>3pp): {', '.join(bajando[:6])}"
+                   + (f" y {len(bajando)-6} mas" if len(bajando) > 6 else ""))
+
+    # ── Drill-down: que producto arrastra el margen del cliente ──────────────
+    if dimension == "Cliente":
+        st.divider()
+        st.markdown("##### 🔍 Diagnóstico de cliente")
+        st.caption("Desglosa por producto: margen del último mes vs promedio "
+                   "de los 3 anteriores, ponderado por peso en la compra.")
+
+        orden_cli = [r["Cliente"] for r in rows]   # peor tendencia primero
+        cli_sel = st.selectbox("Cliente a diagnosticar", orden_cli, key="mgc_drill")
+
+        ult_key   = meses[-1]
+        prev_keys = meses[-4:-1]
+
+        # {producto: {"ult":[ing,mb], "prev":[ing,mb]}}
+        pdata: dict = {}
+        for p in todos:
+            if p["status"] == "Cancelado" or not p["fecha"]: continue
+            if p["cliente"] != cli_sel: continue
+            key = (p["fecha"].year, p["fecha"].month)
+            if key != ult_key and key not in prev_keys: continue
+            prod = str(p.get("producto") or "").strip()
+            if not prod: continue
+            ing = float(p.get("total") or 0)
+            mb  = (float(p.get("precio") or 0) - float(p.get("costo") or 0)) \
+                  * float(p.get("cantidad") or 0)
+            d = pdata.setdefault(prod, {"ult": [0.0, 0.0], "prev": [0.0, 0.0]})
+            b = d["ult"] if key == ult_key else d["prev"]
+            b[0] += ing
+            b[1] += mb
+
+        ing_cli_ult = sum(d["ult"][0] for d in pdata.values())
+        if ing_cli_ult <= 0:
+            st.info(f"{cli_sel} no tiene ventas en {cols_meses[-1]}.")
+        else:
+            filas_d, culpable, max_impacto = [], None, 0.0
+            for prod, d in pdata.items():
+                ing_u, mb_u = d["ult"]
+                ing_p, mb_p = d["prev"]
+                pct_u = (mb_u / ing_u * 100) if ing_u > 0 else None
+                pct_p = (mb_p / ing_p * 100) if ing_p > 0 else None
+                peso  = ing_u / ing_cli_ult * 100
+                if pct_u is not None and pct_p is not None:
+                    delta = pct_u - pct_p
+                    flecha = ("🔻" if delta < -3 else
+                              "🔺" if delta >  3 else "→")
+                    d_txt  = f"{flecha} {delta:+.0f}pp"
+                    impacto = max(0.0, -delta) * peso
+                    if impacto > max_impacto:
+                        max_impacto, culpable = impacto, (prod, delta, peso)
+                else:
+                    delta, d_txt = 0.0, "—"
+                filas_d.append({
+                    "Producto":     prod,
+                    f"Ingreso {cols_meses[-1]}": f"Q{ing_u:,.0f}",
+                    f"MB% {cols_meses[-1]}":     f"{pct_u:.0f}%" if pct_u is not None else "—",
+                    "MB% prom 3m":  f"{pct_p:.0f}%" if pct_p is not None else "—",
+                    "Δ":            d_txt,
+                    "Peso":         f"{peso:.0f}%",
+                    "_orden":       -(max(0.0, -delta) * peso),
+                })
+            filas_d.sort(key=lambda r: r["_orden"])
+            df_d = _pd.DataFrame(filas_d).drop(columns=["_orden"])
+            st.dataframe(df_d, hide_index=True, use_container_width=True,
+                         height=min(420, 60 + len(filas_d) * 35))
+
+            if culpable and max_impacto > 50:   # caida relevante ponderada
+                pr, dl, ps = culpable
+                st.info(f"💡 El descenso viene principalmente de **{pr}**: "
+                        f"su margen cayó {abs(dl):.0f}pp y representa el "
+                        f"{ps:.0f}% de la compra del cliente.")
+            elif culpable is None:
+                st.caption("Sin caídas de margen relevantes en los productos "
+                           "de este cliente.")
 
 
-# ── PRODUCTOS ─────────────────────────────────────────────────────────────────
-def _sabana_productos():
-    from excel_helper import leer_productos_con_fila
-    prods = leer_productos_con_fila(es_antigua=False)
-    f1,f2,f3 = st.columns(3)
-    seg_s  = f1.selectbox("Segmento", ["Todos"]+sorted({p.get("segmento","")
-                          for p in prods if p.get("segmento","")}), key="dp_seg")
-    prov_s = f2.selectbox("Proveedor",["Todos"]+sorted({p.get("proveedor","")
-                          for p in prods if p.get("proveedor","")}), key="dp_prov")
-    txt_s  = f3.text_input("Buscar nombre", key="dp_txt")
-
-    filas = []
-    for p in prods:
-        if seg_s  != "Todos" and p.get("segmento","") != seg_s:  continue
-        if prov_s != "Todos" and p.get("proveedor","") != prov_s: continue
-        if txt_s  and txt_s.lower() not in p["nombre"].lower(): continue
-        filas.append({
-            "Producto":  p["nombre"],
-            "Segmento":  p.get("segmento",""),
-            "Unidad":    p.get("unidad",""),
-            "Costo Q":   float(p.get("costo") or 0),
-            "Precio Q":  float(p.get("precio") or 0),
-            "Proveedor": p.get("proveedor",""),
-            "Parent":    p.get("parent",""),
-            "Tipo":      p.get("tipo_producto",""),
-        })
-    if not filas:
-        st.info("Sin productos para los filtros."); return pd.DataFrame()
-    df = pd.DataFrame(filas)
-    st.dataframe(df, hide_index=True, use_container_width=True,
-                 height=min(600, 60+len(df)*35))
-    st.caption(f"{len(df)} productos")
-    return df
-
-
-# ── SYNC AL SHEET ─────────────────────────────────────────────────────────────
-def _sync_sheet(df: pd.DataFrame, hoja: str = "datoscompletos"):
-    """Sobreescribe la hoja DatosCompletos con el DataFrame actual."""
-    from gsheets import ws as _ws
-    try:
-        sheet = _ws(hoja)
-        sheet.clear()
-        header = df.columns.tolist()
-        rows   = [header] + [[str(v) for v in row] for row in df.values]
-        sheet.update("A1", rows)
-        return True, len(df)
-    except Exception as e:
-        return False, str(e)
-
-
-# ── MOSTRAR ────────────────────────────────────────────────────────────────────
 def mostrar():
-    st.markdown("## 🗂️ Datos")
-    if st.button("Inicio", key="btn_home_dat", type="secondary"):
+    st.markdown("## 📊 Dashboard — VeggiExpress")
+    # Botón de regreso al Inicio
+    if st.button("🏠 Inicio", key="btn_home_dash", type="secondary"):
         st.session_state["_nav_target"] = "🏠 Inicio"
         st.rerun()
     st.divider()
 
-    tipo = st.radio("Tipo de datos",
-                    ["📦 Pedidos","💸 Gastos","👤 Clientes","🛒 Productos"],
-                    horizontal=True, key="dat_tipo")
+
+    with st.spinner("Cargando datos..."):
+        todos    = leer_pedidos()
+        clientes = cargar_clientes()
+        # Cargar metas persistentes (una vez por sesión)
+        if not any(f"meta_{z}" in st.session_state for z in ZONAS_MAP):
+            metas_guardadas = leer_metas()
+            for zona, val in metas_guardadas.items():
+                st.session_state[f"meta_{zona}"] = val
+
+    cli_map  = _build_cli_map(clientes)
+    hoy      = date.today()
+    sem_act  = hoy.isocalendar()[1]
+    año_act  = hoy.year
+    periodos = _periodos(hoy)
+
+    _warning_sin_pedido(todos, cli_map, periodos)
+
+    # ── Toggle de métrica: aplica a TODOS los tabs ────────────────────────────
+    metric = st.radio("Métrica",
+                       ["Q Venta", "Q Margen Neto", "Unidades"],
+                       horizontal=True, key="dash_metric")
+    campo = {"Q Venta": "total", "Q Margen Neto": "margen_q",
+             "Unidades": "cantidad"}[metric]
+
     st.divider()
 
-    df = pd.DataFrame()
-    if tipo == "📦 Pedidos":
-        df = _sabana_pedidos()
-    elif tipo == "💸 Gastos":
-        df = _sabana_gastos()
-    elif tipo == "👤 Clientes":
-        df = _sabana_clientes()
-    elif tipo == "🛒 Productos":
-        df = _sabana_productos()
+    t1, t2, t3, t4, t5, t6 = st.tabs([
+        "📈 Desempeño",
+        "📊 Evolución Semanal",
+        "🥧 Shares",
+        "📅 Comparativo",
+        "👤 CRM",
+        "💹 Margen",
+    ])
+    with t1: _tab_desempeno(todos, cli_map, periodos, campo, metric)
+    with t2: _tab_evolucion(todos, clientes)
+    with t3: _tab_shares(todos, clientes)
+    with t4: _tab_comparativo(todos, clientes)
+    with t5: _tab_crm(todos, clientes, sem_act, año_act, cli_map=cli_map)
+    with t6: _tab_margen_clientes(todos)
 
-    if df is not None and not df.empty:
-        st.divider()
-        d1, d2, d3 = st.columns(3)
 
-        # CSV
-        csv = df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        d1.download_button("⬇️ Descargar CSV", data=csv,
-                           file_name=f"VeggiExpress_{tipo.split()[-1]}_{date.today()}.csv",
-                           mime="text/csv", key="dat_csv")
+# ══════════════════════════════════════════════════════════════════════════════
+# NUEVAS TABS: EVOLUCIÓN SEMANAL | SHARES | COMPARATIVO ANUAL
+# ══════════════════════════════════════════════════════════════════════════════
 
-        # Excel
-        d2.download_button("⬇️ Descargar Excel",
-                           data=_df_to_excel(df),
-                           file_name=f"VeggiExpress_{tipo.split()[-1]}_{date.today()}.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           key="dat_xlsx")
+# ZONAS_DASH y COLORES_ZONA_RUTAS vienen de config.py
 
-        # Sync al Sheet
-        if d3.button("🔄 Sincronizar al Sheet", key="dat_sync",
-                     help="Sobreescribe la hoja 'DatosCompletos' con la vista actual"):
-            with st.spinner("Sincronizando..."):
-                ok, res = _sync_sheet(df)
-            if ok:
-                st.success(f"✅ {res} filas escritas en 'DatosCompletos'.")
-            else:
-                st.error(f"Error: {res}")
+
+def _cli_zona_map(clientes):
+    return {c["nombre"].lower(): c["codigo_lugar"] for c in clientes}
+
+
+def _get_zona_nombre(cod):
+    for z, cs in ZONAS_DASH.items():
+        if z == "Todas": continue
+        if cod in cs: return z
+    return None
+
+
+def _filtrar_pedidos(todos, zona_sel, czmap):
+    codigos = ZONAS_DASH.get(zona_sel, [])
+    return [
+        p for p in todos
+        if not _excluido(p["cliente"])
+        and p["status"] != "Cancelado"
+        and czmap.get(p["cliente"].lower(), "") in codigos
+        and float(p["total"] or 0) > 0
+    ]
+
+
+def _val(p, var):
+    return float(p["total"] or 0) if var == "Ventas" else float(p["margen_q"] or 0)
+
+
+def _quarter_num(mes):
+    return (mes - 1) // 3 + 1
+
+
+def _quarter_label(q, año):
+    return f"Q{q}-{str(año)[2:]}"
+
+
+def _top10_resto(items_dict, n=10):
+    """Retorna {nombre: valor} con top N + 'Otros'."""
+    sorted_items = sorted(items_dict.items(), key=lambda x: x[1], reverse=True)
+    top    = dict(sorted_items[:n])
+    otros  = sum(v for _, v in sorted_items[n:])
+    if otros > 0:
+        top["Otros"] = otros
+    return top
+
+
+# ── TAB EVOLUCIÓN SEMANAL ─────────────────────────────────────────────────────
+def _tab_evolucion(todos, clientes):
+    from datetime import date, timedelta
+
+    czmap = _cli_zona_map(clientes)
+    hoy   = date.today()
+
+    c1, c2, c3 = st.columns(3)
+    var       = c1.selectbox("Variable", ["Ventas", "Margen Neto"], key="ev_var")
+    rutas_op  = list(ZONAS_DASH.keys())[1:]
+    rutas_sel = c2.multiselect("Rutas", rutas_op, default=rutas_op, key="ev_rutas")
+    semanas_n = c3.slider("Últimas N semanas", 8, 52, 26, key="ev_sem")
+
+    # Pre-generar lista ordenada de fechas (lunes de cada semana)
+    sem_act = hoy.isocalendar()[1]
+    año_act = hoy.year
+    lunes_act = date.fromisocalendar(año_act, sem_act, 1)
+    fechas = [lunes_act - timedelta(weeks=i) for i in range(semanas_n-1, -1, -1)]
+    fecha_a_idx = {f: i for i, f in enumerate(fechas)}
+
+    # Acumular valores en arrays indexados por posición
+    zona_vals = {z: [0.0]*len(fechas) for z in rutas_op}
+    for p in todos:
+        if _excluido(p["cliente"]) or p["status"] == "Cancelado": continue
+        try:
+            sem = int(float(p["semana"])); año = int(float(p["año"]))
+            if not (1 <= sem <= 53): continue
+            lunes_p = date.fromisocalendar(año, sem, 1)
+        except Exception: continue
+        if lunes_p not in fecha_a_idx: continue
+        cod  = czmap.get(p["cliente"].lower(), "")
+        zona = _get_zona_nombre(cod)
+        if zona not in zona_vals: continue
+        val = float(p.get("total") or 0) if var == "Ventas"               else float(p.get("margen_q") or 0)
+        zona_vals[zona][fecha_a_idx[lunes_p]] += val
+
+    # Fechas en formato ISO para Plotly
+    x_iso = [f.isoformat() for f in fechas]
+
+    fig = go.Figure()
+    for zona in rutas_sel:
+        vals = zona_vals.get(zona, [])
+        if not any(v > 0 for v in vals): continue
+        fig.add_trace(go.Scatter(
+            x=x_iso, y=vals, name=zona,
+            mode="lines+markers",
+            line=dict(color=COLORES_ZONA_RUTAS.get(zona, "#888"), width=2),
+            marker=dict(size=4),
+        ))
+
+    if not fig.data:
+        st.info("Sin datos para el período y rutas seleccionadas.")
+        return
+
+    fig.update_layout(
+        title=f"Evolución Semanal — {var}",
+        xaxis=dict(
+            title="", type="date",
+            dtick=7*24*3600*1000,       # 1 semana en ms
+            tickformat="%d-%b-%y",
+            tickangle=-40,
+        ),
+        yaxis_title="Q",
+        hovermode="x unified", height=430,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _tab_shares(todos, clientes):
+    from datetime import date
+
+    czmap = _cli_zona_map(clientes)
+    hoy   = date.today()
+    sem_act = hoy.isocalendar()[1]; año_act = hoy.year
+    q_act   = _quarter_num(hoy.month)
+
+    c1, c2, c3, c4 = st.columns(4)
+    var      = c1.selectbox("Variable", ["Ventas", "Margen Neto"], key="sh_var")
+    zona_sel = c2.selectbox("Zona", list(ZONAS_DASH.keys()), key="sh_zona")
+    dim      = c3.selectbox("Ver por", ["Clientes", "Productos"], key="sh_dim")
+    periodo  = c4.selectbox("Período",
+                             ["YTD", "Trimestre Actual", "Último Mes"],
+                             key="sh_per")
+
+    # Filtrar por período
+    def en_periodo(p):
+        if not p["fecha"]: return False
+        f = p["fecha"]
+        if periodo == "YTD":
+            return f.year == año_act
+        if periodo == "Trimestre Actual":
+            return f.year == año_act and _quarter_num(f.month) == q_act
+        if periodo == "Último Mes":
+            return f.year == año_act and f.month == hoy.month
+        return False
+
+    pedidos = [p for p in _filtrar_pedidos(todos, zona_sel, czmap)
+               if en_periodo(p)]
+
+    # Agregación
+    agg = {}
+    for p in pedidos:
+        key = p["cliente"] if dim == "Clientes" else p["producto"]
+        agg[key] = agg.get(key, 0) + _val(p, var)
+
+    top = _top10_resto(agg)
+
+    # ── Pie chart ─────────────────────────────────────────────────────────────
+    if top:
+        col_pie, col_tabla = st.columns([1.4, 1])
+        with col_pie:
+            fig_pie = px.pie(
+                values=list(top.values()),
+                names=list(top.keys()),
+                title=f"Share de {dim} — {periodo} · {zona_sel}",
+                hole=0.35,
+            )
+            fig_pie.update_traces(textposition="inside", textinfo="percent+label")
+            fig_pie.update_layout(height=380, showlegend=True)
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        # ── Tabla crecimiento vs año anterior ─────────────────────────────────
+        with col_tabla:
+            st.markdown(f"**Variación vs año anterior ({dim})**")
+
+            # Mismo período año anterior
+            def en_periodo_ant(p):
+                if not p["fecha"]: return False
+                f = p["fecha"]
+                if periodo == "YTD":
+                    # PYTD: mismo período del año anterior (no FY completo)
+                    try: cutoff = hoy.replace(year=año_act - 1)
+                    except: cutoff = hoy.replace(year=año_act-1, day=28)
+                    return f.year == año_act - 1 and f <= cutoff
+                if periodo == "Trimestre Actual":
+                    return f.year == año_act - 1 and _quarter_num(f.month) == q_act
+                if periodo == "Último Mes":
+                    return f.year == año_act - 1 and f.month == hoy.month
+                return False
+
+            ped_ant = [p for p in _filtrar_pedidos(todos, zona_sel, czmap)
+                       if en_periodo_ant(p)]
+            agg_ant = {}
+            for p in ped_ant:
+                key = p["cliente"] if dim == "Clientes" else p["producto"]
+                agg_ant[key] = agg_ant.get(key, 0) + _val(p, var)
+
+            rows_tabla = []
+            for nombre in list(top.keys())[:10]:
+                act = agg.get(nombre, 0)
+                ant = agg_ant.get(nombre, 0)
+                if ant > 0:
+                    var_pct = (act - ant) / ant * 100
+                    icono   = "🟢" if var_pct >= 0 else "🔴"
+                    var_txt = f"{icono} {var_pct:+.1f}%"
+                else:
+                    var_txt = "✨ Nuevo"
+                rows_tabla.append({
+                    dim[:-1]:  nombre[:22],
+                    "Actual":  f"Q{act:,.0f}",
+                    "Ant.":    f"Q{ant:,.0f}" if ant else "—",
+                    "Var.":    var_txt,
+                })
+            if rows_tabla:
+                st.dataframe(pd.DataFrame(rows_tabla), hide_index=True,
+                             use_container_width=True,
+                             column_config={
+                                 dim[:-1]:  st.column_config.TextColumn(width="medium"),
+                                 "Actual":  st.column_config.TextColumn(width="small"),
+                                 "Ant.":    st.column_config.TextColumn(width="small"),
+                                 "Var.":    st.column_config.TextColumn(width="small"),
+                             })
+    else:
+        st.info("Sin datos para el período y zona seleccionados.")
+
+
+# ── TAB COMPARATIVO ANUAL ─────────────────────────────────────────────────────
+def _tab_comparativo(todos, clientes):
+    from datetime import date
+
+    czmap   = _cli_zona_map(clientes)
+    hoy     = date.today()
+    año_act = hoy.year
+    sem_act = hoy.isocalendar()[1]
+    mes_act = hoy.month
+    q_act   = _quarter_num(mes_act)
+
+    c1, c2, c3 = st.columns(3)
+    var      = c1.selectbox("Variable", ["Ventas", "Margen Neto"], key="cp_var")
+    zona_sel = c2.selectbox("Zona", list(ZONAS_DASH.keys()), key="cp_zona")
+    dim      = c3.selectbox("Ver por", ["Clientes", "Productos"], key="cp_dim")
+
+    pedidos = _filtrar_pedidos(todos, zona_sel, czmap)
+
+    st.divider()
+
+    # ── Gráfico 1: Años — YTD vs PYTD vs PY ──────────────────────────────────
+    st.markdown("#### 📅 Comparativo por Año")
+
+    def ytd_filter(p, año):
+        if not p["fecha"]: return False
+        f = p["fecha"]
+        return f.year == año and (
+            f < hoy.replace(year=año) if año < año_act else f <= hoy)
+
+    def full_year(p, año):
+        return p["fecha"] and p["fecha"].year == año
+
+    # Agregar por nombre para top10
+    def agg_pedidos(ped_list):
+        agg = {}
+        for p in ped_list:
+            key = p["cliente"] if dim == "Clientes" else p["producto"]
+            agg[key] = agg.get(key, 0) + _val(p, var)
+        return agg
+
+    ytd_data  = agg_pedidos([p for p in pedidos if ytd_filter(p, año_act)])
+    pytd_data = agg_pedidos([p for p in pedidos if ytd_filter(p, año_act-1)])
+    py_data   = agg_pedidos([p for p in pedidos if full_year(p, año_act-1)])
+
+    top_names = list(_top10_resto(ytd_data).keys())
+
+    fig_años = go.Figure()
+    for lbl, data, color in [
+        (f"YTD {año_act}",   ytd_data,  "#2D7A2D"),
+        (f"PYTD {año_act-1}",pytd_data, "#8DC63F"),
+        (f"PY {año_act-1}",  py_data,   "#CCCCCC"),
+    ]:
+        fig_años.add_trace(go.Bar(
+            name=lbl,
+            x=top_names,
+            y=[data.get(n, 0) for n in top_names],
+            marker_color=color,
+        ))
+    fig_años.update_layout(
+        barmode="group", height=380,
+        title=f"YTD vs PYTD vs Año Anterior — {dim}",
+        xaxis_tickangle=-30,
+    )
+    st.plotly_chart(fig_años, use_container_width=True)
+
+    st.divider()
+
+    # ── Gráfico 2: Últimos 5 trimestres (apilado por cliente/producto) ────────
+    st.markdown("#### 📊 Últimos 5 Trimestres")
+
+    def _5_quarters():
+        qs = []
+        q, a = q_act, año_act
+        for _ in range(5):
+            qs.append((q, a))
+            q -= 1
+            if q < 1: q = 4; a -= 1
+        return list(reversed(qs))
+
+    quarters = _5_quarters()
+    q_labels = [_quarter_label(q, a) for q, a in quarters]
+
+    def agg_quarter(p):
+        if not p["fecha"]: return None
+        return (_quarter_num(p["fecha"].month), p["fecha"].year)
+
+    # Agregar por (nombre, quarter)
+    q_data = {}  # {nombre: {qlabel: valor}}
+    for p in pedidos:
+        qk = agg_quarter(p)
+        if not qk or qk not in quarters: continue
+        ql  = _quarter_label(*qk)
+        key = p["cliente"] if dim == "Clientes" else p["producto"]
+        if key not in q_data: q_data[key] = {}
+        q_data[key][ql] = q_data[key].get(ql, 0) + _val(p, var)
+
+    # Top 10 por total
+    totales = {k: sum(v.values()) for k, v in q_data.items()}
+    top_q   = list(_top10_resto(totales, 9).keys())
+    # Agregar "Otros"
+    otros_q = {}
+    for ql in q_labels:
+        otros_q[ql] = sum(v.get(ql, 0) for k, v in q_data.items() if k not in top_q[:-1])
+    q_data["Otros"] = otros_q
+
+    fig_q = go.Figure()
+    colores_q = px.colors.qualitative.Set2
+    for i, nombre in enumerate(top_q):
+        if nombre not in q_data: continue
+        fig_q.add_trace(go.Bar(
+            name=nombre[:20],
+            x=q_labels,
+            y=[q_data[nombre].get(ql, 0) for ql in q_labels],
+            marker_color=colores_q[i % len(colores_q)],
+        ))
+    fig_q.update_layout(
+        barmode="stack", height=400,
+        title=f"Últimos 5 Trimestres — {dim} · {zona_sel}",
+    )
+    st.plotly_chart(fig_q, use_container_width=True)
+
+    st.divider()
+
+    # ── Gráfico 3: Últimos 13 meses (apilado) — comparación interanual ──────────
+    st.markdown("#### 📆 Últimos 13 Meses")
+
+    from datetime import date as dt_
+    def _13_months():
+        meses = []
+        m, a = mes_act, año_act
+        for _ in range(13):
+            meses.append((m, a))
+            m -= 1
+            if m < 1: m = 12; a -= 1
+        return list(reversed(meses))
+
+    meses12 = _13_months()
+    MESES_N = ["","Ene","Feb","Mar","Abr","May","Jun",
+               "Jul","Ago","Sep","Oct","Nov","Dic"]
+    m_labels = [f"{MESES_N[m]}-{str(a)[2:]}" for m, a in meses12]
+
+    # Agregar por (nombre, mes)
+    m_data = {}
+    for p in pedidos:
+        if not p["fecha"]: continue
+        mk  = (p["fecha"].month, p["fecha"].year)
+        if mk not in meses12: continue
+        ml  = f"{MESES_N[mk[0]]}-{str(mk[1])[2:]}"
+        key = p["cliente"] if dim == "Clientes" else p["producto"]
+        if key not in m_data: m_data[key] = {}
+        m_data[key][ml] = m_data[key].get(ml, 0) + _val(p, var)
+
+    totales_m = {k: sum(v.values()) for k, v in m_data.items()}
+    top_m     = list(_top10_resto(totales_m, 9).keys())
+    otros_m   = {ml: sum(v.get(ml, 0) for k, v in m_data.items()
+                         if k not in top_m[:-1])
+                 for ml in m_labels}
+    m_data["Otros"] = otros_m
+
+    fig_m = go.Figure()
+    for i, nombre in enumerate(top_m):
+        if nombre not in m_data: continue
+        fig_m.add_trace(go.Bar(
+            name=nombre[:20],
+            x=m_labels,
+            y=[m_data[nombre].get(ml, 0) for ml in m_labels],
+            marker_color=colores_q[i % len(colores_q)],
+        ))
+    fig_m.update_layout(
+        barmode="stack", height=400,
+        title=f"Últimos 13 Meses — {dim} · {zona_sel}",
+    )
+    st.plotly_chart(fig_m, use_container_width=True)

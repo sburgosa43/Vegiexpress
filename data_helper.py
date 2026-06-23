@@ -1,251 +1,149 @@
 """
-data_helper.py — Caché de clientes y productos via Google Sheets.
+config.py — Configuración centralizada de VeggiExpress
+Todas las constantes de negocio en un solo lugar.
 """
-import streamlit as st
-from gsheets import get_all_rows
-from excel_helper import _sf, _si
 
-_K_CLI  = "clientes"
-_K_PROD = "productos"
-_K_ANT  = "antigua"
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def cargar_clientes() -> list[dict]:
-    """Lista completa de clientes desde Sheets."""
-    rows = get_all_rows(_K_CLI)
-    clientes = []
-    for i, row in enumerate(rows, start=2):
-        while len(row) < 13: row.append("")
-        if not row[0]: continue
-        clientes.append({
-            "row_num":      i,
-            "nombre":       str(row[0]  or ""),
-            "direccion":    str(row[1]  or ""),
-            "ubicacion":    str(row[2]  or ""),
-            "telefono":     str(row[3]  or ""),
-            "nit":          str(row[4]  or "0"),
-            "tipo":         str(row[5]  or "Restaurante"),
-            "estatus":      str(row[6]  or "Pendiente"),
-            "empresa":      str(row[7]  or row[0] or ""),
-            "credito":      _si(row[8]),
-            "codigo":       str(row[9]  or ""),
-            "codigo_lugar": str(row[10] or "L05"),
-            "activo":       str(row[6] or "").strip().lower() != "inactivo",
-            "es_antigua":   str(row[10] or "L05").strip() in ("L03", "L04"),
-            "grupo":        str(row[11] or "").strip(),
-            "email":        str(row[12] or "").strip().lower(),
-        })
-    return clientes
-
-
-@st.cache_data(ttl=600, show_spinner=False)
-def cargar_productos(es_antigua: bool = False,
-                     solo_catalogo: bool = True) -> list[dict]:
-    """Productos para catálogo (app de pedidos y cotizador)."""
-    k     = _K_ANT if es_antigua else _K_PROD
-    rows  = get_all_rows(k)
-    col_p = 6 if es_antigua else 7   # 0-indexed precio
-
-    prods = []
-    for row in rows:
-        while len(row) < 23: row.append("")
-        nombre    = str(row[0] or "").strip()
-        cotizar   = str(row[21] if not es_antigua else
-                        (row[17] if len(row) > 17 else "") or "").strip().lower()
-        if not nombre: continue
-        # Si solo_catalogo: incluir Si/Sí/yes y vacíos, excluir solo "no"
-        if solo_catalogo and cotizar in ("no",): continue
-
-        try: precio = _sf(row[col_p])
-        except: precio = 0.0
-        if solo_catalogo and precio <= 0: continue
-
-        prods.append({
-            "nombre":   nombre,
-            "unidad":   str(row[1]  or ""),
-            "segmento": str(row[2]  or ""),
-            "costo":    _sf(row[5]),
-            "precio":   precio,
-            "proveedor":      str(row[14] if not es_antigua else row[8] or "").strip(),
-            "tipo_producto":  str(row[18] if not es_antigua else "" or "").strip(),
-            "tipo_producto2": str(row[20] if not es_antigua else row[10] or "").strip(),
-        })
-    return prods
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def get_proveedores() -> list[str]:
-    """Lista dinamica de proveedores unicos del catalogo de productos."""
-    from excel_helper import leer_productos_con_fila
-    prods = leer_productos_con_fila(False) + leer_productos_con_fila(True)
-    found = sorted({p.get("proveedor","").strip()
-                    for p in prods if p.get("proveedor","").strip()})
-    if "Sin Proveedor" not in found:
-        found.append("Sin Proveedor")
-    return found
-
-
-# ── CASCADA DE PRECIOS (4 niveles) ────────────────────────────────────────────
-_HOJAS_PRECIOS = {
-    "zona":    "precioszona",
-    "grupo":   "preciosgrupo",
-    "cliente": "preciosclient",
+# ── Zonas geográficas ─────────────────────────────────────────────────────────
+ZONAS_MAP = {
+    "🔖 Antigua & Chimal":     ["L03", "L04", "L10"],
+    "🏙️ Guatemala & Santiago": ["L05", "L06"],
+    "🌊 Río":                  ["L01", "L02"],
+    "🏠 Hogares":              ["L20"],
 }
 
-@st.cache_data(ttl=120, show_spinner=False)
-def _leer_tabla_precios(hoja: str) -> dict:
+COLORES_ZONA = {
+    "🔖 Antigua & Chimal":     "#2D7A2D",
+    "🏙️ Guatemala & Santiago": "#8DC63F",
+    "🌊 Río":                  "#4A4A4A",
+    "🏠 Hogares":              "#E65100",
+}
+
+# Para Dashboard (análisis)
+ZONAS_DASH = {
+    "Todas":            ["L01", "L02", "L03", "L04", "L20", "L05", "L06"],
+    "GT + Santiago":    ["L05", "L06"],
+    "Río":              ["L01", "L02"],
+    "Hogares":          ["L20"],
+    "Antigua + Chimal": ["L03", "L04"],
+}
+
+COLORES_ZONA_RUTAS = {
+    "GT + Santiago":    "#2D7A2D",
+    "Río":              "#8DC63F",
+    "Antigua + Chimal": "#F5A623",
+}
+
+# Subgrupos operativos
+ZONA_GT_RIO = ["L01", "L05", "L06"]   # Sergio
+ZONA_VEGGI  = ["L03", "L04", "L10"]    # Esposa
+
+# ── Clientes a excluir de reportes ───────────────────────────────────────────
+# "veggi" captura "veggi hogares" por substring
+EXCLUIR_DASHBOARD   = ["wilson"]   # Hogares ya no se excluye — es zona propia
+EXCLUIR_PROVEEDORES = ["wilson"]
+
+def es_hogar(nombre: str, clientes_map: dict = None) -> bool:
+    """Detecta si un cliente es del canal Hogares.
+    Criterio 1: nombre histórico 'veggi hogares' (compatibilidad).
+    Criterio 2: codigo_lugar L20 o tipo Hogar (clientes nuevos).
     """
-    Lee una hoja de precios y retorna dict:
-      {(lista_lower, producto_lower): precio_float}
-    """
-    from gsheets import ws as _ws
-    result = {}
-    try:
-        rows = _ws(hoja).get_all_values()
-        for row in rows[1:]:          # skip header
-            if len(row) < 3: continue
-            lista = str(row[0]).strip()
-            prod  = str(row[1]).strip()
-            try:
-                precio = float(str(row[2]).replace(",","").strip() or 0)
-            except Exception:
-                continue
-            if lista and prod and precio > 0:
-                result[(lista.lower(), prod.lower())] = precio
-    except Exception:
-        pass
-    return result
+    if "veggi hogares" in str(nombre).lower(): return True
+    if clientes_map:
+        cli = clientes_map.get(str(nombre).lower().strip(), {})
+        return (cli.get("codigo_lugar","") == "L20" or
+                cli.get("tipo","").lower() == "hogar")
+    return False
 
 
-def cli_precio(cliente: dict, producto_nombre: str) -> tuple[float, str]:
-    """
-    Cascada 4 niveles: cliente → grupo → zona → general.
-    Retorna (precio, fuente).
-    """
-    prod_lower = producto_nombre.lower().strip()
-    if not prod_lower:
-        return 0.0, "general"
+def excluido_dashboard(nombre: str, clientes_map: dict = None) -> bool:
+    """Excluye wilson. Hogares ya NO se excluye — aparece como zona propia."""
+    n = nombre.lower()
+    if "wilson" in n: return True
+    return False
 
-    cod        = str(cliente.get("codigo_lugar", "") or "").strip()
-    grupo      = str(cliente.get("grupo", "") or "").strip()
-    nombre_cli = str(cliente.get("nombre", "") or "").strip()
+def excluido_proveedores(nombre: str) -> bool:
+    n = nombre.lower()
+    return any(x in n for x in EXCLUIR_PROVEEDORES)
 
-    # Zona key para PreciosZona
-    zona_key = None
-    if cod == "L20":
-        zona_key = "hogares"
-    elif cod in ("L03", "L04"):
-        zona_key = "antigua"
+# ── Reglas ISR ────────────────────────────────────────────────────────────────
+ISR_UMBRAL = 2800.0          # Factura mínima para aplicar ISR
 
-    tab_cli  = _leer_tabla_precios("preciosclient")
-    tab_grp  = _leer_tabla_precios("preciosgrupo")
-    tab_zona = _leer_tabla_precios("precioszona")
+# Clientes exentos de ISR
+ISR_EXENTOS = ["4 pinos", "sundog", "hotelito", "amis"]
 
-    # 1. Cliente individual
-    if nombre_cli:
-        v = tab_cli.get((nombre_cli.lower(), prod_lower))
-        if v: return float(v), "cliente"
+# Clientes con descuento del 15% sobre la factura (en lugar de ISR)
+DESCUENTO_15 = ["hotelito", "amis"]
 
-    # 2. Grupo
-    if grupo:
-        v = tab_grp.get((grupo.lower(), prod_lower))
-        if v: return float(v), "grupo"
-
-    # 3. Zona
-    if zona_key:
-        v = tab_zona.get((zona_key, prod_lower))
-        if v: return float(v), "zona"
-
-    # 4. General — catálogo
-    try:
-        from excel_helper import leer_productos_con_fila
-        es_ant = cliente.get("es_antigua", False)
-        for p in leer_productos_con_fila(es_antigua=bool(es_ant)):
-            if p["nombre"].lower().strip() == prod_lower:
-                return float(p.get("precio") or 0), "general"
-    except Exception:
-        pass
-
-    return 0.0, "general"
-
-
-def limpiar_cache_precios():
-    """Limpia caches de todas las tablas de precios especiales."""
-    _leer_tabla_precios.clear()
-
-
-# ── ESCRITURA EN TABLAS DE PRECIOS ESPECIALES ─────────────────────────────────
-_GRUPOS_VALIDOS = {"italianos","chimaltecos","italianos2","porqueno"}
-_ZONAS_VALIDAS  = {"antigua","hogares"}
-
-def guardar_precio_especial(hoja_key: str, lista: str,
-                             producto: str, precio: float) -> bool:
-    """
-    Agrega o actualiza una fila en PreciosZona/Grupo/Cliente.
-    hoja_key: 'precioszona' | 'preciosgrupo' | 'preciosclient'
-    Retorna True si OK.
-    """
-    from gsheets import ws as _ws, get_all_rows
-    try:
-        sheet = _ws(hoja_key)
-        rows  = get_all_rows(hoja_key)
-        lista_l = lista.strip().lower()
-        prod_l  = producto.strip().lower()
-        for i, row in enumerate(rows, start=2):
-            if len(row) < 2: continue
-            if (str(row[0]).strip().lower() == lista_l and
-                    str(row[1]).strip().lower() == prod_l):
-                sheet.update(f"C{i}", [[precio]])
-                _leer_tabla_precios.clear()
-                return True
-        sheet.append_rows([[lista.strip(), producto.strip(), precio]])
-        _leer_tabla_precios.clear()
-        return True
-    except Exception:
+def aplica_isr(cliente_nombre: str, total: float) -> bool:
+    """¿Corresponde aplicar retención ISR a esta factura?"""
+    n = cliente_nombre.lower()
+    if total < ISR_UMBRAL:
         return False
+    return not any(e in n for e in ISR_EXENTOS)
+
+def descuento_factura(cliente_nombre: str) -> float:
+    """Retorna el porcentaje de descuento sobre la factura (0 o 15)."""
+    n = cliente_nombre.lower()
+    return 15.0 if any(d in n for d in DESCUENTO_15) else 0.0
+
+def calcular_liquido(cliente_nombre: str, total: float) -> tuple:
+    """
+    Retorna (liquido, isr, descuento) para un cliente y total de factura.
+    """
+    desc_pct = descuento_factura(cliente_nombre)
+    if desc_pct > 0:
+        desc_q = round(total * desc_pct / 100, 2)
+        return round(total - desc_q, 2), 0.0, desc_q
+    if aplica_isr(cliente_nombre, total):
+        isr = round(total / 1.12 * 0.05, 2)
+        return round(total - isr, 2), isr, 0.0
+    return round(total, 2), 0.0, 0.0
+
+# ── Reglas de pago por cliente ────────────────────────────────────────────────
+# lag: semanas entre entrega y pago
+REGLAS_PAGO = {
+    "rodrigo":   {"lag": 3, "isr": True,  "desc": 0},
+    "4 pinos":   {"lag": 1, "isr": False, "desc": 0},
+    "nanajuana": {"lag": 1, "isr": True,  "desc": 0},
+    "tijax":     {"lag": 1, "isr": True,  "desc": 0},
+    "amis":      {"lag": 1, "isr": False, "desc": 15},
+    "hotelito":  {"lag": 0, "isr": False, "desc": 15},
+    "sundog":    {"lag": 0, "isr": False, "desc": 0},
+}
+
+def reglas_cliente(nombre: str) -> dict:
+    k = nombre.lower().strip()
+    for key, r in REGLAS_PAGO.items():
+        if key in k:
+            return r
+    return {"lag": 0, "isr": True, "desc": 0}
+
+# ── Hojas Excel ───────────────────────────────────────────────────────────────
+HOJA_PEDIDOS          = "Pedidos"
+HOJA_CLIENTES         = "Clientes"
+HOJA_PRODUCTOS        = "Listado Productos"
+HOJA_PRODUCTOS_ANTIGUA= "Listado Productos Antigua"
+HOJA_CONFIG           = "Config"
+HOJA_HISTORIAL        = "Historial Cambios"
 
 
-def eliminar_precio_especial(hoja_key: str, lista: str,
-                              producto: str) -> bool:
-    """Elimina la fila de precio especial para lista+producto."""
-    from gsheets import ws as _ws, delete_rows, get_all_rows
-    try:
-        rows  = get_all_rows(hoja_key)
-        lista_l = lista.strip().lower()
-        prod_l  = producto.strip().lower()
-        to_del = []
-        for i, row in enumerate(rows, start=2):
-            if len(row) < 2: continue
-            if (str(row[0]).strip().lower() == lista_l and
-                    str(row[1]).strip().lower() == prod_l):
-                to_del.append(i)
-        if to_del:
-            delete_rows(hoja_key, to_del)
-            _leer_tabla_precios.clear()
-            return True
-        return False
-    except Exception:
-        return False
+# ── Constantes fiscales y de margen ───────────────────────────────────────────
+# Centralizadas aquí para que un cambio de tasa se refleje en toda la app.
+IVA_RATE = 0.12          # Impuesto al Valor Agregado (12%)
+ISR_RATE = 0.05          # Retención ISR (5%)
+IVA_FACTOR = 1 + IVA_RATE     # 1.12 — multiplicador de costo con IVA
+ISR_FACTOR = 1 - ISR_RATE     # 0.95 — factor neto tras retención ISR
 
+def margen_neto_pct(costo: float, precio: float) -> float:
+    """Margen neto en % según fórmula acordada: ISR_FACTOR·(1 - costo·IVA_FACTOR/precio)·100."""
+    if not precio or precio <= 0:
+        return 0.0
+    return ISR_FACTOR * (1 - costo * IVA_FACTOR / precio) * 100
 
-@st.cache_data(ttl=120, show_spinner=False)
-def leer_precios_capa(hoja_key: str, lista: str) -> list[dict]:
-    """Retorna [{producto, precio}] para una capa dada."""
-    from gsheets import ws as _ws
-    result = []
-    try:
-        rows = _ws(hoja_key).get_all_values()[1:]
-        lista_l = lista.strip().lower()
-        for row in rows:
-            if len(row) < 3: continue
-            if str(row[0]).strip().lower() != lista_l: continue
-            try:
-                precio = float(str(row[2]).replace(",","").strip() or 0)
-            except Exception:
-                continue
-            if row[1].strip() and precio > 0:
-                result.append({"producto": row[1].strip(), "precio": precio})
-    except Exception:
-        pass
-    return result
+def margen_neto_q(costo: float, precio: float) -> float:
+    """Margen neto en Quetzales: ISR_FACTOR·(precio - costo·IVA_FACTOR)."""
+    return ISR_FACTOR * (precio - costo * IVA_FACTOR)
+
+def punto_equilibrio(costo: float) -> float:
+    """Precio mínimo sin ganar ni perder: costo·IVA_FACTOR."""
+    return costo * IVA_FACTOR

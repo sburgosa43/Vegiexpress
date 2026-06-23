@@ -1,149 +1,162 @@
 """
-config.py — Configuración centralizada de VeggiExpress
-Todas las constantes de negocio en un solo lugar.
+backup_helper.py — Backup de Pedidos a Google Drive.
+Guarda un CSV en la carpeta BACKUP_FOLDER_ID (secrets). El file_id se persiste
+en GastosConfig para no depender de búsquedas en Drive (que fallan con service
+accounts en carpetas compartidas).
 """
+import io
+import csv
+import json
+import streamlit as st
+from datetime import datetime
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaInMemoryUpload
 
-# ── Zonas geográficas ─────────────────────────────────────────────────────────
-ZONAS_MAP = {
-    "🔖 Antigua & Chimal":     ["L03", "L04", "L10"],
-    "🏙️ Guatemala & Santiago": ["L05", "L06"],
-    "🌊 Río":                  ["L01", "L02"],
-    "🏠 Hogares":              ["L20"],
-}
-
-COLORES_ZONA = {
-    "🔖 Antigua & Chimal":     "#2D7A2D",
-    "🏙️ Guatemala & Santiago": "#8DC63F",
-    "🌊 Río":                  "#4A4A4A",
-    "🏠 Hogares":              "#E65100",
-}
-
-# Para Dashboard (análisis)
-ZONAS_DASH = {
-    "Todas":            ["L01", "L02", "L03", "L04", "L20", "L05", "L06"],
-    "GT + Santiago":    ["L05", "L06"],
-    "Río":              ["L01", "L02"],
-    "Hogares":          ["L20"],
-    "Antigua + Chimal": ["L03", "L04"],
-}
-
-COLORES_ZONA_RUTAS = {
-    "GT + Santiago":    "#2D7A2D",
-    "Río":              "#8DC63F",
-    "Antigua + Chimal": "#F5A623",
-}
-
-# Subgrupos operativos
-ZONA_GT_RIO = ["L01", "L05", "L06"]   # Sergio
-ZONA_VEGGI  = ["L03", "L04", "L10"]    # Esposa
-
-# ── Clientes a excluir de reportes ───────────────────────────────────────────
-# "veggi" captura "veggi hogares" por substring
-EXCLUIR_DASHBOARD   = ["wilson"]   # Hogares ya no se excluye — es zona propia
-EXCLUIR_PROVEEDORES = ["wilson"]
-
-def es_hogar(nombre: str, clientes_map: dict = None) -> bool:
-    """Detecta si un cliente es del canal Hogares.
-    Criterio 1: nombre histórico 'veggi hogares' (compatibilidad).
-    Criterio 2: codigo_lugar L20 o tipo Hogar (clientes nuevos).
-    """
-    if "veggi hogares" in str(nombre).lower(): return True
-    if clientes_map:
-        cli = clientes_map.get(str(nombre).lower().strip(), {})
-        return (cli.get("codigo_lugar","") == "L20" or
-                cli.get("tipo","").lower() == "hogar")
-    return False
+BACKUP_FILENAME = "VeggiExpress_Pedidos_Backup.csv"
+SCOPES = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive",
+]
 
 
-def excluido_dashboard(nombre: str, clientes_map: dict = None) -> bool:
-    """Excluye wilson. Hogares ya NO se excluye — aparece como zona propia."""
-    n = nombre.lower()
-    if "wilson" in n: return True
-    return False
-
-def excluido_proveedores(nombre: str) -> bool:
-    n = nombre.lower()
-    return any(x in n for x in EXCLUIR_PROVEEDORES)
-
-# ── Reglas ISR ────────────────────────────────────────────────────────────────
-ISR_UMBRAL = 2800.0          # Factura mínima para aplicar ISR
-
-# Clientes exentos de ISR
-ISR_EXENTOS = ["4 pinos", "sundog", "hotelito", "amis"]
-
-# Clientes con descuento del 15% sobre la factura (en lugar de ISR)
-DESCUENTO_15 = ["hotelito", "amis"]
-
-def aplica_isr(cliente_nombre: str, total: float) -> bool:
-    """¿Corresponde aplicar retención ISR a esta factura?"""
-    n = cliente_nombre.lower()
-    if total < ISR_UMBRAL:
-        return False
-    return not any(e in n for e in ISR_EXENTOS)
-
-def descuento_factura(cliente_nombre: str) -> float:
-    """Retorna el porcentaje de descuento sobre la factura (0 o 15)."""
-    n = cliente_nombre.lower()
-    return 15.0 if any(d in n for d in DESCUENTO_15) else 0.0
-
-def calcular_liquido(cliente_nombre: str, total: float) -> tuple:
-    """
-    Retorna (liquido, isr, descuento) para un cliente y total de factura.
-    """
-    desc_pct = descuento_factura(cliente_nombre)
-    if desc_pct > 0:
-        desc_q = round(total * desc_pct / 100, 2)
-        return round(total - desc_q, 2), 0.0, desc_q
-    if aplica_isr(cliente_nombre, total):
-        isr = round(total / 1.12 * 0.05, 2)
-        return round(total - isr, 2), isr, 0.0
-    return round(total, 2), 0.0, 0.0
-
-# ── Reglas de pago por cliente ────────────────────────────────────────────────
-# lag: semanas entre entrega y pago
-REGLAS_PAGO = {
-    "rodrigo":   {"lag": 3, "isr": True,  "desc": 0},
-    "4 pinos":   {"lag": 1, "isr": False, "desc": 0},
-    "nanajuana": {"lag": 1, "isr": True,  "desc": 0},
-    "tijax":     {"lag": 1, "isr": True,  "desc": 0},
-    "amis":      {"lag": 1, "isr": False, "desc": 15},
-    "hotelito":  {"lag": 0, "isr": False, "desc": 15},
-    "sundog":    {"lag": 0, "isr": False, "desc": 0},
-}
-
-def reglas_cliente(nombre: str) -> dict:
-    k = nombre.lower().strip()
-    for key, r in REGLAS_PAGO.items():
-        if key in k:
-            return r
-    return {"lag": 0, "isr": True, "desc": 0}
-
-# ── Hojas Excel ───────────────────────────────────────────────────────────────
-HOJA_PEDIDOS          = "Pedidos"
-HOJA_CLIENTES         = "Clientes"
-HOJA_PRODUCTOS        = "Listado Productos"
-HOJA_PRODUCTOS_ANTIGUA= "Listado Productos Antigua"
-HOJA_CONFIG           = "Config"
-HOJA_HISTORIAL        = "Historial Cambios"
+def _drive_service():
+    if "GOOGLE_CREDENTIALS" in st.secrets:
+        info = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+    else:
+        info = dict(st.secrets["gcp_service_account"])
+    creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
-# ── Constantes fiscales y de margen ───────────────────────────────────────────
-# Centralizadas aquí para que un cambio de tasa se refleje en toda la app.
-IVA_RATE = 0.12          # Impuesto al Valor Agregado (12%)
-ISR_RATE = 0.05          # Retención ISR (5%)
-IVA_FACTOR = 1 + IVA_RATE     # 1.12 — multiplicador de costo con IVA
-ISR_FACTOR = 1 - ISR_RATE     # 0.95 — factor neto tras retención ISR
+def _folder_id() -> str:
+    fid = st.secrets.get("BACKUP_FOLDER_ID", "")
+    if not fid:
+        raise ValueError("BACKUP_FOLDER_ID no está configurado en Streamlit Secrets.")
+    return str(fid).strip()
 
-def margen_neto_pct(costo: float, precio: float) -> float:
-    """Margen neto en % según fórmula acordada: ISR_FACTOR·(1 - costo·IVA_FACTOR/precio)·100."""
-    if not precio or precio <= 0:
-        return 0.0
-    return ISR_FACTOR * (1 - costo * IVA_FACTOR / precio) * 100
 
-def margen_neto_q(costo: float, precio: float) -> float:
-    """Margen neto en Quetzales: ISR_FACTOR·(precio - costo·IVA_FACTOR)."""
-    return ISR_FACTOR * (precio - costo * IVA_FACTOR)
+def _get_stored_file_id() -> str | None:
+    """file_id guardado en GastosConfig (fila BACKUP_FILE_ID)."""
+    try:
+        from gsheets import get_all_rows
+        for row in get_all_rows("gastosconfig"):
+            if row and str(row[0]).strip().upper() == "BACKUP_FILE_ID":
+                fid = str(row[1]).strip() if len(row) > 1 else ""
+                return fid or None
+    except Exception:
+        pass
+    return None
 
-def punto_equilibrio(costo: float) -> float:
-    """Precio mínimo sin ganar ni perder: costo·IVA_FACTOR."""
-    return costo * IVA_FACTOR
+
+def _store_file_id(file_id: str) -> None:
+    try:
+        from gsheets import ws as _ws, get_all_rows
+        sheet = _ws("gastosconfig")
+        for i, row in enumerate(get_all_rows("gastosconfig"), start=2):
+            if row and str(row[0]).strip().upper() == "BACKUP_FILE_ID":
+                sheet.update(f"B{i}", [[file_id]])
+                return
+        sheet.append_rows([["BACKUP_FILE_ID", file_id, "", ""]])
+    except Exception:
+        pass
+
+
+def _pedidos_csv() -> bytes:
+    from gsheets import ws as _ws
+    sheet = _ws("pedidos")
+    todas = sheet.get_all_values()
+    buf = io.StringIO()
+    w   = csv.writer(buf)
+    ts  = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    w.writerow([f"# VeggiExpress Backup — {ts}", "", "", "", ""])
+    w.writerows(todas)
+    return buf.getvalue().encode("utf-8-sig")
+
+
+def crear_backup(motivo: str = "manual") -> dict:
+    """Genera CSV de Pedidos y lo sube a Drive. Devuelve dict con ok/error/detalle."""
+    ts = datetime.now().strftime("%d/%m/%Y %H:%M")
+    try:
+        service   = _drive_service()
+        folder_id = _folder_id()
+    except Exception as e:
+        return {"ok": False, "error": f"Configuración: {e}"}
+
+    try:
+        csv_bytes = _pedidos_csv()
+        media     = MediaInMemoryUpload(csv_bytes, mimetype="text/csv", resumable=False)
+        file_id   = _get_stored_file_id()
+
+        if file_id:
+            try:
+                service.files().update(fileId=file_id, media_body=media,
+                                       supportsAllDrives=True).execute()
+            except Exception:
+                file_id = None   # fue borrado; recrear
+
+        if not file_id:
+            meta = {"name": BACKUP_FILENAME, "parents": [folder_id]}
+            res  = service.files().create(body=meta, media_body=media,
+                                          fields="id", supportsAllDrives=True).execute()
+            file_id = res["id"]
+            _store_file_id(file_id)
+
+        n_filas = max(0, csv_bytes.decode("utf-8-sig").count("\n") - 2)
+        link    = f"https://drive.google.com/file/d/{file_id}/view"
+        st.session_state["_backup_info"] = {
+            "ts": ts, "filas": n_filas, "file_id": file_id,
+            "motivo": motivo, "link": link,
+        }
+        return {"ok": True, "filas": n_filas, "ts": ts,
+                "file_id": file_id, "link": link}
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def backup_info() -> dict:
+    return st.session_state.get("_backup_info", {})
+
+
+def backup_silencioso(motivo: str = "auto") -> None:
+    try:
+        crear_backup(motivo=motivo)
+    except Exception:
+        pass
+
+
+def get_drive_link() -> str | None:
+    info = st.session_state.get("_backup_info", {})
+    if info.get("link"):
+        return info["link"]
+    fid = _get_stored_file_id()
+    return f"https://drive.google.com/file/d/{fid}/view" if fid else None
+
+
+def diagnostico() -> dict:
+    """Verifica configuración del backup paso por paso para el usuario."""
+    out = {"folder_id": False, "credenciales": False,
+           "file_id_guardado": None, "carpeta_accesible": False, "error": None}
+    try:
+        out["folder_id"] = bool(st.secrets.get("BACKUP_FOLDER_ID", ""))
+    except Exception:
+        pass
+    try:
+        _drive_service()
+        out["credenciales"] = True
+    except Exception as e:
+        out["error"] = f"Credenciales: {e}"
+        return out
+    out["file_id_guardado"] = _get_stored_file_id()
+    try:
+        service   = _drive_service()
+        folder_id = _folder_id()
+        service.files().list(q=f"'{folder_id}' in parents and trashed=false",
+                             spaces="drive", fields="files(id,name)",
+                             includeItemsFromAllDrives=True,
+                             supportsAllDrives=True).execute()
+        out["carpeta_accesible"] = True
+    except Exception as e:
+        out["error"] = f"Carpeta: {e}"
+    return out

@@ -1,348 +1,536 @@
 """
-modulo_facturacion.py — Resumen mensual de facturación por cliente
-Acumula todos los envíos del mes seleccionado, desglose por semana
-y subtotal por producto, con PDF descargable por cliente.
+modulo_envios.py — Envíos y Facturación Semana Actual
+Tres zonas: Antigua & Chimal | Guatemala & Santiago | Rio
 """
 import streamlit as st
+import pandas as pd
+import base64
+import streamlit.components.v1 as components
 from datetime import date
-from excel_helper import leer_pedidos
+from excel_helper import (leer_pedidos, cancelar_pedido,
+                          restaurar_pedido, guardar_cambios_precio)
 from data_helper  import cargar_clientes
-from pdf_helper   import (generar_facturacion_mensual,
-                           nombre_archivo_factura, MESES_ES)
-from config       import (ZONAS_MAP, COLORES_ZONA, ISR_UMBRAL,
-                           calcular_liquido, excluido_dashboard)
+from pdf_helper   import generar_envio, nombre_archivo
+from config       import (ZONAS_MAP as _ZONAS_CFG, excluido_dashboard, es_hogar,
+                           calcular_liquido)
 
-# Excluir mismos clientes que el dashboard
+ZONAS_ENVIO = _ZONAS_CFG   # Fuente única: config.py
 
-# ZONAS_MAP y COLORES_ZONA vienen de config.py
-# _excluido eliminado — todos los clientes aparecen en facturación
+@st.cache_data(ttl=300)
+def _get_cli_map():
+    try:
+        from data_helper import cargar_clientes
+        return {c["nombre"].lower().strip(): c for c in cargar_clientes()}
+    except Exception:
+        return {}
 
-def _zona_cliente(c: dict) -> str:
-    for zona, cods in ZONAS_MAP.items():
-        if c.get("codigo_lugar","") in cods:
+def _zona_de(codigo: str) -> str | None:
+    for zona, codigos in ZONAS_ENVIO.items():
+        if codigo in codigos:
             return zona
-    return "Sin zona"
+    return None
 
+def _get_cli(nombre: str, mapa_exact: dict, mapa_lower: dict) -> dict:
+    return mapa_exact.get(nombre) or mapa_lower.get(nombre.lower(), {})
 
-def _construir_datos(pedidos: list, mes: int, año: int) -> dict:
-    """
-    Agrupa los pedidos del mes por cliente → semana → líneas.
-    Retorna dict: {cliente: {semana: {fecha, lineas}, total_mes}}
-    """
-    resultado = {}
+def _detectar_zona(l0: dict, mapa_exact: dict, mapa_lower: dict) -> str | None:
+    cli   = _get_cli(l0["cliente"], mapa_exact, mapa_lower)
+    zona  = _zona_de(cli.get("codigo_lugar", ""))
+    if zona: return zona
+    return None  # Sin zona definida — revisar código_lugar del cliente
 
-    for p in pedidos:
-        if p["status"] == "Cancelado": continue
-        if not p["fecha"]:             continue
-        if p["fecha"].month != mes:    continue
-        if p["fecha"].year  != año:    continue
-        if not p["producto"]:          continue
+def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
+    l0        = lineas[0]
+    cancelado = all(l["status"] == "Cancelado" for l in lineas)
+    fecha_ped = l0["fecha"] if l0["fecha"] else date.today()
+    total_orig = sum(l["total"] or 0 for l in lineas)
 
-        cli  = p["cliente"]
-        sem  = p["semana"] or p["fecha"].isocalendar()[1]
+    # Margen Bruto: (precio - costo) x cantidad  |  Margen Neto: formula margen_q
+    mb_ped = sum((float(l.get("precio") or 0) - float(l.get("costo") or 0))
+                 * float(l.get("cantidad") or 0) for l in lineas)
+    mn_ped = sum(float(l.get("margen_q") or 0) for l in lineas)
 
-        if cli not in resultado:
-            resultado[cli] = {"por_semana": {}, "total_mes": 0.0}
-
-        if sem not in resultado[cli]["por_semana"]:
-            resultado[cli]["por_semana"][sem] = {
-                "fecha":  p["fecha"],
-                "lineas": [],
-            }
-
-        # Usar la fecha más temprana de esa semana como referencia
-        if p["fecha"] < resultado[cli]["por_semana"][sem]["fecha"]:
-            resultado[cli]["por_semana"][sem]["fecha"] = p["fecha"]
-
-        total_linea = float(p["total"] or
-                            float(p["precio"] or 0) * float(p["cantidad"] or 0))
-        resultado[cli]["por_semana"][sem]["lineas"].append({
-            "producto": p["producto"],
-            "fecha":    p["fecha"],
-            "cantidad": p["cantidad"],
-            "unidad":   p["unidad"],
-            "precio":   p["precio"],
-            "total":    total_linea,
-        })
-        resultado[cli]["total_mes"] += total_linea
-
-    # Ordenar semanas y líneas de forma ascendente por fecha y producto
-    for cli in resultado:
-        for sem in resultado[cli]["por_semana"]:
-            resultado[cli]["por_semana"][sem]["lineas"].sort(
-                key=lambda x: (x.get("fecha") or date.min, x["producto"]))
-
-    return resultado
-
-
-def _card_cliente(cli_nombre: str, datos_cli: dict,
-                   cliente_info: dict, mes: int, año: int):
-    """Muestra el expander de un cliente con desglose semanal y PDF."""
-    total = datos_cli["total_mes"]
-    sems  = len(datos_cli["por_semana"])
+    # Desglose fiscal sobre el total ORIGINAL (referencia de factura)
+    # Mismas reglas que Facturacion Mensual: calcular_liquido maneja ISR/descuento
+    liq_ped, isr_ped, desc_ped = calcular_liquido(l0["cliente"], total_orig)
+    base_iva = round(total_orig / 1.12, 2)
 
     with st.expander(
-        f"**{cli_nombre}**  ·  {sems} semana(s)  ·  "
-        f"Total: **Q{total:,.2f}**",
+        f"{'🔴' if cancelado else '🟢'}  **{l0['cliente']}**  ·  "
+        f"{fecha_ped.strftime('%d/%m/%Y')}  ·  "
+        f"{len(lineas)} productos  ·  Q{total_orig:,.2f}",
         expanded=False,
     ):
-        # Detalle por semana
-        for sem_num in sorted(datos_cli["por_semana"].keys()):
-            bloque     = datos_cli["por_semana"][sem_num]
-            fecha_sem  = bloque["fecha"]
-            lineas_sem = bloque["lineas"]
-            sub_sem    = sum(l["total"] for l in lineas_sem)
-
-            liq_sem, isr_sem, desc_sem = calcular_liquido(cli_nombre, sub_sem)
-            base_sem = round(sub_sem / 1.12, 2)
-            if desc_sem > 0:
-                isr_txt = f"Desc.15%: Q{desc_sem:,.2f}  ·  "
-            elif isr_sem > 0:
-                isr_txt = f"ISR: Q{isr_sem:,.2f}  ·  "
-            else:
-                isr_txt = ""
-            st.markdown(
-                f"<div style='background:#2D7A2D;color:white;padding:6px 10px;"
-                f"border-radius:4px;font-size:.82rem;font-weight:bold;"
-                f"margin:8px 0 4px 0'>"
-                f"Semana {sem_num} · {fecha_sem.strftime('%d/%m/%Y')} · "
-                f"NIT: {(cliente_info or {}).get('nit') or '—'} · "
-                f"Subtotal: Q{sub_sem:,.2f}"
-                f"<br><span style='font-weight:normal;font-size:.75rem;opacity:.9'>"
-                f"Base IVA: Q{base_sem:,.2f}  ·  "
-                f"{isr_txt}"
-                f"Líquido: Q{liq_sem:,.2f}</span></div>",
-                unsafe_allow_html=True)
-
-            hdr = st.columns([3, 1.5, 1.2, 1.5, 1.5])
-            hdr[0].markdown("**Producto**"); hdr[1].markdown("**Fecha**")
-            hdr[2].markdown("**Cant.**");    hdr[3].markdown("**Precio**")
-            hdr[4].markdown("**Total**")
-
-            for l in lineas_sem:
-                r = st.columns([3, 1.5, 1.2, 1.5, 1.5])
-                r[0].write(l["producto"])
-                fecha_l = l.get("fecha")
-                r[1].write(fecha_l.strftime("%d/%m/%Y") if fecha_l else "—")
-                r[2].write(f"{l['cantidad']:g} {l['unidad']}")
-                r[3].write(f"Q{l['precio']:,.2f}")
-                r[4].write(f"Q{l['total']:,.2f}")
-
-        st.divider()
-
-        # Resumen por producto
-        st.markdown("**Resumen por producto:**")
-        prod_agg = {}
-        for sem in datos_cli["por_semana"].values():
-            for l in sem["lineas"]:
-                prod = l["producto"]
-                if prod not in prod_agg:
-                    prod_agg[prod] = {"cantidad": 0, "total": 0.0,
-                                       "unidad": l["unidad"]}
-                prod_agg[prod]["cantidad"] += l["cantidad"]
-                prod_agg[prod]["total"]    += l["total"]
-
-        hdr2 = st.columns([4, 1.5, 1.5])
-        hdr2[0].markdown("**Producto**")
-        hdr2[1].markdown("**Unidades**")
-        hdr2[2].markdown("**Total**")
-        for prod, agg in sorted(prod_agg.items()):
-            r2 = st.columns([4, 1.5, 1.5])
-            r2[0].write(prod)
-            r2[1].write(f"{agg['cantidad']:,.1f} {agg['unidad']}")
-            r2[2].write(f"Q{agg['total']:,.2f}")
-
-        st.divider()
-
-        # Totales con fórmulas fiscales correctas
-        base_iva  = round(total / 1.12, 2)                          # Base sin IVA
-        liq_total, isr_ret, desc_ret = calcular_liquido(cli_nombre, total)
-        isr_ret   = isr_ret  # ya calculado con exenciones
-        liquido   = round(total - isr_ret, 2)                       # Líquido a recibir
-
-        tc1, tc2, tc3, tc4 = st.columns(4)
-        tc1.metric("Total a Facturar",  f"Q{total:,.2f}")
-        tc2.metric("Base sin IVA",      f"Q{base_iva:,.2f}",
-                   help="Valor Factura / 1.12")
-        tc3.metric("ISR a Retener",     f"Q{isr_ret:,.2f}",
-                   delta="Solo si factura ≥ Q2,500" if total >= 2500 else "No aplica (< Q2,500)",
-                   delta_color="off",
-                   help="Base sin IVA × 5% (solo si factura ≥ Q2,500)")
-        tc4.metric("Líquido a Recibir", f"Q{liquido:,.2f}",
-                   help="Total Factura − ISR retenido")
-
+        extra_txt = ""
+        if isr_ped > 0:
+            extra_txt = f"ISR: Q{isr_ped:,.2f}  ·  "
+        elif desc_ped > 0:
+            extra_txt = f"Descuento: Q{desc_ped:,.2f}  ·  "
+        _nit = (cliente_info or {}).get("nit") or "—"
         st.markdown(
-            f"<div style='background:#e8f5e9;border-radius:8px;padding:10px;"
-            f"text-align:center;margin:8px 0'>"
-            f"<b>TOTAL A FACTURAR: Q{total:,.2f}"
-            f"{'  |  ISR: Q' + f'{isr_ret:,.2f}' if isr_ret > 0 else ''}"
-            f"  |  LÍQUIDO: Q{liquido:,.2f}</b></div>",
+            f"<div style='background:#2D7A2D;color:white;padding:6px 10px;"
+            f"border-radius:4px;font-size:.82rem;font-weight:bold;"
+            f"margin:0 0 8px 0'>"
+            f"NIT: {_nit}  ·  Total: Q{total_orig:,.2f}  ·  Base IVA: Q{base_iva:,.2f}"
+            f"<br><span style='font-weight:normal;font-size:.78rem;opacity:.95'>"
+            f"{extra_txt}"
+            f"Líquido: Q{liq_ped:,.2f}  ·  "
+            f"MB: Q{mb_ped:,.0f}  ·  MN: Q{mn_ped:,.0f}</span></div>",
             unsafe_allow_html=True)
 
-        # PDF
-        try:
-            pdf_bytes = generar_facturacion_mensual(
-                cliente=cliente_info,
-                mes=mes, año=año,
-                por_semana=datos_cli["por_semana"],
-            )
-            st.download_button(
-                label="📄 Descargar PDF de Facturación",
-                data=pdf_bytes,
-                file_name=nombre_archivo_factura(cli_nombre, mes, año),
-                mime="application/pdf",
-                key=f"fact_pdf_{cli_nombre}_{mes}_{año}",
-                type="primary",
-            )
-        except Exception as e:
-            st.error(f"Error generando PDF: {e}")
+        st.caption("Ajustá precios si hay descuentos. "
+                   "'Guardar' actualiza el Excel y registra en historial.")
+
+        hdr = st.columns([4, 1.2, 1.8, 1.8])
+        hdr[0].markdown("**Producto**"); hdr[1].markdown("**Cant.**")
+        hdr[2].markdown("**Precio (Q)**"); hdr[3].markdown("**Subtotal**")
+
+        lineas_pdf = []; cambios = []; hay_cambios = False; total_ed = 0.0
+
+        for linea in sorted(lineas, key=lambda x: x["producto"]):
+            k         = f"env_{sufijo}_{unico}_{linea['row_num']}"
+            precio_xl = float(linea.get("precio_excel") or linea.get("precio") or 0)
+            if k not in st.session_state:
+                st.session_state[k] = precio_xl
+
+            r = st.columns([4, 1.2, 1.8, 1.8])
+            r[0].write(linea["producto"]); r[1].write(f"{linea['cantidad']}")
+            precio_ed = r[2].number_input("", min_value=0.0,
+                value=float(st.session_state[k]), step=0.25, key=k,
+                label_visibility="collapsed")
+            diff = precio_ed - precio_xl
+            if abs(diff) > 0.001:
+                hay_cambios = True
+                r[2].caption(f"{'▲' if diff>0 else '▼'} Q{abs(diff):.2f}")
+            sub = float(linea["cantidad"] or 0) * precio_ed
+            r[3].markdown(f"<div style='padding-top:8px;font-weight:bold'>"
+                          f"Q{sub:,.2f}</div>", unsafe_allow_html=True)
+            total_ed += sub
+            lineas_pdf.append({**linea, "precio": precio_ed, "total": sub})
+            cambios.append({"row_num": linea["row_num"], "cliente": linea["cliente"],
+                            "producto": linea["producto"], "precio_anterior": precio_xl,
+                            "precio_nuevo": precio_ed, "semana": linea["semana"],
+                            "año": linea["año"], "unico": unico})
+
+        st.markdown(f"<div style='text-align:right;font-weight:bold;margin:4px 0'>"
+                    f"Total: Q{total_ed:,.2f}</div>", unsafe_allow_html=True)
+        if hay_cambios:
+            st.caption("⚠️ Hay precios modificados.")
+        st.divider()
+
+        col_save, col_pdf, col_rem, col_acc = st.columns(4)
+        with col_save:
+            if st.button("💾 Guardar cambios" if hay_cambios else "✅ Sin cambios",
+                         key=f"env_save_{sufijo}_{unico}",
+                         type="primary" if hay_cambios else "secondary",
+                         disabled=not hay_cambios):
+                with st.spinner("Guardando..."):
+                    n = guardar_cambios_precio(cambios)
+                for linea in lineas:
+                    st.session_state.pop(f"env_{sufijo}_{unico}_{linea['row_num']}", None)
+                st.success(f"✅ {n} precio(s) guardado(s)."); st.rerun()
+
+        with col_pdf:
+            try:
+                pdf_bytes = generar_envio(cliente=cliente_info, fecha=fecha_ped,
+                                          lineas=lineas_pdf, unico=unico)
+                st.download_button("📄 Descargar PDF", data=pdf_bytes,
+                    file_name=nombre_archivo(l0["cliente"], fecha_ped),
+                    mime="application/pdf",
+                    key=f"env_pdf_{sufijo}_{unico}", type="primary")
+            except Exception as e:
+                st.error(f"Error PDF: {e}")
+
+        with col_rem:
+            try:
+                from pdf_helper import (generar_remision as _gen_rem,
+                                        boton_imprimir_html as _btn_imp)
+                _lr = [{"producto": l["producto"], "unidad": l.get("unidad",""),
+                        "cantidad": float(l.get("cantidad") or 0),
+                        "total": round(float(l.get("precio") or 0)*float(l.get("cantidad") or 0),2)}
+                       for l in lineas_pdf]
+                _rb = _gen_rem(l0["cliente"], _lr, int(l0["semana"]),
+                               int(l0["año"]), fecha_ped.strftime("%d/%m/%Y"))
+                components.html(
+                    _btn_imp(_rb, f"env_{sufijo}_{unico}", "🖨️ Remisión"),
+                    height=44)
+            except Exception as _e:
+                col_rem.caption("Rem: " + str(_e))
+
+        with col_acc:
+            if not cancelado:
+                if st.button("🔴 Cancelar", key=f"env_can_{sufijo}_{unico}",
+                             type="secondary"):
+                    with st.spinner(): cancelar_pedido(unico)
+                    st.success("Cancelado."); st.rerun()
+            else:
+                if st.button("🟢 Restaurar", key=f"env_res_{sufijo}_{unico}",
+                             type="secondary"):
+                    with st.spinner(): restaurar_pedido(unico)
+                    st.success("Restaurado."); st.rerun()
+
+
+AREAS_LIST = {
+    "🌊 Río":     lambda cli, z: z in ("L01", "L02"),
+    "🏙️ Guate":  lambda cli, z: z in ("L05", "L06") and z != "L20",
+    "🔖 Antigua": lambda cli, z: z == "L03",
+    "🔖 Chimal":  lambda cli, z: z == "L04",
+    "🏠 Hogares": lambda cli, z: z == "L20" or "veggi hogares" in cli.lower(),
+}
+
+
+def _tab_listados(todos, semana, año):
+    from pdf_helper import generar_listado_checklist
+
+    st.markdown("### 📋 Listado de Empaque")
+    st.caption("Semana actual — imprimible como checklist de preparación")
+
+    # Cargar mapa cliente → zona
+    cli_list = cargar_clientes()
+    cli_zona = {c["nombre"].lower(): c["codigo_lugar"] for c in cli_list}
+
+    # Filtro de área
+    areas_sel = st.multiselect(
+        "Seleccioná área(s):",
+        list(AREAS_LIST.keys()),
+        default=list(AREAS_LIST.keys()),
+        key="list_areas"
+    )
+    if not areas_sel:
+        st.info("Seleccioná al menos un área.")
+        return
+
+    # Filtrar pedidos de la semana actual por áreas seleccionadas
+    def en_area(p):
+        zona = cli_zona.get(p["cliente"].lower(), "")
+        return any(AREAS_LIST[a](p["cliente"], zona) for a in areas_sel)
+
+    pedidos = [
+        p for p in todos
+        if p["semana"] == semana and p["año"] == año
+        and p["status"] != "Cancelado"
+        and float(p.get("cantidad") or 0) > 0
+        and en_area(p)
+    ]
+
+    if not pedidos:
+        st.warning("Sin pedidos para las áreas seleccionadas.")
+        return
+
+    # Agrupar por cliente → lista de productos (ordenados alfabéticamente)
+    clientes_dict = {}
+    for p in pedidos:
+        cli = p["cliente"]
+        if cli not in clientes_dict:
+            clientes_dict[cli] = []
+        clientes_dict[cli].append({
+            "cliente":   cli,
+            "producto":  p["producto"],
+            "unidad":    p.get("unidad",""),
+            "cantidad":  float(p.get("cantidad") or 0),
+        })
+    # Ordenar productos dentro de cada cliente
+    for cli in clientes_dict:
+        clientes_dict[cli].sort(key=lambda x: x["producto"])
+
+    clientes_ord = sorted(clientes_dict.keys())
+    total = sum(len(v) for v in clientes_dict.values())
+    st.markdown(f"**{len(clientes_ord)} cliente(s) · {total} línea(s)**")
+    area_label = ", ".join(areas_sel)
+
+    # ── Generar PDF ───────────────────────────────────────────────────────────
+    # Agrupar por cliente para empaque inteligente
+    clientes_grupos = []
+    for cli in clientes_ord:
+        clientes_grupos.append((cli, clientes_dict[cli]))
+
+    with st.spinner("Generando listado..."):
+        pdf_bytes = generar_listado_checklist(
+            clientes_grupos, area_label, semana, año)
+    pdf_b64 = base64.b64encode(pdf_bytes).decode()
+
+    # Botones
+    bc1, bc2 = st.columns(2)
+
+    # Botón descarga PDF
+    bc1.download_button(
+        "📥 Descargar PDF",
+        data=pdf_bytes,
+        file_name=f"Listado_Sem{semana}_{año}_{area_label.replace(', ','_')}.pdf",
+        mime="application/pdf",
+        type="primary",
+        use_container_width=True,
+        key="dl_listado"
+    )
+
+    # Botón imprimir directo (nueva pestaña + auto-print)
+    html_print = f"""
+    <script>
+    function imprimirListado() {{
+        var b64 = '{pdf_b64}';
+        var byteChars = atob(b64);
+        var byteArr = new Uint8Array(byteChars.length);
+        for (var i = 0; i < byteChars.length; i++) {{
+            byteArr[i] = byteChars.charCodeAt(i);
+        }}
+        var blob = new Blob([byteArr], {{type: 'application/pdf'}});
+        var url  = URL.createObjectURL(blob);
+        var win  = window.open(url, '_blank');
+        win.onload = function() {{ win.print(); }};
+    }}
+    </script>
+    <button onclick="imprimirListado()" style="
+        background:#2D7A2D;color:white;border:none;border-radius:6px;
+        padding:8px 16px;font-size:14px;cursor:pointer;width:100%;
+        font-family:sans-serif;margin-top:2px">
+        🖨️ Imprimir directo
+    </button>
+    """
+    with bc2:
+        import streamlit.components.v1 as components
+        components.html(html_print, height=48)
+
+    # ── Vista previa embebida (blob URL) ────────────────────────────────────
+    st.markdown("**Vista previa:**")
+    import streamlit.components.v1 as components
+    preview_html = f"""
+    <div id="pdf-container" style="width:100%;height:700px;border:1px solid #ddd;border-radius:4px;">
+      <iframe id="pdf-frame" width="100%" height="700px"
+              style="border:none;border-radius:4px;"></iframe>
+    </div>
+    <script>
+      (function() {{
+        var b64 = '{pdf_b64}';
+        var raw = atob(b64);
+        var arr = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+        var blob = new Blob([arr], {{type: 'application/pdf'}});
+        var url  = URL.createObjectURL(blob);
+        document.getElementById('pdf-frame').src = url;
+      }})();
+    </script>
+    """
+    components.html(preview_html, height=720, scrolling=False)
 
 
 def mostrar():
-    st.markdown("## 🧾 Facturación Mensual")
+    st.markdown("## 🚚 Envíos y Facturación — Semana Actual")
     # Botón de regreso al Inicio
-    if st.button("🏠 Inicio", key="btn_home_fac", type="secondary"):
+    if st.button("🏠 Inicio", key="btn_home_env", type="secondary"):
         st.session_state["_nav_target"] = "🏠 Inicio"
         st.rerun()
     st.divider()
 
 
-    with st.spinner("Cargando pedidos..."):
+    with st.spinner("Cargando..."):
         todos    = leer_pedidos()
         cli_list = cargar_clientes()
 
-    # ── Alerta Rodrigo ────────────────────────────────────────────────────────
-    hoy      = date.today()
-    sem_act  = hoy.isocalendar()[1]
-    año_act  = hoy.year
-    # Rodrigo paga N+3, por lo tanto esta semana se factura N-3
-    from datetime import timedelta
-    d_ent    = date.fromisocalendar(año_act, sem_act, 1) - timedelta(weeks=3)
-    iso_ent  = d_ent.isocalendar()
-    sem_rod  = iso_ent[1]; año_rod = iso_ent[0]
-    rod_total = sum(
-        float(p["total"] or 0) for p in todos
-        if "rodrigo" in p["cliente"].lower()
-        and p["semana"] == sem_rod and p["año"] == año_rod
+    hoy        = date.today()
+    sem_act    = hoy.isocalendar()[1]
+    año_act    = hoy.year
+
+    pedidos_sem = [p for p in todos
+                   if p["semana"] == sem_act and p["año"] == año_act]
+
+    st.markdown(f"**Semana {sem_act} · {año_act}** — {hoy.strftime('%d/%m/%Y')}")
+
+    if not pedidos_sem:
+        st.info(f"No hay pedidos para la semana {sem_act}."); return
+
+    # Agrupar por Unico
+    grupos: dict = {}
+    for p in pedidos_sem:
+        grupos.setdefault(p["unico"], []).append(p)
+
+    # Mapas de clientes
+    mapa_exact = {c["nombre"]: c for c in cli_list}
+    mapa_lower = {c["nombre"].lower(): c for c in cli_list}
+
+    # Separar por zona
+    por_zona: dict = {z: {} for z in ZONAS_ENVIO}
+    sin_zona = {}
+    for unico, ls in grupos.items():
+        zona = _detectar_zona(ls[0], mapa_exact, mapa_lower)
+        if zona and zona in por_zona:
+            por_zona[zona][unico] = ls
+        else:
+            sin_zona[unico] = ls
+
+    # Ordenar por fecha desc
+    def _ord(d):
+        return dict(sorted(d.items(),
+                    key=lambda x: str(x[1][0]["fecha"] or ""), reverse=True))
+
+    por_zona = {z: _ord(v) for z, v in por_zona.items()}
+
+    # Resumen
+    total_peds = sum(len(v) for v in por_zona.values())
+    resumen    = " · ".join(f"{z}: {len(v)}" for z, v in por_zona.items() if v)
+    st.markdown(f"{total_peds} pedidos — {resumen}")
+
+    # Tabs por zona
+    # Add Listados as extra tab
+    tab_labels = [f"{z} ({len(por_zona[z])})" for z in ZONAS_ENVIO] + ["📋 Listados", "🖨️ Impresión Masiva"]
+    all_tabs   = st.tabs(tab_labels)
+    envio_tabs = all_tabs[:-2]
+    tab_list   = all_tabs[-2]
+    tab_masiva = all_tabs[-1]
+
+    for tab, zona in zip(envio_tabs, ZONAS_ENVIO):
+        with tab:
+            grupo_zona = por_zona[zona]
+            sufijo     = zona[:2].strip()
+            if not grupo_zona:
+                st.info(f"No hay pedidos para {zona} esta semana.")
+                continue
+            for unico, ls in grupo_zona.items():
+                cli_info = _get_cli(ls[0]["cliente"], mapa_exact, mapa_lower) \
+                           or {"nombre": ls[0]["cliente"]}
+                _pedido_card(unico, ls, cli_info, sufijo=sufijo)
+
+    # Pedidos sin zona identificada
+    if sin_zona:
+        with st.expander(f"⚠️ Sin zona identificada ({len(sin_zona)})", expanded=False):
+            for unico, ls in _ord(sin_zona).items():
+                cli_info = _get_cli(ls[0]["cliente"], mapa_exact, mapa_lower) \
+                           or {"nombre": ls[0]["cliente"]}
+                _pedido_card(unico, ls, cli_info, sufijo="sz")
+
+    # ── TAB LISTADOS ──────────────────────────────────────────────────────────
+    with tab_list:
+        _tab_listados(todos, sem_act, año_act)
+
+    with tab_masiva:
+        _tab_impresion_masiva(todos, cli_list, sem_act, año_act)
+
+
+# ── IMPRESIÓN MASIVA ───────────────────────────────────────────────────────────
+def _tab_impresion_masiva(todos: list, cli_list: list, sem_def: int, año_def: int):
+    """PDFs individuales por cliente para un área y semana — impresión masiva."""
+    import streamlit.components.v1 as components
+    from pdf_helper import generar_envio, nombre_archivo
+
+    st.markdown("### 🖨️ Impresión Masiva por Área")
+    st.caption("Un PDF por cliente · filtrá por semana y área · imprimí o descargá individualmente")
+
+    # ── Filtros ────────────────────────────────────────────────────────────────
+    fc1, fc2, fc3 = st.columns(3)
+    semana  = fc1.number_input("Semana", 1, 53, sem_def, key="im_sem")
+    año     = fc2.number_input("Año", 2020, 2030, año_def, key="im_año")
+    zonas   = list(ZONAS_ENVIO.keys())
+    area    = fc3.selectbox("Área", zonas, key="im_area")
+
+    # ── Filtrar pedidos ────────────────────────────────────────────────────────
+    codigos_zona = ZONAS_ENVIO[area]
+    cli_map  = {c["nombre"]: c for c in cli_list}
+    cli_zona = {c["nombre"].lower(): c["codigo_lugar"] for c in cli_list}
+
+    pedidos_sem = [
+        p for p in todos
+        if p["semana"] == semana and p["año"] == año
         and p["status"] != "Cancelado"
+        and float(p.get("cantidad") or 0) > 0
+        and cli_zona.get(p["cliente"].lower(), "") in codigos_zona
+    ]
+
+    if not pedidos_sem:
+        st.info(f"Sin pedidos activos en {area} para semana {semana}/{año}.")
+        return
+
+    # Agrupar por cliente
+    por_cliente = {}
+    for p in pedidos_sem:
+        cli = p["cliente"]
+        if cli not in por_cliente:
+            por_cliente[cli] = []
+        por_cliente[cli].append(p)
+
+    st.divider()
+    total_lineas = sum(len(v) for v in por_cliente.values())
+    st.markdown(f"**{len(por_cliente)} cliente(s) · {total_lineas} línea(s) en {area}**")
+
+    # ── Selector de clientes ───────────────────────────────────────────────────
+    sel_clis = st.multiselect(
+        "Clientes a imprimir:",
+        sorted(por_cliente.keys()),
+        default=sorted(por_cliente.keys()),
+        key="im_sel_clis",
     )
-    if rod_total > 0:
-        st.info(
-            f"📅 **Rodrigo** — Esta semana (Sem {sem_act}) "
-            f"facturá los pedidos de la **Semana {sem_rod}/{año_rod}** · "
-            f"Total: Q{rod_total:,.2f}"
-        )
-    elif sem_rod > 0:
-        st.info(
-            f"📅 **Rodrigo** — Esta semana (Sem {sem_act}) "
-            f"corresponde facturar **Semana {sem_rod}/{año_rod}** "
-            f"(sin pedidos registrados en esa semana)"
-        )
 
-    cli_map       = {c["nombre"]: c for c in cli_list}
-    cli_map_lower = {c["nombre"].lower(): c for c in cli_list}
-
-    def _get_cli_info(nombre):
-        return cli_map.get(nombre) or cli_map_lower.get(nombre.lower(), {})
-
-    # ── Selectores ────────────────────────────────────────────────────────────
-    hoy = date.today()
-    meses_disp = [(m, f"{MESES_ES[m-1]} {y}")
-                  for y in range(hoy.year, hoy.year - 2, -1)
-                  for m in range(12, 0, -1)
-                  if (y, m) <= (hoy.year, hoy.month)]
-
-    s1, s2, s3 = st.columns(3)
-    with s1:
-        mes_sel_lbl = st.selectbox(
-            "Mes", [lbl for _, lbl in meses_disp],
-            index=0, key="fact_mes")
-        mes_sel = next(m for m, lbl in meses_disp if lbl == mes_sel_lbl)
-        año_sel = int(mes_sel_lbl.split()[-1])
-
-    with s2:
-        clientes_disp = sorted({
-            p["cliente"] for p in todos
-            if p["fecha"] and p["fecha"].month == mes_sel
-            and p["fecha"].year == año_sel
-            and p["status"] != "Cancelado"
-            })
-        cli_filtro = st.selectbox(
-            "Cliente", ["Todos"] + clientes_disp, key="fact_cli")
-
-    with s3:
-        st.markdown("&nbsp;")
-        st.markdown(
-            f"<div style='padding-top:28px;font-size:.85rem;color:#555'>"
-            f"Período: <b>{MESES_ES[mes_sel]} {año_sel}</b></div>",
-            unsafe_allow_html=True)
+    if not sel_clis:
+        st.info("Seleccioná al menos un cliente.")
+        return
 
     st.divider()
 
-    # ── Construir datos ───────────────────────────────────────────────────────
-    datos = _construir_datos(todos, mes_sel, año_sel)
+    # ── PDF por cliente ────────────────────────────────────────────────────────
+    for cli_nombre in sorted(sel_clis):
+        peds = por_cliente[cli_nombre]
+        fechas   = [p["fecha"] for p in peds if p["fecha"]]
+        fecha_ent = max(fechas) if fechas else None
+        cli_info = cli_map.get(cli_nombre, {
+            "nombre": cli_nombre, "empresa": cli_nombre,
+            "direccion": "", "nit": "CF", "telefono": "",
+        })
 
-    if cli_filtro != "Todos":
-        datos = {k: v for k, v in datos.items() if k == cli_filtro}
+        lineas = sorted([{
+            "producto": p["producto"],
+            "cantidad": float(p.get("cantidad") or 0),
+            "unidad":   p.get("unidad", ""),
+            "precio":   float(p.get("precio") or 0),
+            "total":    round(float(p.get("precio") or 0) *
+                              float(p.get("cantidad") or 0), 2),
+        } for p in peds], key=lambda x: x["producto"])
 
-    if not datos:
-        st.info(f"No hay pedidos para {MESES_ES[mes_sel]} {año_sel}.")
-        return
+        total_cli = sum(l["total"] for l in lineas)
 
-    # ── Resumen global del mes ────────────────────────────────────────────────
-    total_global = sum(v["total_mes"] for v in datos.values())
-    st.markdown(
-        f"<div style='background:#e8f5e9;border-radius:8px;padding:10px;"
-        f"text-align:center;margin:4px 0 12px 0'>"
-        f"<b>{len(datos)} cliente(s)  ·  "
-        f"Total del mes: Q{total_global:,.2f}</b></div>",
-        unsafe_allow_html=True)
+        # Generar PDF
+        try:
+            unico    = peds[0].get("unico", "") if peds else ""
+            pdf_bytes = generar_envio(cli_info, fecha_ent, lineas, unico)
+            pdf_b64   = base64.b64encode(pdf_bytes).decode()
+            nom_safe  = "".join(ch for ch in cli_nombre if ch.isalnum() or ch == "_")
+            filename  = f"Envio_{nom_safe}_S{semana}_{año}.pdf"
 
-    # ── Organizar por zona ────────────────────────────────────────────────────
-    por_zona = {z: {} for z in ZONAS_MAP}
-    sin_zona = {}
-    for cli_nombre, datos_cli in datos.items():
-        cli_obj = _get_cli_info(cli_nombre)
-        zona    = _zona_cliente(cli_obj)
-        if zona in por_zona:
-            por_zona[zona][cli_nombre] = datos_cli
-        else:
-            sin_zona[cli_nombre] = datos_cli
+            col_info, col_print, col_dl = st.columns([4, 1, 1])
+            col_info.markdown(
+                f"**{cli_nombre}** · {len(lineas)} línea(s) · "
+                f"Q{total_cli:,.2f} · "
+                f"{fecha_ent.strftime('%d/%m/%Y') if fecha_ent else f'Sem {semana}'}"
+            )
 
-    tabs_labels = [f"{z} ({len(v)})" for z, v in por_zona.items() if v]
-    if sin_zona:
-        tabs_labels.append(f"⚠️ Sin zona ({len(sin_zona)})")
+            # Botón imprimir (PDF.js)
+            html_print = f"""
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+            <script>
+            pdfjsLib.GlobalWorkerOptions.workerSrc=
+              'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            function imp_{nom_safe}(){{
+              var raw=atob('{pdf_b64}');
+              var arr=new Uint8Array(raw.length);
+              for(var i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+              var blob=new Blob([arr],{{type:'application/pdf'}});
+              var url=URL.createObjectURL(blob);
+              var w=window.open(url,'_blank');
+              w.onload=function(){{w.print();}};
+            }}
+            </script>
+            <button onclick="imp_{nom_safe}()" style="
+              background:#2D7A2D;color:white;border:none;border-radius:6px;
+              padding:6px 10px;font-size:12px;cursor:pointer;width:100%;
+              font-family:sans-serif">🖨️ Imprimir</button>"""
+            with col_print:
+                components.html(html_print, height=40)
 
-    if not tabs_labels:
-        st.info("No hay pedidos para este período.")
-        return
+            col_dl.download_button(
+                "📥 PDF",
+                data=pdf_bytes,
+                file_name=filename,
+                mime="application/pdf",
+                key=f"im_dl_{nom_safe}_{semana}_{año}",
+                use_container_width=True,
+            )
 
-    tabs = st.tabs(tabs_labels)
-    tab_idx = 0
-
-    for zona, grupo in por_zona.items():
-        if not grupo:
-            continue
-        with tabs[tab_idx]:
-            tab_idx += 1
-            color    = COLORES_ZONA[zona]
-            total_z  = sum(v["total_mes"] for v in grupo.values())
-            st.markdown(
-                f"<div style='border-left:4px solid {color};padding:3px 10px;"
-                f"border-radius:4px;margin-bottom:8px'>"
-                f"<b>{zona}</b> — {len(grupo)} cliente(s) — "
-                f"Total: Q{total_z:,.2f}</div>",
-                unsafe_allow_html=True)
-            for cli_nombre, datos_cli in sorted(grupo.items(),
-                                                 key=lambda x: x[1]["total_mes"],
-                                                 reverse=True):
-                cliente_info = _get_cli_info(cli_nombre) or {"nombre": cli_nombre}
-                _card_cliente(cli_nombre, datos_cli, cliente_info, mes_sel, año_sel)
-
-    if sin_zona:
-        with tabs[tab_idx]:
-            for cli_nombre, datos_cli in sorted(sin_zona.items(),
-                                                 key=lambda x: x[1]["total_mes"],
-                                                 reverse=True):
-                cliente_info = cli_map.get(cli_nombre, {"nombre": cli_nombre})
-                _card_cliente(cli_nombre, datos_cli, cliente_info, mes_sel, año_sel)
+        except Exception as e:
+            st.error(f"{cli_nombre}: Error generando PDF — {e}")

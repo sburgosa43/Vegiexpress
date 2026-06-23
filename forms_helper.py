@@ -1,303 +1,184 @@
 """
-forms_helper.py — Creación y sincronización de formularios Google Forms.
-Requiere: Google Forms API + Drive API habilitadas en el proyecto.
+export_helper.py — Export mensual a Excel: P&L + Gastos + Facturacion.
 """
-import json
-import streamlit as st
-
-_FORM_SEL_KEY   = "hog_form_seleccion"
-_FORM_ORDER_KEY = "hog_form_orden"
+import io
+from datetime import date
 
 
-# ── Credenciales ──────────────────────────────────────────────────────────────
-def _creds():
-    from google.oauth2.service_account import Credentials
-    SCOPES = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/forms.body",
-        "https://www.googleapis.com/auth/forms.responses.readonly",
+def generar_excel_mensual(mes: int, año: int) -> bytes:
+    """Workbook con 3 hojas: P&L por area, Gastos del mes, Facturacion por cliente."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    from modulo_gastos import (_leer_gastos, _cargar_config, _finanzas_detallado,
+                                _GASTOS_VEGGI_MAP, _VEGGI_RIO_PCT, _VEGGI_ANT_PCT,
+                                _VEGGI_CHIM_PCT, _VEGGI_HOG_PCT)
+    from excel_helper import leer_pedidos
+    from data_helper  import cargar_clientes
+    from config       import calcular_liquido
+
+    cfg        = _cargar_config()
+    campo_clis = cfg["campo_clis"]
+    pedidos    = leer_pedidos()
+    gastos_all = _leer_gastos()
+
+    filtro_mes = lambda p: (p["fecha"] and p["fecha"].month == mes
+                            and p["fecha"].year == año)
+    gas_mes    = [g for g in gastos_all
+                  if g["fecha"] and g["fecha"].month == mes and g["fecha"].year == año]
+
+    # Zona map
+    cli_zona = {}
+    for c in cargar_clientes():
+        for z, cods in _GASTOS_VEGGI_MAP.items():
+            if c.get("codigo_lugar","") in cods:
+                cli_zona[c["nombre"].lower().strip()] = z
+                break
+
+    fin = _finanzas_detallado(pedidos, campo_clis, filtro_mes, cli_zona)
+    inc = fin["inc"]; costo_p = fin["costo"]
+    _t  = lambda d: sum(d.values())
+
+    def _gas_cat(cat):
+        return sum(g["monto"] for g in gas_mes if g["categoria"] == cat)
+    gas_campo_t = _gas_cat("Campo")
+    gas_veggi_t = _gas_cat("Veggi")
+
+    # ── Estilos ───────────────────────────────────────────────────────────────
+    wb = Workbook()
+    H  = Font(bold=True, color="FFFFFF")
+    HF = PatternFill("solid", fgColor="2D7A2D")
+    B  = Font(bold=True)
+    TH = Border(top=Side(style="thin"))
+    MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio",
+             "Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
+
+    def _header(ws, cols, widths):
+        for j, (col, w) in enumerate(zip(cols, widths), start=1):
+            cell = ws.cell(row=1, column=j, value=col)
+            cell.font = H; cell.fill = HF
+            ws.column_dimensions[cell.column_letter].width = w
+
+    # ── Hoja 1: P&L ───────────────────────────────────────────────────────────
+    ws = wb.active
+    ws.title = "P&L"
+    _header(ws, ["Area","Ingreso","Costo Producto","Gastos Op","Margen Neto"],
+            [24, 14, 16, 13, 14])
+
+    areas = [
+        ("Campo",               _t(inc["Campo"]), 0,
+         gas_campo_t),
+        ("Veggi Rio",           _t(inc["Veggi"]["Rio"]),
+         _t(costo_p["Veggi"]["Rio"]),  round(gas_veggi_t*_VEGGI_RIO_PCT, 2)),
+        ("Veggi Antigua",       _t(inc["Veggi"]["Antigua"]),
+         _t(costo_p["Veggi"]["Antigua"]), round(gas_veggi_t*_VEGGI_ANT_PCT, 2)),
+        ("Veggi Chimaltenango", _t(inc["Veggi"]["Chimaltenango"]),
+         _t(costo_p["Veggi"]["Chimaltenango"]), round(gas_veggi_t*_VEGGI_CHIM_PCT, 2)),
+        ("Veggi Hogares",       _t(inc["Interno"]),
+         _t(costo_p["Interno"]), round(gas_veggi_t*_VEGGI_HOG_PCT, 2)),
     ]
-    if "GOOGLE_CREDENTIALS" in st.secrets:
-        info = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-    else:
-        info = dict(st.secrets["gcp_service_account"])
-    return Credentials.from_service_account_info(info, scopes=SCOPES)
+    r = 2
+    tot = [0.0, 0.0, 0.0, 0.0]
+    for nombre, ing, cc, gas in areas:
+        mn = ing - cc - gas
+        for j, v in enumerate([nombre, ing, cc, gas, mn], start=1):
+            ws.cell(row=r, column=j, value=v)
+        for j, v in enumerate([ing, cc, gas, mn]):
+            tot[j] += v
+        r += 1
+    ws.cell(row=r, column=1, value="TOTAL").font = B
+    for j, v in enumerate(tot, start=2):
+        cl = ws.cell(row=r, column=j, value=round(v, 2)); cl.font = B; cl.border = TH
+    for row in ws.iter_rows(min_row=2, min_col=2):
+        for cl in row: cl.number_format = "#,##0.00"
 
+    # ── Hoja 2: Gastos ────────────────────────────────────────────────────────
+    ws2 = wb.create_sheet("Gastos")
+    _header(ws2, ["Fecha","Semana","Categoria","SubCategoria","Area",
+                  "Frecuencia","Proveedor","Concepto","Monto"],
+            [11, 8, 11, 18, 13, 11, 16, 26, 11])
+    r = 2
+    for g in sorted(gas_mes, key=lambda x: x["fecha"] or date.min):
+        vals = [g["fecha"].strftime("%d/%m/%Y") if g["fecha"] else "",
+                g["semana"], g["categoria"], g["subcat"], g["area"],
+                g["frecuencia"], g["proveedor"], g["concepto"], g["monto"]]
+        for j, v in enumerate(vals, start=1):
+            ws2.cell(row=r, column=j, value=v)
+        r += 1
+    ws2.cell(row=r, column=8, value="TOTAL").font = B
+    cl = ws2.cell(row=r, column=9, value=round(sum(g["monto"] for g in gas_mes), 2))
+    cl.font = B; cl.border = TH
+    for row in ws2.iter_rows(min_row=2, min_col=9, max_col=9):
+        for c2 in row: c2.number_format = "#,##0.00"
 
-def _forms_svc():
-    from googleapiclient.discovery import build
-    return build("forms", "v1", credentials=_creds(), cache_discovery=False)
+    # ── Hoja 3: Facturacion por cliente ───────────────────────────────────────
+    ws3 = wb.create_sheet("Facturacion")
+    _header(ws3, ["Cliente","Total","Base IVA","ISR","Descuento","Liquido"],
+            [26, 13, 13, 11, 11, 13])
+    por_cli: dict = {}
+    for p in pedidos:
+        if not filtro_mes(p): continue
+        if p["status"] == "Cancelado": continue
+        por_cli[p["cliente"]] = por_cli.get(p["cliente"], 0) + float(p.get("total") or 0)
 
+    r = 2
+    tots = [0.0]*5
+    for cli in sorted(por_cli, key=lambda x: -por_cli[x]):
+        total = por_cli[cli]
+        liq, isr, desc = calcular_liquido(cli, total)
+        base = round(total / 1.12, 2)
+        vals = [cli, total, base, isr, desc, liq]
+        for j, v in enumerate(vals, start=1):
+            ws3.cell(row=r, column=j, value=v)
+        for j, v in enumerate(vals[1:]):
+            tots[j] += v
+        r += 1
+    ws3.cell(row=r, column=1, value="TOTAL").font = B
+    for j, v in enumerate(tots, start=2):
+        cl = ws3.cell(row=r, column=j, value=round(v, 2)); cl.font = B; cl.border = TH
+    for row in ws3.iter_rows(min_row=2, min_col=2):
+        for c3 in row: c3.number_format = "#,##0.00"
 
-def _drive_svc():
-    from googleapiclient.discovery import build
-    return build("drive", "v3", credentials=_creds(), cache_discovery=False)
+    # ── Hoja 4: Gastos por Rubro (Campo + areas Veggi + General) ─────────────
+    ws4 = wb.create_sheet("Gastos por Rubro")
+    _AREAS = ["Rio", "Antigua", "Chimaltenango", "Hogares"]
+    cols4  = ["SubCategoria","Campo"] + _AREAS + ["General","Total"]
+    _header(ws4, cols4, [20, 11, 11, 11, 14, 11, 11, 11])
 
+    rubros: dict = {}
+    for g in gas_mes:
+        cat = g["categoria"]
+        if cat not in ("Campo", "Veggi"): continue
+        sub = g["subcat"] or "(sin subcategoria)"
+        col = "Campo" if cat == "Campo" else (
+              g["area"] if g["area"] in _AREAS else "General")
+        d = rubros.setdefault(sub, {})
+        d[col] = d.get(col, 0) + g["monto"]
 
-# ── Config: form_id persiste en GastosConfig ──────────────────────────────────
-_HOG_KEY = "HOG_FORM_ID"
+    r = 2
+    col_keys = ["Campo"] + _AREAS + ["General"]
+    tot4 = {k: 0.0 for k in col_keys}
+    for sub in sorted(rubros, key=lambda s: -sum(rubros[s].values())):
+        d = rubros[sub]
+        ws4.cell(row=r, column=1, value=sub)
+        for j, k in enumerate(col_keys, start=2):
+            v = d.get(k, 0)
+            if v: ws4.cell(row=r, column=j, value=round(v, 2))
+            tot4[k] += v
+        ws4.cell(row=r, column=len(cols4), value=round(sum(d.values()), 2))
+        r += 1
+    ws4.cell(row=r, column=1, value="TOTAL").font = B
+    for j, k in enumerate(col_keys, start=2):
+        cl = ws4.cell(row=r, column=j, value=round(tot4[k], 2))
+        cl.font = B; cl.border = TH
+    cl = ws4.cell(row=r, column=len(cols4), value=round(sum(tot4.values()), 2))
+    cl.font = B; cl.border = TH
+    for row in ws4.iter_rows(min_row=2, min_col=2):
+        for c4 in row: c4.number_format = "#,##0.00"
 
+    # Titulo en propiedades
+    wb.properties.title = f"VeggiExpress {MESES[mes-1]} {año}"
 
-def get_form_id() -> str | None:
-    try:
-        from gsheets import get_all_rows
-        for row in get_all_rows("gastosconfig"):
-            if row and str(row[0]).strip().upper() == _HOG_KEY:
-                v = str(row[1]).strip() if len(row) > 1 else ""
-                return v or None
-    except Exception:
-        pass
-    return None
-
-
-def _save_form_id(form_id: str) -> None:
-    try:
-        from gsheets import ws as _ws, get_all_rows
-        sheet = _ws("gastosconfig")
-        for i, row in enumerate(get_all_rows("gastosconfig"), start=2):
-            if row and str(row[0]).strip().upper() == _HOG_KEY:
-                sheet.update(f"B{i}", [[form_id]])
-                return
-        sheet.append_rows([[_HOG_KEY, form_id, "", ""]])
-    except Exception:
-        pass
-
-
-# ── Productos Hogares para el formulario ──────────────────────────────────────
-def _productos_hogares() -> list[dict]:
-    from excel_helper import leer_productos_con_fila
-    from data_helper  import leer_precios_capa
-
-    prods_gen = leer_productos_con_fila(es_antigua=False)
-    precios_h = {p["producto"].lower(): p["precio"]
-                 for p in leer_precios_capa("precioszona", "Hogares")}
-
-    result = []
-    for p in prods_gen:
-        if not p.get("nombre") or not p.get("unidad"):
-            continue
-        precio = precios_h.get(p["nombre"].lower()) or float(p.get("precio") or 0)
-        if precio <= 0:
-            continue
-        result.append({
-            "nombre":   p["nombre"],
-            "unidad":   p["unidad"],
-            "segmento": p.get("segmento", "Otros"),
-            "precio":   precio,
-        })
-    return sorted(result, key=lambda x: (x["segmento"], x["nombre"]))
-
-
-# ── Leer productos en formulario actual ──────────────────────────────────────
-def leer_productos_en_form(form_id: str) -> set:
-    import re as _re
-    svc  = _forms_svc()
-    form = svc.forms().get(formId=form_id).execute()
-    _pat = _re.compile(r"^(.+?)\s*\(.+?\)\s*[-\u2013]\s*Q[.\s]*[\d.,]+")
-    nombres = set()
-    for item in form.get("items", []):
-        if "questionItem" not in item:
-            continue
-        m = _pat.match(item.get("title", ""))
-        if m:
-            nombres.add(m.group(1).strip())
-    return nombres
-
-
-# ── Actualizar formulario (con secciones por segmento y dropdowns 1-6) ────────
-def actualizar_formulario(form_id: str,
-                          titulo:    str  = None,
-                          productos: list = None) -> dict:
-    """
-    Limpia preguntas de producto + page breaks del formulario y agrega los actuales.
-    Estructura:
-      Página 1: Info del cliente
-      Sección por segmento: page break + dropdown 1-6 por producto
-      Última sección: Productos Extra (texto libre) + Confirmación (radio)
-    """
-    import re as _re, time
-
-    prods = productos if productos is not None else _productos_hogares()
-    svc   = _forms_svc()
-
-    DESC_SECCION = (
-        "Por favor, antes de pasar a la siguiente sección, "
-        "verifica las cantidades de cada producto que quieres."
-    )
-    OPTS_CANT = [{"value": str(i)} for i in range(1, 7)]   # 1, 2, 3, 4, 5, 6
-
-    # ── Paso 1: leer estructura actual ────────────────────────────────────────
-    form  = svc.forms().get(formId=form_id).execute()
-    items = form.get("items", [])
-
-    # ── Paso 2: detectar items a eliminar ─────────────────────────────────────
-    _pat = _re.compile(r"^.+?\s*\(.+?\)\s*[-\u2013]\s*Q[.\s]*[\d.,]+")
-    _SKIP_TITLES = {
-        "productos extra", "mi pedido está listo", "mi pedido esta listo",
-        "para finalizar",
-    }
-    del_indices = sorted([
-        i for i, item in enumerate(items)
-        if ("questionItem" in item and _pat.match(item.get("title", "")))
-        or "textItem"      in item
-        or "pageBreakItem" in item
-        or item.get("title", "").lower().strip() in _SKIP_TITLES
-    ], reverse=True)
-
-    if del_indices:
-        del_reqs = [{"deleteItem": {"location": {"index": idx}}}
-                    for idx in del_indices]
-        for i in range(0, len(del_reqs), 50):
-            svc.forms().batchUpdate(
-                formId=form_id,
-                body={"requests": del_reqs[i:i+50]}
-            ).execute()
-            time.sleep(0.5)
-
-    # ── Paso 3: re-leer para saber cuántos items base quedan ──────────────────
-    form2  = svc.forms().get(formId=form_id).execute()
-    n_base = len(form2.get("items", []))
-
-    # ── Paso 4: agrupar por segmento ─────────────────────────────────────────
-    from collections import defaultdict as _dd
-    seg_prods = _dd(list)
-    for p in prods:
-        seg_prods[p["segmento"]].append(p)
-
-    _SEG_ORD = ["Vegetales","Frutas","Hierbas","Congelados","Especias","Flores","Otros"]
-    segmentos = [s for s in _SEG_ORD if s in seg_prods] + \
-                [s for s in seg_prods if s not in _SEG_ORD]
-
-    # ── Paso 5: construir requests ────────────────────────────────────────────
-    add_reqs = []
-    pos = n_base
-
-    for seg in segmentos:
-        # Page break = nueva sección con título del segmento
-        add_reqs.append({"createItem": {
-            "item": {
-                "title":         seg,
-                "description":   DESC_SECCION,
-                "pageBreakItem": {}
-            },
-            "location": {"index": pos}
-        }})
-        pos += 1
-
-        for p in seg_prods[seg]:
-            nombre_p = f"{p['nombre']} ({p['unidad']}) - Q.{p['precio']:.2f}"
-            add_reqs.append({"createItem": {
-                "item": {
-                    "title": nombre_p,
-                    "questionItem": {"question": {
-                        "required": False,
-                        "choiceQuestion": {
-                            "type":    "DROP_DOWN",
-                            "options": OPTS_CANT,
-                        }
-                    }}
-                },
-                "location": {"index": pos}
-            }})
-            pos += 1
-
-    # Sección final
-    add_reqs.append({"createItem": {
-        "item": {
-            "title":         "Para finalizar",
-            "description":   "Revisá tu pedido antes de confirmar.",
-            "pageBreakItem": {}
-        },
-        "location": {"index": pos}
-    }})
-    pos += 1
-
-    # Productos Extra — texto libre largo
-    add_reqs.append({"createItem": {
-        "item": {
-            "title": "Productos Extra",
-            "questionItem": {"question": {
-                "required": False,
-                "textQuestion": {"paragraph": True}
-            }}
-        },
-        "location": {"index": pos}
-    }})
-    pos += 1
-
-    # Confirmación — radio requerido
-    add_reqs.append({"createItem": {
-        "item": {
-            "title": (
-                "Mi pedido está listo, he seleccionado los productos "
-                "y cantidades que quiero. Mi total a pagar me lo "
-                "enviarán por Whatsapp."
-            ),
-            "questionItem": {"question": {
-                "required": True,
-                "choiceQuestion": {
-                    "type":    "RADIO",
-                    "options": [{"value": "Confirmo mi pedido"}]
-                }
-            }}
-        },
-        "location": {"index": pos}
-    }})
-    pos += 1
-
-    # ── Paso 6: ejecutar en bloques ───────────────────────────────────────────
-    BLOQUE = 50
-    for i in range(0, len(add_reqs), BLOQUE):
-        svc.forms().batchUpdate(
-            formId=form_id,
-            body={"requests": add_reqs[i:i+BLOQUE]}
-        ).execute()
-        time.sleep(0.5)
-
-    _save_form_id(form_id)
-    return {
-        "form_url":   f"https://docs.google.com/forms/d/{form_id}/viewform",
-        "edit_url":   f"https://docs.google.com/forms/d/{form_id}/edit",
-        "eliminados": len(del_indices),
-        "agregados":  len(add_reqs),
-    }
-
-
-# ── Alias de compatibilidad ───────────────────────────────────────────────────
-def crear_formulario(titulo: str = "Pedidos Veggi Hogares",
-                     productos: list = None) -> dict:
-    form_id = get_form_id()
-    if not form_id:
-        raise ValueError(
-            "No hay formulario configurado. "
-            "Ingresá el ID del formulario primero.")
-    return actualizar_formulario(form_id, titulo=titulo, productos=productos)
-
-
-# ── Sincronizar (alias de actualizar) ────────────────────────────────────────
-def sincronizar_formulario(form_id: str) -> dict:
-    return actualizar_formulario(form_id)
-
-
-# ── Leer respuestas via Forms API ─────────────────────────────────────────────
-def leer_respuestas_api(form_id: str) -> tuple[dict, list]:
-    svc  = _forms_svc()
-    form = svc.forms().get(formId=form_id).execute()
-    q_map = {}
-    for item in form.get("items", []):
-        if "questionItem" in item:
-            q_id = item["questionItem"]["question"].get("questionId")
-            if q_id:
-                q_map[q_id] = item.get("title", "")
-    all_resp, page_token = [], None
-    while True:
-        params = {"formId": form_id}
-        if page_token:
-            params["pageToken"] = page_token
-        result = svc.forms().responses().list(**params).execute()
-        all_resp.extend(result.get("responses", []))
-        page_token = result.get("nextPageToken")
-        if not page_token:
-            break
-    return q_map, all_resp
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

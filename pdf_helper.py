@@ -16,7 +16,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
     HRFlowable, KeepTogether,
@@ -25,6 +25,11 @@ from reportlab.platypus import Image as RLImage
 
 # ── BRAND COLORS ──────────────────────────────────────────────────────────────
 VERDE_OSC = colors.HexColor('#2D7A2D')
+
+# Meses en español (nivel de módulo, reutilizable desde otros módulos)
+_MESES_ES = {1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo",
+             6: "junio", 7: "julio", 8: "agosto", 9: "septiembre",
+             10: "octubre", 11: "noviembre", 12: "diciembre"}
 VERDE_LIM = colors.HexColor('#8DC63F')
 GRIS_CARB = colors.HexColor('#4A4A4A')
 GRIS_CLR  = colors.HexColor('#F5F5F5')
@@ -694,6 +699,9 @@ def generar_cotizacion_formal(
     cotizador_tel: str = "",
     num_cot: str = "",
     notas: str = "",
+    condiciones_txt: str = "",
+    mostrar_total_col: bool = False,
+    mostrar_total_fila: bool = False,
 ) -> bytes:
     """
     PDF de cotizacion formal para empresas procesadoras.
@@ -701,6 +709,11 @@ def generar_cotizacion_formal(
     con especificacion y volumen semanal + condiciones + firma.
     """
     from reportlab.platypus import KeepTogether
+
+    def _fecha_es(d):
+        return f"{d.day:02d}/{d.month:02d}/{d.year}"
+    def _fecha_larga_es(d):
+        return f"{d.day} de {_MESES_ES[d.month]} de {d.year}"
 
     buffer = BytesIO()
     S_base = _S()
@@ -759,8 +772,8 @@ def generar_cotizacion_formal(
         _p("Distribucion de Frutas y Vegetales Frescos", S["cot_sub"]),
         Spacer(1, 3*mm),
         _p(f"No. {num_cot}", S["cot_num"]),
-        _p(f"Fecha: {desde.strftime('%d/%m/%Y')}", S["cot_num"]),
-        _p(f"Valida hasta: {hasta.strftime('%d/%m/%Y')}", S["cot_num"]),
+        _p(f"Fecha: {_fecha_es(desde)}", S["cot_num"]),
+        _p(f"Valida hasta: {_fecha_es(hasta)}", S["cot_num"]),
     ]
 
     ht = Table([[logo, hdr_right]], colWidths=[58*mm, CW - 58*mm])
@@ -810,23 +823,38 @@ def generar_cotizacion_formal(
 
     # ── 4. CUERPO DE PRESENTACION ─────────────────────────────────────────────
     if cuerpo:
+        _cuerpo_just = ParagraphStyle("cuerpo_just", fontSize=9.5,
+            textColor=GRIS_CARB, leading=14, alignment=TA_JUSTIFY, spaceAfter=4)
         for parrafo in _s(cuerpo).split("\n"):
             if parrafo.strip():
-                story.append(_p(parrafo.strip(), S["cuerpo"]))
+                story.append(_p(parrafo.strip(), _cuerpo_just))
+            else:
+                story.append(Spacer(1, 2*mm))
         story.append(Spacer(1, 3*mm))
 
     # ── 5. TABLA DE PRODUCTOS ─────────────────────────────────────────────────
-    # Columnas: No. | Producto | Especificacion | Vol. Semanal | Precio/u | Total Est./sem.
-    col_w = [
-        8*mm,         # No.
-        CW*0.22,      # Producto
-        CW*0.27,      # Especificacion
-        CW*0.13,      # Vol. Semanal
-        CW*0.12,      # Precio/u
-        CW*0.16,      # Total Est./sem.
+    # Columnas dinámicas según checkboxes
+    # Base: No. | Producto | Especificacion | Vol. Semanal | Precio/u
+    # Opcional: + Total Est./sem. (columna por fila)
+    cols_def = [
+        ("No.",            8*mm,    "right"),
+        ("Producto",       None,    "left"),
+        ("Especificacion", None,    "left"),
+        ("Vol. Semanal",   None,    "right"),
+        ("Precio/u",       None,    "right"),
     ]
+    if mostrar_total_col:
+        cols_def.append(("Total Est./Sem.", None, "right"))
 
-    th_sty  = TableStyle([
+    # Anchos proporcionales según si hay columna total o no
+    if mostrar_total_col:
+        anchos_prop = [8*mm, CW*0.22, CW*0.27, CW*0.13, CW*0.12, CW*0.16]
+    else:
+        anchos_prop = [8*mm, CW*0.28, CW*0.34, CW*0.16, CW*0.14]
+    col_w = anchos_prop
+    ncols = len(col_w)
+
+    th_sty = TableStyle([
         ("BACKGROUND",    (0,0), (-1,0), VERDE_OSC),
         ("TEXTCOLOR",     (0,0), (-1,0), BLANCO),
         ("FONTNAME",      (0,0), (-1,0), "Helvetica-Bold"),
@@ -837,10 +865,9 @@ def generar_cotizacion_formal(
         ("BOTTOMPADDING", (0,0), (-1,-1), 5),
         ("LEFTPADDING",   (0,0), (-1,-1), 4),
         ("RIGHTPADDING",  (0,0), (-1,-1), 4),
-        ("ALIGN",         (3,1), (5,-1), "RIGHT"),
+        ("ALIGN",         (3,1), (ncols-1,-1), "RIGHT"),
         ("FONTSIZE",      (0,1), (-1,-1), 8.5),
         ("ROWBACKGROUNDS",(0,1), (-1,-1), [BLANCO, GRIS_TAB]),
-        ("LINEBELOW",     (0,-1), (-1,-1), 0.8, VERDE_OSC),
         ("GRID",          (0,0), (-1,-1), 0.3, colors.HexColor("#CCCCCC")),
         ("VALIGN",        (0,1), (-1,-1), "TOP"),
     ])
@@ -853,10 +880,8 @@ def generar_cotizacion_formal(
         return _p(txt, ParagraphStyle("td_f", fontSize=8.5,
                   textColor=GRIS_CARB, alignment=al, leading=11))
 
-    tbl_data = [[
-        _th("No."), _th("Producto"), _th("Especificacion"),
-        _th("Vol. Semanal"), _th("Precio/u"), _th("Total Est./Sem."),
-    ]]
+    encabezados = [_th(c[0]) for c in cols_def]
+    tbl_data = [encabezados]
 
     total_semana = 0.0
     for i, l in enumerate(lineas, 1):
@@ -865,65 +890,89 @@ def generar_cotizacion_formal(
         total = vol * prec
         total_semana += total
 
-        vol_txt   = f"{vol:,.0f} {l.get('unidad','lbs')}" if vol else "—"
-        prec_txt  = f"Q{prec:,.2f}" if prec else "—"
-        total_txt = f"Q{total:,.2f}" if total else "—"
+        vol_txt  = f"{vol:,.0f} {l.get('unidad','lbs')}" if vol else "—"
+        prec_txt = f"Q{prec:,.2f}" if prec else "—"
 
-        tbl_data.append([
+        fila = [
             _td(str(i),                    right=True),
             _td(_s(l.get("producto",""))),
             _td(_s(l.get("especificacion",""))),
             _td(vol_txt,                   right=True),
             _td(prec_txt,                  right=True),
-            _td(total_txt,                 right=True),
-        ])
+        ]
+        if mostrar_total_col:
+            total_txt = f"Q{total:,.2f}" if total else "—"
+            fila.append(_td(total_txt, right=True))
+        tbl_data.append(fila)
 
-    # Fila de total
-    tbl_data.append([
-        _p("", S["td"]), _p("", S["td"]), _p("", S["td"]),
-        _p("", S["td"]),
-        _p("TOTAL SEMANAL EST.", ParagraphStyle("tot_lbl_f", fontSize=8.5,
-            fontName="Helvetica-Bold", textColor=VERDE_OSC, alignment=TA_RIGHT, leading=11)),
-        _p(f"Q{total_semana:,.2f}", ParagraphStyle("tot_val_f", fontSize=9.5,
-            fontName="Helvetica-Bold", textColor=GRIS_CARB, alignment=TA_RIGHT, leading=12)),
-    ])
-
-    th_sty.add("BACKGROUND", (0, len(tbl_data)-1), (-1, len(tbl_data)-1), GRIS_CLR)
-    th_sty.add("LINEABOVE",  (0, len(tbl_data)-1), (-1, len(tbl_data)-1), 1.0, VERDE_OSC)
+    # Fila de total general (opcional)
+    if mostrar_total_fila:
+        fila_total = [_p("", S["td"]) for _ in range(ncols)]
+        # Etiqueta en penúltima columna, valor en última
+        fila_total[ncols-2] = _p("TOTAL SEMANAL EST.",
+            ParagraphStyle("tot_lbl_f", fontSize=8.5, fontName="Helvetica-Bold",
+                           textColor=VERDE_OSC, alignment=TA_RIGHT, leading=11))
+        fila_total[ncols-1] = _p(f"Q{total_semana:,.2f}",
+            ParagraphStyle("tot_val_f", fontSize=9.5, fontName="Helvetica-Bold",
+                           textColor=GRIS_CARB, alignment=TA_RIGHT, leading=12))
+        tbl_data.append(fila_total)
+        th_sty.add("BACKGROUND", (0, len(tbl_data)-1), (-1, len(tbl_data)-1), GRIS_CLR)
+        th_sty.add("LINEABOVE",  (0, len(tbl_data)-1), (-1, len(tbl_data)-1), 1.0, VERDE_OSC)
+    else:
+        th_sty.add("LINEBELOW", (0,-1), (-1,-1), 0.8, VERDE_OSC)
 
     prod_tbl = Table(tbl_data, colWidths=col_w, repeatRows=1)
     prod_tbl.setStyle(th_sty)
     story.append(prod_tbl)
     story.append(Spacer(1, 5*mm))
 
-    # ── 6. CONDICIONES ─────────────────────────────────────────────────────────
-    condiciones = [
-        "Moneda: Quetzales guatemaltecos (GTQ), precios sin IVA.",
-        "Calidad: Productos frescos de primera calidad, seleccionados y calibrados.",
-        "Entrega: Sujeto a programa y volumen acordado con el cliente.",
-        "Empaque: Segun especificacion del cliente o estandar VeggiExpress.",
-        f"Validez de la cotizacion: {hasta.strftime('%d de %B de %Y')}.",
-        "Precios sujetos a variacion por condiciones de mercado fuera del periodo de vigencia.",
-    ]
 
-    story.append(_p("CONDICIONES GENERALES", S["cond_titulo"]))
-    for cond in condiciones:
-        story.append(_p(f"• {cond}", S["cond_item"]))
-    story.append(Spacer(1, 4*mm))
+    # Estilo justificado para párrafos de observaciones/condiciones
+    cond_just = ParagraphStyle("cond_just", fontSize=8.5, textColor=GRIS_CARB,
+                                leading=12, alignment=TA_JUSTIFY, spaceAfter=4)
 
-    # Observaciones adicionales (si las hay)
+    # ── 6. OBSERVACIONES ADICIONALES (arriba, párrafos justificados) ───────────
     if notas and notas.strip():
         story.append(_p("OBSERVACIONES ADICIONALES", S["cond_titulo"]))
-        for linea in _s(notas).split("\n"):
-            if linea.strip():
-                story.append(_p(linea.strip(), S["cond_item"]))
+        # Mantener espacios de párrafo: cada bloque separado por línea en blanco
+        for bloque in _s(notas).split("\n"):
+            if bloque.strip():
+                story.append(_p(bloque.strip(), cond_just))
+            else:
+                story.append(Spacer(1, 2*mm))   # preserva el salto de párrafo
+        story.append(Spacer(1, 4*mm))
+
+    # ── 7. CONDICIONES GENERALES (abajo, editable, justificadas) ───────────────
+    if condiciones_txt and condiciones_txt.strip():
+        cond_lineas = [l for l in _s(condiciones_txt).split("\n")]
+    else:
+        # Precargadas por default
+        cond_lineas = [
+            "Moneda: Quetzales guatemaltecos (GTQ), precios sin IVA.",
+            "Calidad: Productos frescos de primera calidad, seleccionados y calibrados.",
+            "Entrega: Sujeto a programa y volumen acordado con el cliente.",
+            "Empaque: Segun especificacion del cliente o estandar VeggiExpress.",
+            f"Validez de la cotizacion: {_fecha_larga_es(hasta)}.",
+            "Precios sujetos a variacion por condiciones de mercado fuera del periodo de vigencia.",
+        ]
+
+    story.append(_p("CONDICIONES GENERALES", S["cond_titulo"]))
+    for cond in cond_lineas:
+        cs = cond.strip()
+        if not cs:
+            continue
+        # Si el usuario ya puso viñeta, no duplicar
+        txt = cs if cs.startswith(("•", "-", "·")) else f"• {cs}"
+        story.append(_p(txt, cond_just))
     story.append(Spacer(1, 6*mm))
 
     # ── 7. CIERRE Y FIRMA ─────────────────────────────────────────────────────
     cierre = ("Quedamos a sus ordenes para cualquier consulta, ajuste en "
               "especificaciones o coordinacion de visita. Esperamos poder "
               "ser su proveedor de confianza.")
-    story.append(_p(cierre, S["cuerpo"]))
+    _cierre_just = ParagraphStyle("cierre_just", fontSize=9.5, textColor=GRIS_CARB,
+                                   leading=14, alignment=TA_JUSTIFY)
+    story.append(_p(cierre, _cierre_just))
     story.append(Spacer(1, 10*mm))
 
     # Firma
