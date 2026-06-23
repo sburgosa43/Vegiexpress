@@ -767,11 +767,11 @@ def generar_cotizacion_formal(
         logo = _p("VeggiExpress", ParagraphStyle("lg", fontSize=18,
                   fontName="Helvetica-Bold", textColor=VERDE_OSC))
 
+    _cot_titulo_sm = ParagraphStyle("cot_titulo_sm", parent=S["cot_titulo"],
+                                     fontSize=19, leading=22)
     hdr_right = [
-        _p("COTIZACION COMERCIAL", S["cot_titulo"]),
-        _p("Distribucion de Frutas y Vegetales Frescos", S["cot_sub"]),
-        Spacer(1, 3*mm),
-        _p(f"No. {num_cot}", S["cot_num"]),
+        _p("COTIZACION COMERCIAL", _cot_titulo_sm),
+        Spacer(1, 2*mm),
         _p(f"Fecha: {_fecha_es(desde)}", S["cot_num"]),
         _p(f"Valida hasta: {_fecha_es(hasta)}", S["cot_num"]),
     ]
@@ -787,16 +787,7 @@ def generar_cotizacion_formal(
     story.append(HRFlowable(width=CW, color=VERDE_OSC, thickness=1.5))
     story.append(Spacer(1, 4*mm))
 
-    # ── 2. EMPRESA EMISORA ─────────────────────────────────────────────────────
-    emisora_info = [
-        "Productos Alimenticios Super Bueno",
-        "Guatemala, Guatemala",
-        "Tel. 5874-9679  |  sburgosa@gmail.com",
-    ]
-    em_rows = [[_p(l, sty("em", fontSize=8, textColor=GRIS_CARB, leading=11))]
-               for l in emisora_info]
-
-    # ── 3. DESTINATARIO ────────────────────────────────────────────────────────
+    # ── 2. DESTINATARIO (ancho completo) ───────────────────────────────────────
     dest_block = [
         _p("A:", S["dest_lbl"]),
         _p(_s(empresa) or "Empresa", S["dest_empresa"]),
@@ -804,19 +795,15 @@ def generar_cotizacion_formal(
     if atencion:
         dest_block.append(_p(f"A la atencion de: {_s(atencion)}", S["dest_info"]))
 
-    sec_table = Table(
-        [[em_rows, dest_block]],
-        colWidths=[CW * 0.42, CW * 0.58],
-    )
+    sec_table = Table([[dest_block]], colWidths=[CW])
     sec_table.setStyle(TableStyle([
         ("VALIGN",  (0,0), (-1,-1), "TOP"),
         ("ALIGN",   (0,0), (0,0),   "LEFT"),
-        ("ALIGN",   (1,0), (1,0),   "LEFT"),
-        ("LEFTPADDING",  (1,0), (1,0), 8),
-        ("BACKGROUND",   (1,0), (1,0), GRIS_TAB),
+        ("LEFTPADDING",  (0,0), (0,0), 8),
+        ("BACKGROUND",   (0,0), (0,0), GRIS_TAB),
         ("ROUNDEDCORNERS", [3]),
-        ("TOPPADDING",   (1,0), (1,0), 6),
-        ("BOTTOMPADDING",(1,0), (1,0), 6),
+        ("TOPPADDING",   (0,0), (0,0), 6),
+        ("BOTTOMPADDING",(0,0), (0,0), 6),
     ]))
     story.append(sec_table)
     story.append(Spacer(1, 5*mm))
@@ -928,13 +915,11 @@ def generar_cotizacion_formal(
 
 
     # Estilo justificado para párrafos de observaciones/condiciones
-    cond_just = ParagraphStyle("cond_just", fontSize=8.5, textColor=GRIS_CARB,
-                                leading=12, alignment=TA_JUSTIFY, spaceAfter=4)
+    cond_just = ParagraphStyle("cond_just", fontSize=9.5, textColor=GRIS_CARB,
+                                leading=14, alignment=TA_JUSTIFY, spaceAfter=4)
 
-    # ── 6. OBSERVACIONES ADICIONALES (arriba, párrafos justificados) ───────────
+    # ── 6. OBSERVACIONES (sin subtítulo, párrafos justificados) ────────────────
     if notas and notas.strip():
-        story.append(_p("OBSERVACIONES ADICIONALES", S["cond_titulo"]))
-        # Mantener espacios de párrafo: cada bloque separado por línea en blanco
         for bloque in _s(notas).split("\n"):
             if bloque.strip():
                 story.append(_p(bloque.strip(), cond_just))
