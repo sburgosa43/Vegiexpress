@@ -315,6 +315,18 @@ def _cotizacion():
                                         placeholder="Nombre del contacto",
                                         key="cot_atencion")
 
+        # Costo de transporte (se diluye por libras, fuera del margen)
+        tf1, tf2 = st.columns([1, 2])
+        flete_total = tf1.number_input(
+            "Costo de transporte (Q)", min_value=0.0, value=0.0, step=50.0,
+            key="cot_flete",
+            help="Se reparte entre las libras cotizadas y se diluye en el "
+                 "precio. No afecta el margen del producto.")
+        if flete_total > 0:
+            tf2.caption("El flete se prorratea por volumen entre todos los "
+                        "productos y se integra al precio final. El margen "
+                        "mostrado sigue siendo solo del producto.")
+
         CUERPO_DEFAULT = (
             "Estimado equipo,\n\n"
             "Por medio de la presente, nos es grato presentar nuestra "
@@ -485,6 +497,36 @@ def _cotizacion():
             st.rerun()
 
     st.divider()
+
+    # ── Diluir flete por libras (solo formal) ─────────────────────────────────
+    flete_total = st.session_state.get("cot_flete", 0.0) if is_formal else 0.0
+    flete_x_lb = 0.0
+    if is_formal and flete_total > 0 and lineas_pdf:
+        total_vol = sum(float(l.get("volumen_semanal", 0)) for l in lineas_pdf)
+        if total_vol > 0:
+            flete_x_lb = flete_total / total_vol
+            # Guardar precio de producto puro + precio con flete
+            for l in lineas_pdf:
+                l["precio_producto"] = l["precio_cotizar"]          # solo producto
+                l["precio_cotizar"]  = round(l["precio_cotizar"] + flete_x_lb, 4)  # con flete
+            st.info(f"🚛 **Flete Q{flete_total:,.2f}** repartido entre "
+                    f"{total_vol:,.0f} lbs = **+Q{flete_x_lb:.3f}/lb**. "
+                    f"Diluido en el precio (no afecta margen).")
+            # Desglose en la app (control interno)
+            with st.expander("Ver desglose producto + flete (solo vos)",
+                             expanded=False):
+                import pandas as pd
+                _dfd = pd.DataFrame([{
+                    "Producto": l["producto"],
+                    "Vol (lb)": l.get("volumen_semanal", 0),
+                    "Precio producto": f"Q{l['precio_producto']:.2f}",
+                    "+ Flete/lb": f"Q{flete_x_lb:.3f}",
+                    "Precio final": f"Q{l['precio_cotizar']:.2f}",
+                } for l in lineas_pdf])
+                st.dataframe(_dfd, hide_index=True, use_container_width=True)
+        elif flete_total > 0:
+            st.warning("Para diluir el flete, ingresá el volumen semanal "
+                       "(lbs) de cada producto.")
 
     if lineas_pdf:
         st.success(f"**{len(lineas_pdf)} producto(s)** listos para el PDF.")
