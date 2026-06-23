@@ -37,6 +37,26 @@ GRIS_TAB  = colors.HexColor('#F0F8F0')
 BLANCO    = colors.white
 
 LOGO_PATH = "VeggiExpress-02.png"
+
+
+def _logo_proporcional(ancho_mm: float):
+    """Carga el logo escalado al ancho dado, MANTENIENDO la relación de aspecto.
+    Lee las dimensiones reales de la imagen y calcula el alto proporcional,
+    así el logo nunca se ve estirado ni achatado. Si falla, retorna None."""
+    import os
+    from reportlab.platypus import Image as _RLImg
+    from reportlab.lib.units import mm as _mm
+    if not os.path.exists(LOGO_PATH):
+        return None
+    try:
+        from reportlab.lib.utils import ImageReader
+        iw, ih = ImageReader(LOGO_PATH).getSize()   # dimensiones reales en px
+        ratio = ih / iw if iw else 0.3
+        ancho = ancho_mm * _mm
+        alto  = ancho * ratio                       # alto proporcional
+        return _RLImg(LOGO_PATH, width=ancho, height=alto)
+    except Exception:
+        return None
 PAGE_W, PAGE_H = A4          # 595.28 x 841.89 pt
 CONTENT_W = PAGE_W - 30*mm   # 180mm
 
@@ -130,7 +150,7 @@ def generar_envio(cliente: dict, fecha: date, lineas: list, unico: str = "") -> 
 
     # ── 1. HEADER: Logo + Título ───────────────────────────────────────────────
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=49*mm, height=15*mm)
+        logo = _logo_proporcional(45) or RLImage(LOGO_PATH, width=45*mm, height=14*mm)
     else:
         logo = _p("VeggiExpress",
                   ParagraphStyle("lg", fontSize=18, fontName="Helvetica-Bold",
@@ -341,7 +361,7 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
 
     # ── HEADER (mismo que envío) ──────────────────────────────────────────────
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=49*mm, height=15*mm)
+        logo = _logo_proporcional(45) or RLImage(LOGO_PATH, width=45*mm, height=14*mm)
     else:
         logo = _p("VeggiExpress",
                   ParagraphStyle("lg", fontSize=18, fontName="Helvetica-Bold",
@@ -596,7 +616,7 @@ def generar_cotizacion(lineas: list, desde: "date", hasta: "date",
 
     # Header
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=49*mm, height=15*mm)
+        logo = _logo_proporcional(45) or RLImage(LOGO_PATH, width=45*mm, height=14*mm)
     else:
         logo = _p("VeggiExpress", ParagraphStyle("lg", fontSize=18,
                    fontName="Helvetica-Bold", textColor=VERDE_OSC))
@@ -762,7 +782,7 @@ def generar_cotizacion_formal(
 
     # ── 1. HEADER: Logo + Titulo + Numero ─────────────────────────────────────
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=49*mm, height=15*mm)
+        logo = _logo_proporcional(45) or RLImage(LOGO_PATH, width=45*mm, height=14*mm)
     else:
         logo = _p("VeggiExpress", ParagraphStyle("lg", fontSize=18,
                   fontName="Helvetica-Bold", textColor=VERDE_OSC))
