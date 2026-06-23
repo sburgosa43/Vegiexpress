@@ -130,7 +130,7 @@ def generar_envio(cliente: dict, fecha: date, lineas: list, unico: str = "") -> 
 
     # ── 1. HEADER: Logo + Título ───────────────────────────────────────────────
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=55*mm, height=18*mm)
+        logo = RLImage(LOGO_PATH, width=52*mm, height=15*mm)
     else:
         logo = _p("VeggiExpress",
                   ParagraphStyle("lg", fontSize=18, fontName="Helvetica-Bold",
@@ -341,7 +341,7 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
 
     # ── HEADER (mismo que envío) ──────────────────────────────────────────────
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=55*mm, height=18*mm)
+        logo = RLImage(LOGO_PATH, width=52*mm, height=15*mm)
     else:
         logo = _p("VeggiExpress",
                   ParagraphStyle("lg", fontSize=18, fontName="Helvetica-Bold",
@@ -596,7 +596,7 @@ def generar_cotizacion(lineas: list, desde: "date", hasta: "date",
 
     # Header
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=55*mm, height=18*mm)
+        logo = RLImage(LOGO_PATH, width=52*mm, height=15*mm)
     else:
         logo = _p("VeggiExpress", ParagraphStyle("lg", fontSize=18,
                    fontName="Helvetica-Bold", textColor=VERDE_OSC))
@@ -743,9 +743,9 @@ def generar_cotizacion_formal(
         "cond_titulo": sty("cond_titulo", fontSize=8.5, fontName="Helvetica-Bold",
                             textColor=VERDE_OSC, leading=11, spaceBefore=6),
         "cond_item":   sty("cond_item",   fontSize=8.5, textColor=GRIS_CARB, leading=11),
-        "firma_nombre":sty("firma_nombre",fontSize=10, fontName="Helvetica-Bold",
+        "firma_nombre":sty("firma_nombre",fontSize=9, fontName="Helvetica-Bold",
                             textColor=GRIS_CARB, alignment=TA_CENTER, leading=13),
-        "firma_cargo": sty("firma_cargo", fontSize=8.5, textColor=GRIS_CARB,
+        "firma_cargo": sty("firma_cargo", fontSize=7.5, textColor=GRIS_CARB,
                             alignment=TA_CENTER, leading=11),
         "brand_footer":sty("brand_footer",fontSize=8, fontName="Helvetica-Oblique",
                             textColor=GRIS_CARB, alignment=TA_CENTER, leading=10),
@@ -762,13 +762,13 @@ def generar_cotizacion_formal(
 
     # ── 1. HEADER: Logo + Titulo + Numero ─────────────────────────────────────
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=55*mm, height=18*mm)
+        logo = RLImage(LOGO_PATH, width=52*mm, height=15*mm)
     else:
         logo = _p("VeggiExpress", ParagraphStyle("lg", fontSize=18,
                   fontName="Helvetica-Bold", textColor=VERDE_OSC))
 
     _cot_titulo_sm = ParagraphStyle("cot_titulo_sm", parent=S["cot_titulo"],
-                                     fontSize=19, leading=22)
+                                     fontSize=16, leading=19)
     hdr_right = [
         _p("COTIZACION COMERCIAL", _cot_titulo_sm),
         Spacer(1, 2*mm),
@@ -776,7 +776,7 @@ def generar_cotizacion_formal(
         _p(f"Valida hasta: {_fecha_es(hasta)}", S["cot_num"]),
     ]
 
-    ht = Table([[logo, hdr_right]], colWidths=[58*mm, CW - 58*mm])
+    ht = Table([[logo, hdr_right]], colWidths=[55*mm, CW - 55*mm])
     ht.setStyle(TableStyle([
         ("VALIGN", (0,0), (-1,-1), "TOP"),
         ("ALIGN",  (1,0), (1,0),   "RIGHT"),
@@ -964,8 +964,8 @@ def generar_cotizacion_formal(
     firma_tel = cotizador_tel or "Tel. 5874-9679"
     firma_data = [[
         [
-            Spacer(1, 12*mm),
-            HRFlowable(width=55*mm, color=GRIS_CARB, thickness=0.8),
+            Spacer(1, 8*mm),
+            HRFlowable(width=45*mm, color=GRIS_CARB, thickness=0.7),
             Spacer(1, 2*mm),
             _p(_s(cotizador) or "VeggiExpress", S["firma_nombre"]),
             _p("Gerente de Produccion y Comercializacion", S["firma_cargo"]),
