@@ -150,7 +150,7 @@ def generar_envio(cliente: dict, fecha: date, lineas: list, unico: str = "") -> 
 
     # ── 1. HEADER: Logo + Título ───────────────────────────────────────────────
     if os.path.exists(LOGO_PATH):
-        logo = _logo_proporcional(45) or RLImage(LOGO_PATH, width=45*mm, height=14*mm)
+        logo = _logo_proporcional(40) or RLImage(LOGO_PATH, width=40*mm, height=12*mm)
     else:
         logo = _p("VeggiExpress",
                   ParagraphStyle("lg", fontSize=18, fontName="Helvetica-Bold",
@@ -361,7 +361,7 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
 
     # ── HEADER (mismo que envío) ──────────────────────────────────────────────
     if os.path.exists(LOGO_PATH):
-        logo = _logo_proporcional(45) or RLImage(LOGO_PATH, width=45*mm, height=14*mm)
+        logo = _logo_proporcional(40) or RLImage(LOGO_PATH, width=40*mm, height=12*mm)
     else:
         logo = _p("VeggiExpress",
                   ParagraphStyle("lg", fontSize=18, fontName="Helvetica-Bold",
@@ -616,7 +616,7 @@ def generar_cotizacion(lineas: list, desde: "date", hasta: "date",
 
     # Header
     if os.path.exists(LOGO_PATH):
-        logo = _logo_proporcional(45) or RLImage(LOGO_PATH, width=45*mm, height=14*mm)
+        logo = _logo_proporcional(40) or RLImage(LOGO_PATH, width=40*mm, height=12*mm)
     else:
         logo = _p("VeggiExpress", ParagraphStyle("lg", fontSize=18,
                    fontName="Helvetica-Bold", textColor=VERDE_OSC))
@@ -755,7 +755,7 @@ def generar_cotizacion_formal(
                             alignment=TA_RIGHT, leading=11),
         "dest_lbl":    sty("dest_lbl",    fontSize=7.5, fontName="Helvetica-Bold",
                             textColor=VERDE_OSC, leading=10),
-        "dest_empresa":sty("dest_empresa",fontSize=12, fontName="Helvetica-Bold",
+        "dest_empresa":sty("dest_empresa",fontSize=11, fontName="Helvetica-Bold",
                             textColor=GRIS_CARB, leading=15),
         "dest_info":   sty("dest_info",   fontSize=9,  textColor=GRIS_CARB, leading=12),
         "cuerpo":      sty("cuerpo",      fontSize=9.5, textColor=GRIS_CARB,
@@ -782,13 +782,13 @@ def generar_cotizacion_formal(
 
     # ── 1. HEADER: Logo + Titulo + Numero ─────────────────────────────────────
     if os.path.exists(LOGO_PATH):
-        logo = _logo_proporcional(45) or RLImage(LOGO_PATH, width=45*mm, height=14*mm)
+        logo = _logo_proporcional(40) or RLImage(LOGO_PATH, width=40*mm, height=12*mm)
     else:
         logo = _p("VeggiExpress", ParagraphStyle("lg", fontSize=18,
                   fontName="Helvetica-Bold", textColor=VERDE_OSC))
 
     _cot_titulo_sm = ParagraphStyle("cot_titulo_sm", parent=S["cot_titulo"],
-                                     fontSize=15, leading=18)
+                                     fontSize=13, leading=16)
     hdr_right = [
         _p("COTIZACION COMERCIAL", _cot_titulo_sm),
         Spacer(1, 2*mm),
@@ -969,7 +969,7 @@ def generar_cotizacion_formal(
         # Si el usuario ya puso viñeta, no duplicar
         txt = cs if cs.startswith(("•", "-", "·")) else f"• {cs}"
         story.append(_p(txt, cond_just))
-    story.append(Spacer(1, 6*mm))
+    story.append(Spacer(1, 3*mm))
 
     # ── 7. CIERRE Y FIRMA ─────────────────────────────────────────────────────
     cierre = ("Quedamos a sus ordenes para cualquier consulta, ajuste en "
@@ -978,15 +978,15 @@ def generar_cotizacion_formal(
     _cierre_just = ParagraphStyle("cierre_just", fontSize=9.5, textColor=GRIS_CARB,
                                    leading=14, alignment=TA_JUSTIFY)
     story.append(_p(cierre, _cierre_just))
-    story.append(Spacer(1, 10*mm))
+    story.append(Spacer(1, 5*mm))
 
-    # Firma
+    # Firma (espacios reducidos para entrar en una página)
     firma_tel = cotizador_tel or "Tel. 5874-9679"
     firma_data = [[
         [
-            Spacer(1, 8*mm),
+            Spacer(1, 5*mm),
             HRFlowable(width=45*mm, color=GRIS_CARB, thickness=0.7),
-            Spacer(1, 2*mm),
+            Spacer(1, 1.5*mm),
             _p(_s(cotizador) or "VeggiExpress", S["firma_nombre"]),
             _p("Gerente de Produccion y Comercializacion", S["firma_cargo"]),
             _p("VeggiExpress  |  Productos Alimenticios Super Bueno", S["firma_cargo"]),
@@ -997,10 +997,10 @@ def generar_cotizacion_formal(
     firma_tbl.setStyle(TableStyle([("ALIGN", (0,0), (-1,-1), "CENTER")]))
     story.append(firma_tbl)
 
-    # Footer
-    story.append(Spacer(1, 8*mm))
+    # Footer (espacios reducidos)
+    story.append(Spacer(1, 4*mm))
     story.append(HRFlowable(width=CW, color=VERDE_LIM, thickness=0.8))
-    story.append(Spacer(1, 2*mm))
+    story.append(Spacer(1, 1.5*mm))
     story.append(_p(
         "VeggiExpress  |  Productos Alimenticios Super Bueno  |  "
         "Guatemala  |  sburgosa@gmail.com  |  5874-9679",
