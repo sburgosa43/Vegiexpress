@@ -764,7 +764,7 @@ def generar_cotizacion_formal(
     if os.path.exists(LOGO_PATH):
         logo = RLImage(LOGO_PATH, width=55*mm, height=18*mm)
     else:
-        logo = _p("VeggiExpress", ParagraphStyle("lg", fontSize=18,
+        logo = _p("VeggiExpress", ParagraphStyle("lg", fontSize=14,
                   fontName="Helvetica-Bold", textColor=VERDE_OSC))
 
     hdr_right = [
@@ -796,17 +796,19 @@ def generar_cotizacion_formal(
 
     sec_table = Table(
         [[dest_block, em_rows]],
-        colWidths=[CW * 0.58, CW * 0.42],
-    )
+        colWidths=[CW * 0.42, CW * 0.58],
+)
     sec_table.setStyle(TableStyle([
-        ("VALIGN",  (0,0), (-1,-1), "TOP"),
-        ("ALIGN",   (0,0), (0,0),   "LEFT"),
-        ("ALIGN",   (1,0), (1,0),   "LEFT"),
-        ("BACKGROUND", (0,0), (0,0), GRIS_TAB),  
-        ("LEFTPADDING", (0,0), (0,0), 8),
-        ("TOPPADDING", (0,0), (0,0), 6),
-        ("BOTTOMPADDING", (0,0), (0,0), 6),
-    ]))
+    ("VALIGN",  (0,0), (-1,-1), "TOP"),
+    ("ALIGN",   (0,0), (0,0),   "LEFT"),
+    ("ALIGN",   (1,0), (1,0),   "LEFT"),
+
+    ("LEFTPADDING",  (0,0), (0,0), 8),
+    ("BACKGROUND",   (0,0), (0,0), GRIS_TAB),
+    ("ROUNDEDCORNERS", [3]),
+    ("TOPPADDING",   (0,0), (0,0), 6),
+    ("BOTTOMPADDING",(0,0), (0,0), 6),
+]))
     story.append(sec_table)
     story.append(Spacer(1, 5*mm))
 
