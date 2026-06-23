@@ -369,9 +369,9 @@ def _cotizacion():
 
     # Encabezado — diferente por tipo
     if is_formal:
-        hdr = st.columns([2.0, 1.6, 0.65, 0.75, 0.9, 0.75, 0.75])
+        hdr = st.columns([1.7, 1.3, 0.7, 0.75, 0.7, 0.8, 0.7, 0.7, 0.75])
         for h, lbl in zip(hdr, ["Producto","Especificacion","Vol/Sem",
-                                  "Pto.Eq.","Precio","Mg%","MgQ"]):
+                                  "Costo","Pto.Eq.","Precio","+Flete","Mg%","MgQ"]):
             h.markdown(f"<small><b>{lbl}</b></small>", unsafe_allow_html=True)
     else:
         hdr = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
@@ -392,7 +392,7 @@ def _cotizacion():
 
         # ── Columnas según modo ───────────────────────────────────────────────
         if is_formal:
-            r = st.columns([2.0, 1.8, 0.7, 1.0, 0.85, 0.85])
+            r = st.columns([1.7, 1.3, 0.7, 0.75, 0.7, 0.8, 0.7, 0.7, 0.75])
         else:
             r = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
 
@@ -411,28 +411,43 @@ def _cotizacion():
                 st.session_state[k_prec] = float(p.get("precio", 0))
 
             if is_formal:
-                # Formal: r[1]=spec, r[2]=vol, r[3]=precio, r[4]=mg%, r[5]=mgQ
+                # Formal 9 cols: r[0]=prod r[1]=spec r[2]=vol r[3]=costo
+                #                r[4]=ptoEq r[5]=precio r[6]=flete r[7]=mg% r[8]=mgQ
                 especif = r[1].text_input("", value=fila.get("especificacion",""),
                                            key=k_spec, label_visibility="collapsed",
-                                           placeholder="Especificacion del producto")
+                                           placeholder="Especificacion")
                 vol_sem = r[2].number_input("", value=float(fila.get("volumen_semanal",0)),
                                              min_value=0.0, step=100.0, key=k_vol,
                                              label_visibility="collapsed")
-                precio_ed = r[3].number_input("", min_value=0.0,
+                # Costo editable — default del catálogo, NO se guarda en ningún lado
+                k_costo = f"cot_costo_{i}"
+                if k_costo not in st.session_state:
+                    st.session_state[k_costo] = float(costo)
+                costo_ed = r[3].number_input("", min_value=0.0,
+                    value=float(st.session_state[k_costo]),
+                    step=0.25, key=k_costo, label_visibility="collapsed")
+                # Punto de equilibrio = costo * 1.12 (IVA)
+                pto_eq = round(costo_ed * IVA_FACTOR, 2) if costo_ed else 0
+                _ref(r[4], f"Q{pto_eq:,.2f}" if pto_eq else "—")
+                # Precio editable
+                precio_ed = r[5].number_input("", min_value=0.0,
                     value=float(st.session_state[k_prec]),
                     step=0.25, key=k_prec, label_visibility="collapsed")
-
-                if precio_ed > 0 and costo > 0:
-                    mp  = round(0.95 * (1 - costo * 1.12 / precio_ed) * 100, 1)
-                    mq  = round(0.95 * (precio_ed - costo * 1.12), 2)
-                    col = "#2D7A2D" if mp >= 20 else "#E65100"
-                    _ref(r[4], f"<span style='color:{col}'><b>{mp}%</b></span>")
-                    _ref(r[5], f"<span style='color:{col}'>Q{mq:,.2f}</span>")
+                # Flete por línea (se calcula después; aquí placeholder visual)
+                _ref(r[6], "Q0.00")
+                # Margen NETO sobre el producto (costo editado, no precio+flete)
+                if precio_ed > 0 and costo_ed > 0:
+                    mp = round(margen_neto_pct(costo_ed, precio_ed), 1)
+                    mq = round(margen_neto_q(costo_ed, precio_ed), 2)
+                    col_m = "#2D7A2D" if mp >= 20 else "#E65100"
+                    _ref(r[7], f"<span style='color:{col_m}'><b>{mp}%</b></span>")
+                    _ref(r[8], f"<span style='color:{col_m}'>Q{mq:,.2f}</span>")
                 else:
-                    r[4].write(""); r[5].write("")
+                    r[7].write(""); r[8].write("")
 
                 grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed,
-                              "especificacion": especif, "volumen_semanal": vol_sem}
+                              "especificacion": especif, "volumen_semanal": vol_sem,
+                              "costo_editado": costo_ed}
 
             else:
                 # Simple: r[1]=unidad, r[2]=costo, r[3]=pto_eq, r[4]=p_imp,
@@ -472,6 +487,7 @@ def _cotizacion():
                     "precio_cotizar":  precio_ed,
                     "especificacion":  grilla[i].get("especificacion",""),
                     "volumen_semanal": grilla[i].get("volumen_semanal", 0.0),
+                    "costo_editado":   grilla[i].get("costo_editado", 0.0),
                 })
         else:
             grilla[i] = {"producto":"","precio_cotizar":0.0,
@@ -512,18 +528,28 @@ def _cotizacion():
             st.info(f"🚛 **Flete Q{flete_total:,.2f}** repartido entre "
                     f"{total_vol:,.0f} lbs = **+Q{flete_x_lb:.3f}/lb**. "
                     f"Diluido en el precio (no afecta margen).")
-            # Desglose en la app (control interno)
-            with st.expander("Ver desglose producto + flete (solo vos)",
+            # Desglose completo en la app (control interno — nunca al PDF)
+            with st.expander("Ver desglose: costo · margen · flete (solo vos)",
                              expanded=False):
                 import pandas as pd
-                _dfd = pd.DataFrame([{
-                    "Producto": l["producto"],
-                    "Vol (lb)": l.get("volumen_semanal", 0),
-                    "Precio producto": f"Q{l['precio_producto']:.2f}",
-                    "+ Flete/lb": f"Q{flete_x_lb:.3f}",
-                    "Precio final": f"Q{l['precio_cotizar']:.2f}",
-                } for l in lineas_pdf])
-                st.dataframe(_dfd, hide_index=True, use_container_width=True)
+                _rows = []
+                for l in lineas_pdf:
+                    _co = float(l.get("costo_editado", 0))
+                    _pp = float(l.get("precio_producto", 0))
+                    _mp = round(margen_neto_pct(_co, _pp), 1) if _co and _pp else 0
+                    _mq = round(margen_neto_q(_co, _pp), 2) if _co and _pp else 0
+                    _rows.append({
+                        "Producto": l["producto"],
+                        "Vol (lb)": l.get("volumen_semanal", 0),
+                        "Costo": f"Q{_co:.2f}",
+                        "Pto.Eq.": f"Q{_co*1.12:.2f}",
+                        "Precio prod.": f"Q{_pp:.2f}",
+                        "Margen": f"{_mp}% / Q{_mq:.2f}",
+                        "+ Flete/lb": f"Q{flete_x_lb:.3f}",
+                        "Precio final": f"Q{l['precio_cotizar']:.2f}",
+                    })
+                st.dataframe(pd.DataFrame(_rows), hide_index=True,
+                             use_container_width=True)
         elif flete_total > 0:
             st.warning("Para diluir el flete, ingresá el volumen semanal "
                        "(lbs) de cada producto.")
