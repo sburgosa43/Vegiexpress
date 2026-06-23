@@ -1,16 +1,15 @@
-streamlit>=1.37.0
-openpyxl>=3.1.2
-google-auth>=2.29.0
-google-auth-oauthlib>=1.2.0
-google-api-python-client>=2.130.0
-reportlab>=4.0.0
-plotly>=5.18.0
-pandas>=2.0.0
-
-gspread
-
-requests>=2.31.0
-beautifulsoup4>=4.12.0
-lxml>=5.0.0
-
-streamlit-aggrid>=0.3.4
+# Versiones FIJADAS con techo (<) para evitar que Streamlit Cloud instale
+# versiones nuevas que rompen compatibilidad (reportlab 5, pandas 3, aggrid 1.x).
+streamlit>=1.37.0,<2.0.0
+openpyxl>=3.1.2,<4.0.0
+google-auth>=2.29.0,<3.0.0
+google-auth-oauthlib>=1.2.0,<2.0.0
+google-api-python-client>=2.130.0,<3.0.0
+reportlab>=4.0.0,<5.0.0
+plotly>=5.18.0,<7.0.0
+pandas>=2.0.0,<3.0.0
+gspread>=6.0.0,<7.0.0
+requests>=2.31.0,<3.0.0
+beautifulsoup4>=4.12.0,<5.0.0
+lxml>=5.0.0,<7.0.0
+streamlit-aggrid>=0.3.4,<1.0.0

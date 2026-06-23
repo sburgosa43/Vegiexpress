@@ -1,0 +1,15 @@
+# Secretos — NUNCA subir a GitHub
+.streamlit/secrets.toml
+secrets.toml
+*.json
+!package.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Sistema
+.DS_Store
+Thumbs.db
