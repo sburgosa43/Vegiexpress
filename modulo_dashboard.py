@@ -1,662 +1,1063 @@
 """
-modulo_cotizador.py — Cotizador de precios
-Calcula precios de venta aplicando IVA (12%) e ISR (5%).
-
-Fórmulas base (las mismas del Listado Productos):
-  Precio      = Costo × 1.12 / (1 - Margen% / (1 - ISR%))
-  Margen Neto = (1 - ISR%) × (Precio - Costo × 1.12)
-  %Margen     = Margen Neto / Precio
-  Pto.Equil.  = Costo × 1.12  (menor precio sin perder ni ganar)
+modulo_dashboard.py — Dashboard VeggiExpress
+Períodos: Sem Actual | Sem Ant. | MTD | YTD | PYTD
 """
 import streamlit as st
+import plotly.graph_objects as go
+from config import (ZONAS_DASH, COLORES_ZONA_RUTAS, excluido_dashboard,
+                    EXCLUIR_DASHBOARD, es_hogar)
 import pandas as pd
+import plotly.express as px
+from datetime import date
+from excel_helper import leer_pedidos, leer_metas, guardar_metas
+from data_helper import cargar_clientes
 
-from config import (IVA_RATE, ISR_RATE, IVA_FACTOR, ISR_FACTOR,
-                    margen_neto_pct, margen_neto_q, punto_equilibrio)
+# ── CONFIGURACIÓN ─────────────────────────────────────────────────────────────
+ZONAS_MAP = {
+    "Antigua & Chimal":     ["L03", "L04"],
+    "Guatemala & Santiago": ["L05", "L06"],
+    "Rio":                  ["L01"],
+    "Hogares":              ["L20"],
+}
+COLORES_ZONA = {
+    "Antigua & Chimal":     "#2D7A2D",
+    "Guatemala & Santiago": "#8DC63F",
+    "Rio":                  "#4A4A4A",
+    "Hogares":              "#E65100",
+}
+COLORES_PERIODO = {
+    "Sem Actual": "#2D7A2D",
+    "Sem Ant.":   "#8DC63F",
+    "MTD":        "#4A9E4A",
+    "YTD":        "#1A5C1A",
+    "PYTD":       "#AAAAAA",
+}
+PERIODOS_CORTO = ["Sem Actual", "Sem Ant.", "MTD"]
+PERIODOS_LARGO = ["YTD", "PYTD"]
+EXCLUIR = ["wilson"]   # Hogares ya no se excluye — es zona propia
 
 
-# ── CÁLCULOS ──────────────────────────────────────────────────────────────────
+# ── HELPERS ───────────────────────────────────────────────────────────────────
+def _excluido(n): return any(x in n.lower() for x in EXCLUIR)
+def _zona_de(cod):
+    for z, cs in ZONAS_MAP.items():
+        if cod in cs: return z
+    return None
 
-def _desde_margen_pct(costo: float, margen_pct: float) -> dict | None:
-    """Precio dado costo y margen neto deseado en %."""
-    denom = 1 - margen_pct / 0.95
-    if denom <= 0 or costo <= 0:
-        return None
-    precio = costo * (1 + IVA_RATE) / denom
-    return _desglose(costo, precio)
+def _build_cli_map(clientes):
+    return {c["nombre"].lower(): {
+        "zona": _zona_de(c["codigo_lugar"]),
+        "credito": c["credito"], "nit": c["nit"], "nombre": c["nombre"],
+    } for c in clientes}
 
-
-def _desde_margen_q(costo: float, margen_q: float) -> dict | None:
-    """Precio dado costo y margen neto deseado en Q."""
-    if costo <= 0:
-        return None
-    precio = margen_q / (1 - ISR_RATE) + costo * (1 + IVA_RATE)
-    return _desglose(costo, precio)
-
-
-def _desglose(costo: float, precio: float) -> dict | None:
-    """Todos los campos derivados dado costo y precio de venta."""
-    if precio <= 0 or costo <= 0:
-        return None
-    precio_sin_iva  = precio / 1.12
-    iva_amount      = precio - precio_sin_iva         # IVA = Precio - Precio/1.12
-    isr_retencion   = precio_sin_iva * 0.05           # ISR = (Precio/1.12) x 0.05
-    neto_recibido   = precio - isr_retencion          # Neto recibido despues de ISR
-    margen_neto_q   = 0.95 * (precio - costo * 1.12) # Formula acordada
-    margen_neto_pct = (margen_neto_q / precio * 100) if precio else 0
-    pto_equilibrio  = costo * 1.12                    # Precio x 1.12 = equilibrio
-    sobre_costo     = ((precio - costo) / costo * 100) if costo else 0
+def _periodos(hoy):
+    año = hoy.year; sem = hoy.isocalendar()[1]; mes = hoy.month
+    sant_n = sem - 1; sant_a = año
+    if sant_n < 1: sant_n = 52; sant_a -= 1
+    try:    mdp = date(año-1, hoy.month, hoy.day)
+    except: mdp = date(año-1, hoy.month, 28)
     return {
-        "costo":           round(costo, 4),
-        "precio":          round(precio, 4),
-        "precio_sin_iva":  round(precio_sin_iva, 4),
-        "iva_amount":      round(iva_amount, 4),
-        "isr_retencion":   round(isr_retencion, 4),
-        "neto_recibido":   round(neto_recibido, 4),
-        "margen_neto_q":   round(margen_neto_q, 4),
-        "margen_neto_pct": round(margen_neto_pct, 2),
-        "pto_equilibrio":  round(pto_equilibrio, 4),
-        "sobre_costo":     round(sobre_costo, 2),
-        "rentable":        margen_neto_q > 0,
+        "Sem Actual": lambda p: p["semana"]==sem  and p["año"]==año,
+        "Sem Ant.":   lambda p: p["semana"]==sant_n and p["año"]==sant_a,
+        "MTD":        lambda p: p["año"]==año and p["fecha"] and p["fecha"].month==mes,
+        "YTD":        lambda p: p["año"]==año and p["fecha"] and p["fecha"]<=hoy,
+        "PYTD":       lambda p: p["año"]==año-1 and p["fecha"] and p["fecha"]<=mdp,
     }
 
+def _filtrar(todos, fn, cli_map, zona_only=None):
+    r = []
+    for p in todos:
+        if p["status"]=="Cancelado" or _excluido(p["cliente"]): continue
+        if not fn(p): continue
+        info = cli_map.get(p["cliente"].lower(), {})
+        zona = info.get("zona")
+        if not zona: continue
+        if zona_only and zona != zona_only: continue
+        r.append({**p, "zona": zona})
+    return r
 
-# ── COMPONENTES UI ────────────────────────────────────────────────────────────
+def _agg_grupo(todos, periodos, cli_map, by="cliente", campo="total", zona_only=None):
+    result = {}
+    for pnm, fn in periodos.items():
+        for p in _filtrar(todos, fn, cli_map, zona_only):
+            key = (p[by], p["zona"]) if by=="producto" else p[by]
+            if key not in result:
+                result[key] = {k: 0 for k in periodos}
+                result[key]["zona"]    = p["zona"]
+                result[key]["_nombre"] = p[by]
+            result[key][pnm] += p[campo] or 0
+    return result
 
-def _mostrar_resultado(d: dict, titulo: str = "Resultado"):
-    color_card = "#e8f5e9" if d["rentable"] else "#ffebee"
-    color_margen = "#2e7d32" if d["rentable"] else "#c62828"
-    alerta = "" if d["rentable"] else "⚠️ Este precio está por debajo del punto de equilibrio."
 
-    st.markdown(f"""
-    <div style='background:{color_card};border-radius:8px;padding:14px 18px;margin:8px 0'>
-        <h4 style='margin:0 0 10px 0'>{titulo}</h4>
-        <div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px'>
-            <div>
-                <div style='font-size:.8rem;color:#555'>Precio de venta (con IVA)</div>
-                <div style='font-size:1.5rem;font-weight:bold'>Q{d['precio']:,.4f}</div>
-            </div>
-            <div>
-                <div style='font-size:.8rem;color:#555'>Margen Neto (Q)</div>
-                <div style='font-size:1.5rem;font-weight:bold;color:{color_margen}'>
-                    Q{d['margen_neto_q']:,.4f}
-                </div>
-            </div>
-            <div>
-                <div style='font-size:.8rem;color:#555'>Margen Neto (%)</div>
-                <div style='font-size:1.5rem;font-weight:bold;color:{color_margen}'>
-                    {d['margen_neto_pct']:.2f}%
-                </div>
-            </div>
-        </div>
-        {'<p style="color:#c62828;margin:8px 0 0 0;font-size:.9rem">'+alerta+'</p>' if alerta else ''}
-    </div>
-    """, unsafe_allow_html=True)
-
-    with st.expander("📊 Desglose completo"):
-        c1, c2 = st.columns(2)
-        with c1:
-            st.metric("Costo de compra",       f"Q{d['costo']:,.4f}")
-            st.metric("Precio sin IVA",         f"Q{d['precio_sin_iva']:,.4f}")
-            st.metric("IVA (12%)",              f"Q{d['iva_amount']:,.4f}")
-            st.metric("ISR (Precio/1.12 × 5%)", f"Q{d['isr_retencion']:,.4f}")
-        with c2:
-            st.metric("Neto que recibís",       f"Q{d['neto_recibido']:,.4f}")
-            st.metric("Margen neto (Q)",        f"Q{d['margen_neto_q']:,.4f}")
-            st.metric("Margen neto (%)",        f"{d['margen_neto_pct']:.2f}%")
-            st.metric("Punto de equilibrio",    f"Q{d['pto_equilibrio']:,.4f}")
-        st.caption(
-            f"Markup sobre costo: {d['sobre_costo']:.1f}% · "
-            f"Por cada Q100 de venta, tu bolsillo recibe Q{d['margen_neto_pct']:.1f}"
+# ── COMPONENTES REUTILIZABLES ─────────────────────────────────────────────────
+def _html_compacto(filas: list) -> str:
+    """
+    Genera tabla HTML compacta.
+    filas = [{"label": str, "vals": {periodo: valor}, "color": str}]
+    """
+    html = "<div style='font-size:.78rem'>"
+    for fila in filas:
+        items = "".join(
+            f"<div style='text-align:center;flex:1;min-width:75px'>"
+            f"<div style='font-size:.62rem;color:#888;margin-bottom:1px'>{per}</div>"
+            f"<div style='font-weight:bold;color:#2D2D2D'>Q{val:,.0f}</div></div>"
+            for per, val in fila["vals"].items()
         )
-
-
-# ── TAB 1: CALCULAR PRECIO ────────────────────────────────────────────────────
-def _tab_calcular():
-    st.markdown("#### Calculá el precio de venta desde tu costo y margen deseado")
-
-    c1, c2, c3 = st.columns([2, 2, 2])
-    with c1:
-        costo = st.number_input("💰 Costo de compra (Q)",
-                                 min_value=0.01, value=5.0, step=0.50,
-                                 key="cot_costo_c")
-    with c2:
-        modo_margen = st.radio("Margen deseado en",
-                                ["Porcentaje (%)", "Quetzales (Q)"],
-                                horizontal=True, key="cot_modo")
-    with c3:
-        if modo_margen == "Porcentaje (%)":
-            margen_val = st.number_input("📈 Margen neto deseado (%)",
-                                          min_value=0.0, max_value=94.0,
-                                          value=30.0, step=1.0,
-                                          key="cot_margen_pct",
-                                          help="% del precio de venta que queda como ganancia neta")
-        else:
-            margen_val = st.number_input("📈 Margen neto deseado (Q por unidad)",
-                                          min_value=0.0,
-                                          value=2.0, step=0.25,
-                                          key="cot_margen_q",
-                                          help="Q que querés ganar por cada unidad vendida")
-
-    st.divider()
-
-    # Calcular
-    if modo_margen == "Porcentaje (%)":
-        resultado = _desde_margen_pct(costo, margen_val / 100)
-    else:
-        resultado = _desde_margen_q(costo, margen_val)
-
-    if resultado is None:
-        st.error("Verificá los valores ingresados. El margen no puede superar el 95%.")
-        return
-
-    _mostrar_resultado(resultado, "💡 Precio sugerido")
-
-    # Ajuste manual del precio
-    st.divider()
-    st.markdown("#### ¿Querés ajustar el precio final?")
-    st.caption("Ingresá el precio que pensás cobrar y ves el impacto en tu margen.")
-
-    precio_ajustado = st.number_input(
-        "Precio final a cobrar (Q)",
-        min_value=0.01,
-        value=round(resultado["precio"], 2),
-        step=0.25,
-        key="cot_precio_ajuste",
-    )
-    if precio_ajustado != resultado["precio"]:
-        d_ajustado = _desglose(costo, precio_ajustado)
-        if d_ajustado:
-            diff_margen = d_ajustado["margen_neto_q"] - resultado["margen_neto_q"]
-            st.markdown(
-                f"**Impacto:** margen neto cambia de "
-                f"Q{resultado['margen_neto_q']:,.2f} → "
-                f"Q{d_ajustado['margen_neto_q']:,.2f} "
-                f"({'▲' if diff_margen >= 0 else '▼'} Q{abs(diff_margen):,.2f})"
-            )
-            _mostrar_resultado(d_ajustado, "📌 Con precio ajustado")
-
-
-# ── TAB 2: VERIFICAR MARGEN ───────────────────────────────────────────────────
-def _tab_verificar():
-    st.markdown("#### Dado un costo y un precio, ¿cuánto ganás?")
-
-    c1, c2 = st.columns(2)
-    with c1:
-        costo  = st.number_input("💰 Costo de compra (Q)",
-                                  min_value=0.01, value=5.0, step=0.50,
-                                  key="cot_costo_v")
-    with c2:
-        precio = st.number_input("🏷️ Precio de venta (Q, con IVA)",
-                                  min_value=0.01, value=8.0, step=0.25,
-                                  key="cot_precio_v")
-
-    st.divider()
-
-    resultado = _desglose(costo, precio)
-    if resultado:
-        _mostrar_resultado(resultado, "📊 Análisis de margen")
-
-        if precio < resultado["pto_equilibrio"]:
-            st.error(
-                f"⚠️ Estás vendiendo por debajo del punto de equilibrio "
-                f"(Q{resultado['pto_equilibrio']:,.4f}). "
-                f"Perdés Q{abs(resultado['margen_neto_q']):,.4f} por unidad."
-            )
-        elif resultado["margen_neto_pct"] < 15:
-            st.warning(
-                f"El margen del {resultado['margen_neto_pct']:.1f}% "
-                f"es bajo. Considerá subir el precio."
-            )
-
-
-# ── TAB 3: COMPARAR ESCENARIOS ────────────────────────────────────────────────
-def _tab_escenarios():
-    st.markdown("#### Tabla de precios para distintos márgenes con el mismo costo")
-
-    costo = st.number_input("💰 Costo de compra (Q)",
-                             min_value=0.01, value=5.0, step=0.50,
-                             key="cot_costo_e")
-
-    margenes = [10, 15, 20, 25, 30, 35, 40, 45, 50]
-
-    filas = []
-    for m in margenes:
-        d = _desde_margen_pct(costo, m / 100)
-        if d:
-            filas.append({
-                "Margen %":        f"{m}%",
-                "Precio venta (Q)": f"Q{d['precio']:,.2f}",
-                "Precio s/IVA":    f"Q{d['precio_sin_iva']:,.2f}",
-                "IVA (Q)":         f"Q{d['iva_amount']:,.2f}",
-                "ISR ret. (Q)":    f"Q{d['isr_retencion']:,.2f}",
-                "Margen neto (Q)": f"Q{d['margen_neto_q']:,.2f}",
-                "Pto. Equilibrio": f"Q{d['pto_equilibrio']:,.2f}",
-            })
-
-    if filas:
-        df = pd.DataFrame(filas)
-        st.dataframe(df, use_container_width=True, hide_index=True,
-                     column_config={
-                         "Margen %":         st.column_config.TextColumn(width="small"),
-                         "Precio venta (Q)": st.column_config.TextColumn(width="medium"),
-                         "Precio s/IVA":     st.column_config.TextColumn(width="medium"),
-                         "IVA (Q)":          st.column_config.TextColumn(width="medium"),
-                         "ISR ret. (Q)":     st.column_config.TextColumn(width="medium"),
-                         "Margen neto (Q)":  st.column_config.TextColumn(width="medium"),
-                         "Pto. Equilibrio":  st.column_config.TextColumn(width="medium"),
-                     })
-        st.caption(
-            f"Costo base: Q{costo:.2f} · "
-            f"Punto de equilibrio: Q{costo * 1.12:.4f} · "
-            f"IVA 12% · ISR 5%"
+        color_val = fila["color"]
+        label_val = fila["label"]
+        html += (
+            f"<div style='margin:3px 0'>"
+            f"<span style='font-size:.7rem;font-weight:bold;"
+            f"color:{color_val}'>{label_val}</span>"
+            f"<div style='display:flex;gap:3px;flex-wrap:wrap;background:#f5f5f5;"
+            f"border-radius:5px;padding:5px 4px;margin-top:2px'>{items}</div></div>"
         )
+    html += "</div>"
+    return html
 
-    # Margen personalizado
+def _dos_graficos(df_rows, x_col, titulo_corto, titulo_largo):
+    """Renderiza dos gráficos: corto plazo y largo plazo."""
+    df = pd.DataFrame(df_rows)
+    if df.empty: return
+
+    gc, gl = st.columns(2)
+    for col_g, periodos_sel, titulo in [
+        (gc, PERIODOS_CORTO, titulo_corto),
+        (gl, PERIODOS_LARGO, titulo_largo),
+    ]:
+        df_sel = df[df["Período"].isin(periodos_sel)]
+        if df_sel.empty:
+            col_g.caption(f"Sin datos — {titulo}"); continue
+        fig = px.bar(df_sel, x=x_col, y="Valor", color="Período",
+                     barmode="group", title=titulo,
+                     color_discrete_map=COLORES_PERIODO,
+                     text_auto=".2s")
+        fig.update_traces(textposition="outside")
+        fig.update_layout(margin=dict(t=40,b=50,l=10,r=10),
+                          legend=dict(orientation="h", y=-0.25),
+                          xaxis_tickangle=-25)
+        col_g.plotly_chart(fig, use_container_width=True)
+
+
+# ── WARNING ───────────────────────────────────────────────────────────────────
+def _warning_sin_pedido(todos, cli_map, periodos):
+    act = {p["cliente"].lower() for p in _filtrar(todos, periodos["Sem Actual"], cli_map)}
+    ant = {p["cliente"]         for p in _filtrar(todos, periodos["Sem Ant."],   cli_map)}
+    sin = sorted({c for c in ant if c.lower() not in act})
+    if sin:
+        st.warning("⚠️ **Sin pedido esta semana (compraron la anterior):** " +
+                   "  ·  ".join(f"**{c}**" for c in sin))
+
+
+# ── TAB 1: DESEMPEÑO ──────────────────────────────────────────────────────────
+def _tab_desempeno(todos, cli_map, periodos, campo, label_campo):
+
+    # Metas — persisten en hoja Config del Excel
+    with st.expander("⚙️ Metas semanales por zona (Q) — se guardan automáticamente",
+                     expanded=False):
+        mc = st.columns(len(ZONAS_MAP))
+        nuevas_metas = {}
+        for col, zona in zip(mc, ZONAS_MAP):
+            k = f"meta_{zona}"
+            nuevas_metas[zona] = col.number_input(
+                zona, min_value=0.0, step=100.0,
+                value=float(st.session_state.get(k, 0.0)), key=f"inp_{k}")
+        if st.button("💾 Guardar metas", type="primary"):
+            with st.spinner("Guardando metas en Excel..."):
+                guardar_metas(nuevas_metas)
+            for zona, val in nuevas_metas.items():
+                st.session_state[f"meta_{zona}"] = val
+            st.success("✅ Metas guardadas.")
+
     st.divider()
-    st.markdown("#### Calculá con un margen específico")
-    m_custom = st.slider("Margen neto deseado (%)", 1, 90, 30, key="cot_slider")
-    d_custom = _desde_margen_pct(costo, m_custom / 100)
-    if d_custom:
-        cc1, cc2, cc3, cc4 = st.columns(4)
-        cc1.metric("Precio de venta",   f"Q{d_custom['precio']:,.4f}")
-        cc2.metric("Margen neto (Q)",   f"Q{d_custom['margen_neto_q']:,.4f}")
-        cc3.metric("Neto que recibís",  f"Q{d_custom['neto_recibido']:,.4f}")
-        cc4.metric("Precio sin IVA",    f"Q{d_custom['precio_sin_iva']:,.4f}")
 
-
-
-# ── COTIZACIÓN DE PRECIOS ─────────────────────────────────────────────────────
-def _cotizacion():
-    from datetime import date, timedelta
-    from data_helper import cargar_productos
-    from pdf_helper  import generar_cotizacion, generar_cotizacion_formal
-
-    # ── Selector de tipo ──────────────────────────────────────────────────────
-    tipo = st.radio("Tipo de cotizacion:",
-                    ["📋 Simple", "🏢 Formal / Empresarial"],
-                    horizontal=True, key="cot_tipo")
-    is_formal = tipo.startswith("🏢")
-
-    st.divider()
-
-    # Vigencia
-    v1, v2 = st.columns(2)
-    with v1:
-        desde = v1.date_input("Vigente desde", value=date.today(), key="cot_desde")
-    with v2:
-        hasta = v2.date_input("Vigente hasta",
-                               value=date.today() + timedelta(days=30),
-                               key="cot_hasta")
-
-    # Cotizador + numero
-    COTIZADORES = {
-        "Andrea Castillo Sanabria": "Tel. 59306817",
-        "Sergio Burgos Alburez":    "Tel. 58749679",
+    # ── KPIs globales compactos ───────────────────────────────────────────────
+    vals_global = {
+        pnm: sum(p[campo] or 0 for p in _filtrar(todos, fn, cli_map))
+        for pnm, fn in periodos.items()
     }
-    cx1, cx2 = st.columns(2)
-    cotizador_nombre = cx1.selectbox("Elaborado por:", list(COTIZADORES.keys()),
-                                      key="cot_quien")
-    cotizador_tel    = COTIZADORES[cotizador_nombre]
+    # Margen % solo para semana actual
+    v_act = vals_global["Sem Actual"]
+    v_ant = vals_global["Sem Ant."]
+    delta_txt = f"{'▲' if v_act>=v_ant else '▼'} Q{abs(v_act-v_ant):,.0f} vs sem ant."
 
-    if is_formal:
-        num_cot = cx2.text_input("No. Cotizacion",
-                                  value=f"VX-{desde.strftime('%Y%m%d')}-001",
-                                  key="cot_num")
+    st.markdown(
+        f"<div style='font-size:.7rem;color:#666;margin-bottom:2px'>"
+        f"{label_campo} total &nbsp;·&nbsp; {delta_txt}</div>",
+        unsafe_allow_html=True)
+    st.markdown(_html_compacto([{
+        "label": "Global", "vals": vals_global, "color": "#2D7A2D"
+    }]), unsafe_allow_html=True)
+
+    meta_total = sum(st.session_state.get(f"meta_{z}", 0) for z in ZONAS_MAP)
+    if meta_total > 0 and campo == "total":
+        pct = min(v_act / meta_total, 1.0)
+        st.progress(pct, text=f"Q{v_act:,.0f} / Meta Q{meta_total:,.0f} ({pct*100:.1f}%)")
+
     st.divider()
 
-    # ── Campos extra para cotizacion formal ───────────────────────────────────
-    if is_formal:
-        ef1, ef2 = st.columns(2)
-        empresa_dest = ef1.text_input("Empresa destinataria",
-                                       placeholder="PRALCASA / Nombre de la empresa",
-                                       key="cot_empresa")
-        atencion_dest = ef2.text_input("A la atencion de",
-                                        placeholder="Nombre del contacto",
-                                        key="cot_atencion")
+    # ── Detalle por zona (compacto, misma tipografía) ─────────────────────────
+    st.markdown(f"<div style='font-size:.75rem;font-weight:bold;color:#555;"
+                f"margin-bottom:4px'>Detalle por zona</div>", unsafe_allow_html=True)
 
-        # Costo de transporte (se diluye por libras, fuera del margen)
-        tf1, tf2 = st.columns([1, 2])
-        flete_total = tf1.number_input(
-            "Costo de transporte (Q)", min_value=0.0, value=0.0, step=50.0,
-            key="cot_flete",
-            help="Se reparte entre las libras cotizadas y se diluye en el "
-                 "precio. No afecta el margen del producto.")
-        if flete_total > 0:
-            tf2.caption("El flete se prorratea por volumen entre todos los "
-                        "productos y se integra al precio final. El margen "
-                        "mostrado sigue siendo solo del producto.")
+    for zona in ZONAS_MAP:
+        color  = COLORES_ZONA[zona]
+        vals_z = {pnm: sum(p[campo] or 0
+                           for p in _filtrar(todos, fn, cli_map, zona_only=zona))
+                  for pnm, fn in periodos.items()}
+        v_act  = vals_z["Sem Actual"]
+        v_ant  = vals_z["Sem Ant."]
+        delta  = v_act - v_ant
+        signo  = "▲" if delta >= 0 else "▼"
+        delta_txt = f"{signo} Q{abs(delta):,.0f} vs sem ant."
 
-        CUERPO_DEFAULT = (
-            "Estimado equipo,\n\n"
-            "Por medio de la presente, nos es grato presentar nuestra "
-            "cotizacion de productos frescos conforme a sus requerimientos. "
-            "VeggiExpress se especializa en la distribucion de frutas y "
-            "vegetales frescos de alta calidad, garantizando consistencia "
-            "en volumen, calidad certificada y puntualidad en la entrega.\n\n"
-            "A continuacion el detalle de productos cotizados:"
-        )
-        cuerpo_texto = st.text_area("Cuerpo de la cotizacion",
-                                     value=st.session_state.get("cot_cuerpo",
-                                                                  CUERPO_DEFAULT),
-                                     height=130, key="cot_cuerpo_area")
-        st.session_state["cot_cuerpo"] = cuerpo_texto
+        # Nombre de zona con delta
+        st.markdown(
+            f"<div style='border-left:4px solid {color};padding:3px 10px;"
+            f"margin:6px 0 2px 0;border-radius:4px'>"
+            f"<span style='font-size:.82rem;font-weight:bold'>{zona}</span>"
+            f"&nbsp;&nbsp;<span style='font-size:.7rem;"
+            f"color:{'#2D7A2D' if delta>=0 else '#C0392B'}'>{delta_txt}</span>"
+            f"</div>", unsafe_allow_html=True)
+
+        # Valores compactos
+        st.markdown(_html_compacto([{"label":"", "vals": vals_z, "color": color}]),
+                    unsafe_allow_html=True)
+
+        # Barra vs meta
+        meta_z = st.session_state.get(f"meta_{zona}", 0)
+        if meta_z > 0 and campo == "total":
+            pz = min(v_act / meta_z, 1.0)
+            st.progress(pz,
+                text=f"Q{v_act:,.0f} / Meta Q{meta_z:,.0f} ({pz*100:.1f}%)")
+
+    st.divider()
+
+    # ── Dos gráficos: corto y largo plazo ─────────────────────────────────────
+    rows = []
+    for zona in ZONAS_MAP:
+        for pnm, fn in periodos.items():
+            val = sum(p[campo] or 0
+                      for p in _filtrar(todos, fn, cli_map, zona_only=zona))
+            rows.append({"Zona": zona, "Período": pnm, "Valor": val})
+
+    _dos_graficos(rows, "Zona",
+                  f"{label_campo} — Sem Actual / Sem Ant. / MTD",
+                  f"{label_campo} — YTD vs PYTD")
+
+
+# ── TAB 2: TOP CLIENTES ───────────────────────────────────────────────────────
+def _tab_top_clientes(todos, cli_map, periodos, campo, label_campo):
+    agg = _agg_grupo(todos, periodos, cli_map, by="cliente", campo=campo)
+    if not agg:
+        st.info("Sin datos."); return
+
+    df_all = pd.DataFrame([
+        {"cliente": v["_nombre"], "zona": v["zona"],
+         **{p: v[p] for p in periodos}}
+        for v in agg.values()
+    ])
+
+    for zona in ZONAS_MAP:
+        color  = COLORES_ZONA[zona]
+        top_n  = 5 if zona in ("Antigua & Chimal", "Rio") else 3
+        df_z   = df_all[df_all["zona"]==zona].nlargest(top_n, "YTD")
+
+        st.markdown(
+            f"<div style='border-left:4px solid {color};padding:3px 10px;"
+            f"margin:8px 0 4px 0;border-radius:4px;font-weight:bold;"
+            f"font-size:.85rem'>{zona} — Top {top_n} {label_campo}</div>",
+            unsafe_allow_html=True)
+
+        if df_z.empty:
+            st.caption("Sin datos."); continue
+
+        # Tabla compacta
+        cols_show = ["cliente"] + list(periodos.keys())
+        df_show = df_z[cols_show].copy()
+        df_show.columns = ["Cliente"] + list(periodos.keys())
+        for col in periodos.keys():
+            df_show[col] = df_show[col].apply(lambda x: f"Q{x:,.2f}")
+        st.dataframe(df_show.reset_index(drop=True),
+                     use_container_width=True, hide_index=True)
+
+        # Dos gráficos
+        rows = []
+        for _, row in df_z.iterrows():
+            for per in periodos:
+                rows.append({"Cliente": row["cliente"][:20],
+                              "Período": per, "Valor": row[per]})
+        _dos_graficos(rows, "Cliente",
+                      f"Sem / MTD — {zona}",
+                      f"YTD vs PYTD — {zona}")
+
         st.divider()
 
-    st.markdown("**Productos a cotizar** — selecciona y ajusta el precio:")
 
-    SEGS = {"Premium":50,"Alto":40,"Media Alta":35,"Media":30,
-            "Media Baja":25,"Baja":20,"Sin Segmento":0}
+# ── TAB 3: TOP PRODUCTOS ──────────────────────────────────────────────────────
+def _tab_top_productos(todos, cli_map, periodos, campo, label_campo):
+    zona_f = st.selectbox("Zona", ["Todas"]+list(ZONAS_MAP.keys()), key="topprod_zona")
+    zona_only = zona_f if zona_f != "Todas" else None
 
-    prods      = cargar_productos(False)
-    prod_dict  = {p["nombre"]: p for p in prods}
-    nombres    = [""] + sorted([p["nombre"] for p in prods])
-    n_filas    = st.session_state.get("cot_nfilas", 5)
+    agg = _agg_grupo(todos, periodos, cli_map, by="producto",
+                     campo=campo, zona_only=zona_only)
+    if not agg:
+        st.info("Sin datos."); return
 
-    # Init grilla
-    if "cot_grilla" not in st.session_state:
-        st.session_state["cot_grilla"] = [
-            {"producto":"","precio_cotizar":0.0,
-             "especificacion":"","volumen_semanal":0.0} for _ in range(n_filas)]
-    elif len(st.session_state["cot_grilla"]) < n_filas:
-        while len(st.session_state["cot_grilla"]) < n_filas:
-            st.session_state["cot_grilla"].append(
-                {"producto":"","precio_cotizar":0.0,
-                 "especificacion":"","volumen_semanal":0.0})
+    df_all = pd.DataFrame([
+        {"producto": v["_nombre"], "zona": v["zona"],
+         **{p: v[p] for p in periodos}}
+        for v in agg.values()
+    ])
+    df_top = df_all.nlargest(10, "YTD")
 
-    grilla = st.session_state["cot_grilla"]
-    lineas_pdf = []
-
-    # Encabezado — diferente por tipo
-    if is_formal:
-        hdr = st.columns([1.4, 1.0, 0.6, 0.65, 0.7, 0.65, 0.7, 0.6, 0.65, 0.7])
-        for h, lbl in zip(hdr, ["Producto","Espec.","Vol","Costo","C+Flete",
-                                  "Pto.Eq","Precio","Mg%","MgQ","P.Final"]):
-            h.markdown(f"<small><b>{lbl}</b></small>", unsafe_allow_html=True)
-    else:
-        hdr = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
-        for h, lbl in zip(hdr, ["Producto","Unidad","Costo","Pto. Eq.","P. Imp.",
-                                  "Precio Cotizar","Margen %","Margen Q","IVA/u","ISR/u"]):
-            h.markdown(f"<small><b>{lbl}</b></small>", unsafe_allow_html=True)
-
-    # Pre-cálculo del flete por libra (formal): leer volúmenes ya guardados
-    # en session_state para distribuir el flete EN VIVO en cada línea.
-    flete_total_pre = st.session_state.get("cot_flete", 0.0) if is_formal else 0.0
-    flete_x_lb_pre = 0.0
-    if is_formal and flete_total_pre > 0:
-        _vol_total_pre = 0.0
-        for _j in range(n_filas):
-            _vj = st.session_state.get(f"cot_vol_{_j}", 0.0)
-            try:
-                _vol_total_pre += float(_vj or 0)
-            except (ValueError, TypeError):
-                pass
-        if _vol_total_pre > 0:
-            flete_x_lb_pre = flete_total_pre / _vol_total_pre
-
-    for i, fila in enumerate(grilla):
-        k_prod = f"cot_prod_{i}"
-        k_prec = f"cot_prec_{i}"
-        k_spec = f"cot_spec_{i}"
-        k_vol  = f"cot_vol_{i}"
-
-        def _ref(col, txt):
-            col.markdown(
-                f"<div style='padding-top:8px;font-size:.78rem;color:#888'>"
-                f"{txt}</div>", unsafe_allow_html=True)
-
-        # ── Columnas según modo ───────────────────────────────────────────────
-        if is_formal:
-            r = st.columns([1.4, 1.0, 0.6, 0.65, 0.7, 0.65, 0.7, 0.6, 0.65, 0.7])
+    # Tabla Top 10
+    cols_show = ["producto"] + list(periodos.keys())
+    df_show = df_top[cols_show].copy()
+    df_show.columns = ["Producto"] + list(periodos.keys())
+    for col in periodos.keys():
+        if campo == "cantidad":
+            df_show[col] = df_show[col].apply(lambda x: f"{x:,.1f}")
         else:
-            r = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
+            df_show[col] = df_show[col].apply(lambda x: f"Q{x:,.2f}")
+    st.dataframe(df_show.reset_index(drop=True),
+                 use_container_width=True, hide_index=True)
 
-        prod_sel = r[0].selectbox("", nombres,
-            index=(nombres.index(fila["producto"]) if fila["producto"] in nombres else 0),
-            key=k_prod, label_visibility="collapsed")
-
-        if prod_sel and prod_sel in prod_dict:
-            p      = prod_dict[prod_sel]
-            costo  = float(p.get("costo", 0))
-            seg    = SEGS.get(p.get("tipo_producto2",""), 0) / 100
-            pto_eq = round(costo * 1.12, 2) if costo else 0
-            p_imp  = round(costo / (1 - seg/0.95) * 1.12, 2) if seg > 0 and costo else 0
-
-            if k_prec not in st.session_state:
-                st.session_state[k_prec] = float(p.get("precio", 0))
-
-            if is_formal:
-                # Formal 10 cols: r[0]=prod r[1]=spec r[2]=vol r[3]=costo
-                #   r[4]=costo+flete r[5]=ptoEq r[6]=precio r[7]=mg% r[8]=mgQ r[9]=pFinal
-                # OPCION A: el flete entra como COSTO. Margen y Pto.Eq se calculan
-                # sobre (costo + flete). El precio ingresado es el precio FINAL.
-                especif = r[1].text_input("", value=fila.get("especificacion",""),
-                                           key=k_spec, label_visibility="collapsed",
-                                           placeholder="Especificacion")
-                vol_sem = r[2].number_input("", value=float(fila.get("volumen_semanal",0)),
-                                             min_value=0.0, step=100.0, key=k_vol,
-                                             label_visibility="collapsed")
-                # Costo editable — default del catálogo, NO se guarda en ningún lado
-                k_costo = f"cot_costo_{i}"
-                if k_costo not in st.session_state:
-                    st.session_state[k_costo] = float(costo)
-                costo_ed = r[3].number_input("", min_value=0.0,
-                    value=float(st.session_state[k_costo]),
-                    step=0.25, key=k_costo, label_visibility="collapsed")
-                # Costo + flete (la base real sobre la que se calcula todo)
-                costo_total = costo_ed + flete_x_lb_pre
-                _ref(r[4], f"Q{costo_total:,.2f}")
-                # Punto de equilibrio sobre costo+flete
-                pto_eq = round(costo_total * IVA_FACTOR, 2) if costo_total else 0
-                _ref(r[5], f"Q{pto_eq:,.2f}" if pto_eq else "—")
-                # Precio FINAL editable (ya incluye todo)
-                precio_ed = r[6].number_input("", min_value=0.0,
-                    value=float(st.session_state[k_prec]),
-                    step=0.25, key=k_prec, label_visibility="collapsed")
-                # Margen NETO sobre costo+flete (el flete es parte del costo)
-                if precio_ed > 0 and costo_total > 0:
-                    mp = round(margen_neto_pct(costo_total, precio_ed), 1)
-                    mq = round(margen_neto_q(costo_total, precio_ed), 2)
-                    col_m = "#2D7A2D" if mp >= 20 else "#E65100"
-                    _ref(r[7], f"<span style='color:{col_m}'><b>{mp}%</b></span>")
-                    _ref(r[8], f"<span style='color:{col_m}'>Q{mq:,.2f}</span>")
-                else:
-                    r[7].write(""); r[8].write("")
-                # Precio Final = el precio ingresado (ya tiene todo dentro)
-                _ref(r[9], f"<b>Q{precio_ed:,.2f}</b>" if precio_ed > 0 else "—")
-
-                grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed,
-                              "especificacion": especif, "volumen_semanal": vol_sem,
-                              "costo_editado": costo_ed}
+    # Dos gráficos Top 5
+    st.markdown("**Gráfico Top 5**")
+    df_t5 = df_top.head(5)
+    rows = []
+    for _, row in df_t5.iterrows():
+        for per in periodos:
+            rows.append({"Producto": row["producto"][:18],
+                          "Período": per, "Valor": row[per]})
+    _dos_graficos(rows, "Producto",
+                  f"Sem / MTD — {label_campo}",
+                  f"YTD vs PYTD — {label_campo}")
 
 
-            else:
-                # Simple: r[1]=unidad, r[2]=costo, r[3]=pto_eq, r[4]=p_imp,
-                #         r[5]=precio, r[6]=mg%, r[7]=mgQ, r[8]=IVA, r[9]=ISR
-                r[1].markdown(f"<div style='padding-top:8px;font-size:.82rem'>"
-                              f"{p.get('unidad','')}</div>", unsafe_allow_html=True)
-                _ref(r[2], f"Q{costo:,.2f}" if costo else "—")
-                _ref(r[3], f"Q{pto_eq:,.2f}" if pto_eq else "—")
-                _ref(r[4], f"Q{p_imp:,.2f}"  if p_imp  else "—")
+# ── TAB 4: CRÉDITOS ───────────────────────────────────────────────────────────
+def _tab_creditos():
+    st.markdown("### 💰 Flujo de Caja Semanal")
+    st.info(
+        "Este módulo fue movido a su propio espacio para mayor comodidad. "
+        "Accedé desde el menú lateral o desde el botón de abajo."
+    )
+    if st.button("💰 Ir a Flujo de Caja", type="primary"):
+        st.session_state["_nav_target"] = "💰 Flujo de Caja"
+        st.rerun()
 
-                precio_ed = r[5].number_input("", min_value=0.0,
-                    value=float(st.session_state[k_prec]),
-                    step=0.25, key=k_prec, label_visibility="collapsed")
 
-                if precio_ed > 0 and costo > 0:
-                    mp  = round(0.95 * (1 - costo * 1.12 / precio_ed) * 100, 1)
-                    mq  = round(0.95 * (precio_ed - costo * 1.12), 2)
-                    iva = round(precio_ed - precio_ed / 1.12, 2)
-                    isr = round(precio_ed / 1.12 * 0.05, 2)
-                    col = "#2D7A2D" if mp >= 20 else "#E65100"
-                    _ref(r[6], f"<span style='color:{col}'><b>{mp}%</b></span>")
-                    _ref(r[7], f"<span style='color:{col}'>Q{mq:,.2f}</span>")
-                    _ref(r[8], f"Q{iva:,.2f}")
-                    _ref(r[9], f"Q{isr:,.2f}")
-                elif precio_ed > 0:
-                    for col in r[6:]: _ref(col, "—")
-                else:
-                    for col in r[6:]: col.write("")
+def _tab_crm(todos, clientes, sem_act, año_act, cli_map=None):
+    hist: dict = {}
+    for p in todos:
+        if _excluido(p["cliente"]): continue
+        cli = p["cliente"]
+        if cli not in hist:
+            hist[cli] = {"pedidos":[], "total":0, "margen":0, "prods":{}}
+        hist[cli]["pedidos"].append(p)
+        hist[cli]["total"]  += p["total"]    or 0
+        hist[cli]["margen"] += p["margen_q"] or 0
+        prod = p["producto"]
+        hist[cli]["prods"][prod] = hist[cli]["prods"].get(prod,0) + (p["cantidad"] or 0)
 
-                grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed,
-                              "especificacion": "", "volumen_semanal": 0.0}
+    def _status(peds):
+        sems = [p["semana"] for p in peds if p["año"]==año_act and p["semana"]]
+        if not sems: return "🔴 Inactivo"
+        d = sem_act - max(sems)
+        if d <= 0: return "🟢 Activo"
+        if d <= 2: return "🟡 En Riesgo"
+        return "🔴 Inactivo"
 
-            if precio_ed > 0:
-                lineas_pdf.append({
-                    "producto":        prod_sel,
-                    "unidad":          p.get("unidad",""),
-                    "precio_cotizar":  precio_ed,
-                    "especificacion":  grilla[i].get("especificacion",""),
-                    "volumen_semanal": grilla[i].get("volumen_semanal", 0.0),
-                    "costo_editado":   grilla[i].get("costo_editado", 0.0),
-                })
-        else:
-            grilla[i] = {"producto":"","precio_cotizar":0.0,
-                          "especificacion":"","volumen_semanal":0.0}
-            for col in r[1:]: col.write("")
-    st.session_state["cot_grilla"] = grilla
+    filas = []
+    for c in clientes:
+        if _excluido(c["nombre"]): continue
+        info = hist.get(c["nombre"])
+        if not info: continue
+        peds  = info["pedidos"]
+        sems  = sorted({(p["año"],p["semana"]) for p in peds if p["semana"]}, reverse=True)
+        n     = len(sems)
+        zona  = _zona_de(c["codigo_lugar"]) or "—"
+        filas.append({
+            "Estado": _status(peds), "Cliente": c["nombre"], "Zona": zona,
+            "Última Sem": f"Sem {sems[0][1]}/{sems[0][0]}" if sems else "—",
+            "Sem. activas": n,
+            "Ticket Prom.": f"Q{info['total']/n:,.2f}" if n else "Q0",
+            "Total Hist.": f"Q{info['total']:,.2f}",
+            "Margen Hist.": f"Q{info['margen']:,.2f}",
+            "Top Producto": max(info["prods"], key=info["prods"].get) if info["prods"] else "—",
+        })
 
-    # Botones de fila
-    ba, bb, bc = st.columns(3)
-    with ba:
-        if st.button("+ 5 líneas", key="cot_add5"):
-            st.session_state["cot_nfilas"] = n_filas + 5; st.rerun()
-    with bb:
-        if st.button("+ 10 líneas", key="cot_add10"):
-            st.session_state["cot_nfilas"] = n_filas + 10; st.rerun()
-    with bc:
-        if st.button("🗑 Limpiar grilla", key="cot_clear", type="secondary"):
-            st.session_state.pop("cot_grilla", None)
-            st.session_state["cot_nfilas"] = 15
-            for i in range(50):
-                st.session_state.pop(f"cot_prod_{i}", None)
-                st.session_state.pop(f"cot_prec_{i}", None)
-            st.rerun()
+    if not filas: st.info("Sin datos."); return
+    df = pd.DataFrame(filas)
+
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1: f_z = st.selectbox("Zona",   ["Todas"]+list(ZONAS_MAP.keys()), key="crm_z")
+    with fc2: f_e = st.selectbox("Estado", ["Todos","🟢 Activo","🟡 En Riesgo","🔴 Inactivo"], key="crm_e")
+    with fc3: f_b = st.text_input("Buscar", placeholder="Nombre...", key="crm_b")
+
+    if f_z != "Todas": df = df[df["Zona"]==f_z]
+    if f_e != "Todos": df = df[df["Estado"]==f_e]
+    if f_b:            df = df[df["Cliente"].str.lower().str.contains(f_b.lower())]
+
+    st.markdown(f"**{len(df)} clientes**")
+    st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
 
     st.divider()
-
-    # ── Flete (solo formal) ───────────────────────────────────────────────────
-    # OPCION A: el flete ya está DENTRO del costo de cada línea (costo + flete),
-    # y el precio ingresado ya es el final. NO se vuelve a sumar aquí — solo se
-    # informa el prorrateo. El precio_cotizar de cada línea YA es el precio final.
-    flete_total = st.session_state.get("cot_flete", 0.0) if is_formal else 0.0
-    flete_x_lb = 0.0
-    if is_formal and flete_total > 0 and lineas_pdf:
-        total_vol = sum(float(l.get("volumen_semanal", 0)) for l in lineas_pdf)
-        if total_vol > 0:
-            flete_x_lb = flete_total / total_vol
-            st.info(f"🚛 **Flete Q{flete_total:,.2f}** repartido entre "
-                    f"{total_vol:,.0f} lbs = **+Q{flete_x_lb:.3f}/lb** de costo. "
-                    f"Ya incluido en la columna C+Flete; tu margen se calcula "
-                    f"sobre costo+flete y el precio final lo cubre todo.")
-        elif flete_total > 0:
-            st.warning("Para prorratear el flete, ingresá el volumen semanal "
-                       "(lbs) de cada producto.")
-
-    if lineas_pdf:
-        st.success(f"**{len(lineas_pdf)} producto(s)** listos para el PDF.")
-
-        if is_formal:
-            st.markdown("**Observaciones adicionales** (aparecen arriba de las "
-                        "condiciones en el PDF, respetando párrafos):")
-            notas_cot = st.text_area(
-                "Observaciones",
-                placeholder="Ej: Entrega sujeta a programa semanal acordado.\n\n"
-                            "Certificados de calidad disponibles a solicitud.",
-                height=100,
-                key="cot_notas_formal",
-                label_visibility="collapsed",
-            )
-
-            # Condiciones generales — editable, precargada
-            from pdf_helper import _MESES_ES as _MES  # para fecha en español
-            _cond_default = (
-                "Moneda: Quetzales guatemaltecos (GTQ), precios sin IVA.\n"
-                "Calidad: Productos frescos de primera calidad, seleccionados y calibrados.\n"
-                "Entrega: Sujeto a programa y volumen acordado con el cliente.\n"
-                "Empaque: Segun especificacion del cliente o estandar VeggiExpress.\n"
-                f"Validez de la cotizacion: {hasta.day} de "
-                f"{_MES.get(hasta.month, '')} de {hasta.year}.\n"
-                "Precios sujetos a variacion por condiciones de mercado fuera "
-                "del periodo de vigencia."
-            )
-            st.markdown("**Condiciones generales** (editables, aparecen al final):")
-            condiciones_cot = st.text_area(
-                "Condiciones",
-                value=st.session_state.get("cot_condiciones", _cond_default),
-                height=140, key="cot_cond_area",
-                label_visibility="collapsed",
-                help="Una condición por línea. Se muestran con viñetas en el PDF.")
-            st.session_state["cot_condiciones"] = condiciones_cot
-
-            # Checkboxes de totales en la tabla del PDF
-            tc1, tc2 = st.columns(2)
-            mostrar_total_col = tc1.checkbox(
-                "Mostrar columna 'Total por producto' en PDF",
-                value=False, key="cot_tot_col")
-            mostrar_total_fila = tc2.checkbox(
-                "Mostrar fila 'Total semanal' en PDF",
-                value=False, key="cot_tot_fila")
-        else:
-            notas_cot = st.text_area(
-                "",
-                placeholder="Ej: Precios sin IVA · Precios sujetos a cambio · "
-                            "Disponibilidad sujeta a programa de siembra...",
-                height=90,
-                key="cot_notas",
-                label_visibility="collapsed",
-            )
-
-        btn_lbl = "📄 Generar Cotizacion Formal" if is_formal else "📄 Generar PDF"
-        if st.button(btn_lbl, type="primary"):
-            with st.spinner("Generando PDF..."):
-                if is_formal:
-                    pdf_bytes = generar_cotizacion_formal(
-                        lineas_pdf, desde, hasta,
-                        empresa=st.session_state.get("cot_empresa",""),
-                        atencion=st.session_state.get("cot_atencion",""),
-                        cuerpo=st.session_state.get("cot_cuerpo",""),
-                        cotizador=cotizador_nombre,
-                        cotizador_tel=cotizador_tel,
-                        num_cot=st.session_state.get("cot_num","VX-001"),
-                        notas=notas_cot,
-                        condiciones_txt=st.session_state.get("cot_condiciones",""),
-                        mostrar_total_col=st.session_state.get("cot_tot_col", False),
-                        mostrar_total_fila=st.session_state.get("cot_tot_fila", False),
-                    )
-                    nombre = (f"Cotizacion_Formal_VeggiExpress_"
-                              f"{st.session_state.get('cot_num','').replace('-','_')}.pdf")
-                else:
-                    pdf_bytes = generar_cotizacion(lineas_pdf, desde, hasta,
-                                           cotizador=cotizador_nombre,
-                                           cotizador_tel=cotizador_tel,
-                                           notas=notas_cot)
-                    nombre = f"Cotizacion_VeggiExpress_{desde.strftime('%d%m%Y')}.pdf"
-            st.download_button("📥 Descargar PDF", data=pdf_bytes,
-                file_name=nombre, mime="application/pdf",
-                key="cot_dl", type="primary")
-    else:
-        st.info("Seleccioná al menos un producto para generar la cotización.")
+    cli_sel = st.selectbox("Ver detalle", [""]+list(df["Cliente"]), key="crm_d")
+    if cli_sel and cli_sel in hist:
+        info = hist[cli_sel]; cli_obj = next((c for c in clientes if c["nombre"]==cli_sel), {})
+        st.markdown(f"#### 👤 {cli_sel}")
+        d1,d2,d3,d4 = st.columns(4)
+        d1.metric("Total hist.", f"Q{info['total']:,.2f}")
+        d2.metric("Margen hist.", f"Q{info['margen']:,.2f}")
+        sems_u = {(p["año"],p["semana"]) for p in info["pedidos"] if p["semana"]}
+        d3.metric("Sem. activas", len(sems_u))
+        d4.metric("Crédito", f"{cli_obj.get('credito',0)} días")
+        top5 = sorted(info["prods"].items(), key=lambda x: x[1], reverse=True)[:5]
+        st.markdown("**Top 5 productos:**")
+        for prod, cant in top5: st.caption(f"• {prod}: {cant:.1f} uds")
+        sems_ord = sorted(sems_u)[-8:]
+        sem_data = [{"Semana": f"S{s}/{a}",
+                     "Venta": sum(p["total"] or 0 for p in info["pedidos"]
+                                  if p["año"]==a and p["semana"]==s)}
+                    for a,s in sems_ord]
+        if sem_data:
+            fig = px.bar(pd.DataFrame(sem_data), x="Semana", y="Venta",
+                         color_discrete_sequence=["#2D7A2D"],
+                         title="Ventas últimas semanas")
+            fig.update_layout(margin=dict(t=40,b=20))
+            st.plotly_chart(fig, use_container_width=True)
 
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB: MARGEN — tendencia mensual MB% por Cliente o por Producto
+# ══════════════════════════════════════════════════════════════════════════════
+def _tab_margen_clientes(todos: list):
+    """MB% mensual por cliente o producto — detecta perdida de rentabilidad."""
+    from datetime import date as _date
+    import pandas as _pd
+
+    st.markdown("#### Tendencia de Margen Bruto %")
+    st.caption("MB% = (precio − costo) × cantidad / ingreso. "
+               "Tendencia: ultimo mes vs promedio de los 3 anteriores.")
+
+    cc1, cc2 = st.columns([2, 1])
+    dimension = cc1.radio("Analizar por", ["Cliente", "Producto"],
+                           horizontal=True, key="mgc_dim")
+    if dimension == "Cliente":
+        hog_m = cc2.radio("Hogares", ["Todos","Solo","Excluir"],
+                           horizontal=True, key="mgc_hog")
+    else:
+        hog_m = "Todos"
+    cc3 = st.container()
+    n_meses   = cc3.selectbox("Meses", [6, 9, 12], index=0, key="mgc_n")
+
+    key_field = "cliente" if dimension == "Cliente" else "producto"
+
+    hoy = _date.today()
+    meses = []
+    y, m = hoy.year, hoy.month
+    for _ in range(n_meses):
+        meses.append((y, m))
+        m -= 1
+        if m == 0: m, y = 12, y - 1
+    meses.reverse()
+    lbl = {1:"Ene",2:"Feb",3:"Mar",4:"Abr",5:"May",6:"Jun",
+           7:"Jul",8:"Ago",9:"Sep",10:"Oct",11:"Nov",12:"Dic"}
+    cols_meses = [f"{lbl[mm]} {yy%100:02d}" for yy, mm in meses]
+
+    # Agregacion: {entidad: {(y,m): [ingreso, mb]}}
+    data: dict = {}
+    for p in todos:
+        if p["status"] == "Cancelado": continue
+        if not p["fecha"]: continue
+        if _excluido(p["cliente"]): continue
+        _es_hog = es_hogar(p["cliente"], {})
+        if dimension == "Cliente":
+            if hog_m == "Solo"    and not _es_hog: continue
+            if hog_m == "Excluir" and     _es_hog: continue
+        key = (p["fecha"].year, p["fecha"].month)
+        if key not in meses: continue
+        ent = str(p.get(key_field) or "").strip()
+        if not ent: continue
+        ing = float(p.get("total") or 0)
+        mb  = (float(p.get("precio") or 0) - float(p.get("costo") or 0)) \
+              * float(p.get("cantidad") or 0)
+        d = data.setdefault(ent, {})
+        acc = d.setdefault(key, [0.0, 0.0])
+        acc[0] += ing
+        acc[1] += mb
+
+    if not data:
+        st.info("Sin datos en el periodo seleccionado.")
+        return
+
+    rows = []
+    for ent, d in data.items():
+        fila = {dimension: ent}
+        pcts = []
+        for (yy, mm), col in zip(meses, cols_meses):
+            ing, mb = d.get((yy, mm), (0.0, 0.0))
+            pct = (mb / ing * 100) if ing > 0 else None
+            pcts.append(pct)
+            fila[col] = f"{pct:.0f}%" if pct is not None else "—"
+
+        ult  = pcts[-1]
+        prev = [x for x in pcts[-4:-1] if x is not None]
+        if ult is not None and prev:
+            delta = ult - (sum(prev) / len(prev))
+            fila["Tendencia"] = ("🔻" if delta < -3 else
+                                  "🔺" if delta >  3 else "→") + f" {delta:+.0f}pp"
+            fila["_delta"] = delta
+        else:
+            fila["Tendencia"] = "—"
+            fila["_delta"]    = 0.0
+        fila["_ing_total"] = sum(v[0] for v in d.values())
+        rows.append(fila)
+
+    # Para productos: limitar a los mas relevantes por ingreso (legibilidad)
+    if dimension == "Producto" and len(rows) > 40:
+        rows.sort(key=lambda r: -r["_ing_total"])
+        rows = rows[:40]
+        st.caption("Mostrando los 40 productos con mayor ingreso en el periodo.")
+
+    rows.sort(key=lambda r: (r["_delta"], -r["_ing_total"]))
+    df = _pd.DataFrame(rows).drop(columns=["_delta", "_ing_total"])
+    st.dataframe(df, hide_index=True, use_container_width=True,
+                 height=min(600, 60 + len(rows) * 35))
+
+    bajando = [r[dimension] for r in rows if r["Tendencia"].startswith("🔻")]
+    if bajando:
+        st.warning(f"⚠️ Margen en descenso (>3pp): {', '.join(bajando[:6])}"
+                   + (f" y {len(bajando)-6} mas" if len(bajando) > 6 else ""))
+
+    # ── Drill-down: que producto arrastra el margen del cliente ──────────────
+    if dimension == "Cliente":
+        st.divider()
+        st.markdown("##### 🔍 Diagnóstico de cliente")
+        st.caption("Desglosa por producto: margen del último mes vs promedio "
+                   "de los 3 anteriores, ponderado por peso en la compra.")
+
+        orden_cli = [r["Cliente"] for r in rows]   # peor tendencia primero
+        cli_sel = st.selectbox("Cliente a diagnosticar", orden_cli, key="mgc_drill")
+
+        ult_key   = meses[-1]
+        prev_keys = meses[-4:-1]
+
+        # {producto: {"ult":[ing,mb], "prev":[ing,mb]}}
+        pdata: dict = {}
+        for p in todos:
+            if p["status"] == "Cancelado" or not p["fecha"]: continue
+            if p["cliente"] != cli_sel: continue
+            key = (p["fecha"].year, p["fecha"].month)
+            if key != ult_key and key not in prev_keys: continue
+            prod = str(p.get("producto") or "").strip()
+            if not prod: continue
+            ing = float(p.get("total") or 0)
+            mb  = (float(p.get("precio") or 0) - float(p.get("costo") or 0)) \
+                  * float(p.get("cantidad") or 0)
+            d = pdata.setdefault(prod, {"ult": [0.0, 0.0], "prev": [0.0, 0.0]})
+            b = d["ult"] if key == ult_key else d["prev"]
+            b[0] += ing
+            b[1] += mb
+
+        ing_cli_ult = sum(d["ult"][0] for d in pdata.values())
+        if ing_cli_ult <= 0:
+            st.info(f"{cli_sel} no tiene ventas en {cols_meses[-1]}.")
+        else:
+            filas_d, culpable, max_impacto = [], None, 0.0
+            for prod, d in pdata.items():
+                ing_u, mb_u = d["ult"]
+                ing_p, mb_p = d["prev"]
+                pct_u = (mb_u / ing_u * 100) if ing_u > 0 else None
+                pct_p = (mb_p / ing_p * 100) if ing_p > 0 else None
+                peso  = ing_u / ing_cli_ult * 100
+                if pct_u is not None and pct_p is not None:
+                    delta = pct_u - pct_p
+                    flecha = ("🔻" if delta < -3 else
+                              "🔺" if delta >  3 else "→")
+                    d_txt  = f"{flecha} {delta:+.0f}pp"
+                    impacto = max(0.0, -delta) * peso
+                    if impacto > max_impacto:
+                        max_impacto, culpable = impacto, (prod, delta, peso)
+                else:
+                    delta, d_txt = 0.0, "—"
+                filas_d.append({
+                    "Producto":     prod,
+                    f"Ingreso {cols_meses[-1]}": f"Q{ing_u:,.0f}",
+                    f"MB% {cols_meses[-1]}":     f"{pct_u:.0f}%" if pct_u is not None else "—",
+                    "MB% prom 3m":  f"{pct_p:.0f}%" if pct_p is not None else "—",
+                    "Δ":            d_txt,
+                    "Peso":         f"{peso:.0f}%",
+                    "_orden":       -(max(0.0, -delta) * peso),
+                })
+            filas_d.sort(key=lambda r: r["_orden"])
+            df_d = _pd.DataFrame(filas_d).drop(columns=["_orden"])
+            st.dataframe(df_d, hide_index=True, use_container_width=True,
+                         height=min(420, 60 + len(filas_d) * 35))
+
+            if culpable and max_impacto > 50:   # caida relevante ponderada
+                pr, dl, ps = culpable
+                st.info(f"💡 El descenso viene principalmente de **{pr}**: "
+                        f"su margen cayó {abs(dl):.0f}pp y representa el "
+                        f"{ps:.0f}% de la compra del cliente.")
+            elif culpable is None:
+                st.caption("Sin caídas de margen relevantes en los productos "
+                           "de este cliente.")
+
+
 def mostrar():
-    st.markdown("## 🧮 Cotizador de Precios")
-    if st.button("🏠 Inicio", key="btn_home_cot", type="secondary"):
+    st.markdown("## 📊 Dashboard — VeggiExpress")
+    # Botón de regreso al Inicio
+    if st.button("🏠 Inicio", key="btn_home_dash", type="secondary"):
         st.session_state["_nav_target"] = "🏠 Inicio"
         st.rerun()
     st.divider()
 
-    st.caption("IVA 12% · ISR 5% · Fórmulas según Listado de Productos")
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "💡 Calcular Precio",
-        "🔍 Verificar Margen",
-        "📊 Comparar Escenarios",
-        "📋 Cotización de Precios",
+    with st.spinner("Cargando datos..."):
+        todos    = leer_pedidos()
+        clientes = cargar_clientes()
+        # Cargar metas persistentes (una vez por sesión)
+        if not any(f"meta_{z}" in st.session_state for z in ZONAS_MAP):
+            metas_guardadas = leer_metas()
+            for zona, val in metas_guardadas.items():
+                st.session_state[f"meta_{zona}"] = val
+
+    cli_map  = _build_cli_map(clientes)
+    hoy      = date.today()
+    sem_act  = hoy.isocalendar()[1]
+    año_act  = hoy.year
+    periodos = _periodos(hoy)
+
+    _warning_sin_pedido(todos, cli_map, periodos)
+
+    # ── Toggle de métrica: aplica a TODOS los tabs ────────────────────────────
+    metric = st.radio("Métrica",
+                       ["Q Venta", "Q Margen Neto", "Unidades"],
+                       horizontal=True, key="dash_metric")
+    campo = {"Q Venta": "total", "Q Margen Neto": "margen_q",
+             "Unidades": "cantidad"}[metric]
+
+    st.divider()
+
+    t1, t2, t3, t4, t5, t6 = st.tabs([
+        "📈 Desempeño",
+        "📊 Evolución Semanal",
+        "🥧 Shares",
+        "📅 Comparativo",
+        "👤 CRM",
+        "💹 Margen",
     ])
+    with t1: _tab_desempeno(todos, cli_map, periodos, campo, metric)
+    with t2: _tab_evolucion(todos, clientes)
+    with t3: _tab_shares(todos, clientes)
+    with t4: _tab_comparativo(todos, clientes)
+    with t5: _tab_crm(todos, clientes, sem_act, año_act, cli_map=cli_map)
+    with t6: _tab_margen_clientes(todos)
 
-    with tab1: _tab_calcular()
-    with tab2: _tab_verificar()
-    with tab3: _tab_escenarios()
-    with tab4: _cotizacion()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NUEVAS TABS: EVOLUCIÓN SEMANAL | SHARES | COMPARATIVO ANUAL
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ZONAS_DASH y COLORES_ZONA_RUTAS vienen de config.py
+
+
+def _cli_zona_map(clientes):
+    return {c["nombre"].lower(): c["codigo_lugar"] for c in clientes}
+
+
+def _get_zona_nombre(cod):
+    for z, cs in ZONAS_DASH.items():
+        if z == "Todas": continue
+        if cod in cs: return z
+    return None
+
+
+def _filtrar_pedidos(todos, zona_sel, czmap):
+    codigos = ZONAS_DASH.get(zona_sel, [])
+    return [
+        p for p in todos
+        if not _excluido(p["cliente"])
+        and p["status"] != "Cancelado"
+        and czmap.get(p["cliente"].lower(), "") in codigos
+        and float(p["total"] or 0) > 0
+    ]
+
+
+def _val(p, var):
+    return float(p["total"] or 0) if var == "Ventas" else float(p["margen_q"] or 0)
+
+
+def _quarter_num(mes):
+    return (mes - 1) // 3 + 1
+
+
+def _quarter_label(q, año):
+    return f"Q{q}-{str(año)[2:]}"
+
+
+def _top10_resto(items_dict, n=10):
+    """Retorna {nombre: valor} con top N + 'Otros'."""
+    sorted_items = sorted(items_dict.items(), key=lambda x: x[1], reverse=True)
+    top    = dict(sorted_items[:n])
+    otros  = sum(v for _, v in sorted_items[n:])
+    if otros > 0:
+        top["Otros"] = otros
+    return top
+
+
+# ── TAB EVOLUCIÓN SEMANAL ─────────────────────────────────────────────────────
+def _tab_evolucion(todos, clientes):
+    from datetime import date, timedelta
+
+    czmap = _cli_zona_map(clientes)
+    hoy   = date.today()
+
+    c1, c2, c3 = st.columns(3)
+    var       = c1.selectbox("Variable", ["Ventas", "Margen Neto"], key="ev_var")
+    rutas_op  = list(ZONAS_DASH.keys())[1:]
+    rutas_sel = c2.multiselect("Rutas", rutas_op, default=rutas_op, key="ev_rutas")
+    semanas_n = c3.slider("Últimas N semanas", 8, 52, 26, key="ev_sem")
+
+    # Pre-generar lista ordenada de fechas (lunes de cada semana)
+    sem_act = hoy.isocalendar()[1]
+    año_act = hoy.year
+    lunes_act = date.fromisocalendar(año_act, sem_act, 1)
+    fechas = [lunes_act - timedelta(weeks=i) for i in range(semanas_n-1, -1, -1)]
+    fecha_a_idx = {f: i for i, f in enumerate(fechas)}
+
+    # Acumular valores en arrays indexados por posición
+    zona_vals = {z: [0.0]*len(fechas) for z in rutas_op}
+    for p in todos:
+        if _excluido(p["cliente"]) or p["status"] == "Cancelado": continue
+        try:
+            sem = int(float(p["semana"])); año = int(float(p["año"]))
+            if not (1 <= sem <= 53): continue
+            lunes_p = date.fromisocalendar(año, sem, 1)
+        except Exception: continue
+        if lunes_p not in fecha_a_idx: continue
+        cod  = czmap.get(p["cliente"].lower(), "")
+        zona = _get_zona_nombre(cod)
+        if zona not in zona_vals: continue
+        val = float(p.get("total") or 0) if var == "Ventas"               else float(p.get("margen_q") or 0)
+        zona_vals[zona][fecha_a_idx[lunes_p]] += val
+
+    # Fechas en formato ISO para Plotly
+    x_iso = [f.isoformat() for f in fechas]
+
+    fig = go.Figure()
+    for zona in rutas_sel:
+        vals = zona_vals.get(zona, [])
+        if not any(v > 0 for v in vals): continue
+        fig.add_trace(go.Scatter(
+            x=x_iso, y=vals, name=zona,
+            mode="lines+markers",
+            line=dict(color=COLORES_ZONA_RUTAS.get(zona, "#888"), width=2),
+            marker=dict(size=4),
+        ))
+
+    if not fig.data:
+        st.info("Sin datos para el período y rutas seleccionadas.")
+        return
+
+    fig.update_layout(
+        title=f"Evolución Semanal — {var}",
+        xaxis=dict(
+            title="", type="date",
+            dtick=7*24*3600*1000,       # 1 semana en ms
+            tickformat="%d-%b-%y",
+            tickangle=-40,
+        ),
+        yaxis_title="Q",
+        hovermode="x unified", height=430,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _tab_shares(todos, clientes):
+    from datetime import date
+
+    czmap = _cli_zona_map(clientes)
+    hoy   = date.today()
+    sem_act = hoy.isocalendar()[1]; año_act = hoy.year
+    q_act   = _quarter_num(hoy.month)
+
+    c1, c2, c3, c4 = st.columns(4)
+    var      = c1.selectbox("Variable", ["Ventas", "Margen Neto"], key="sh_var")
+    zona_sel = c2.selectbox("Zona", list(ZONAS_DASH.keys()), key="sh_zona")
+    dim      = c3.selectbox("Ver por", ["Clientes", "Productos"], key="sh_dim")
+    periodo  = c4.selectbox("Período",
+                             ["YTD", "Trimestre Actual", "Último Mes"],
+                             key="sh_per")
+
+    # Filtrar por período
+    def en_periodo(p):
+        if not p["fecha"]: return False
+        f = p["fecha"]
+        if periodo == "YTD":
+            return f.year == año_act
+        if periodo == "Trimestre Actual":
+            return f.year == año_act and _quarter_num(f.month) == q_act
+        if periodo == "Último Mes":
+            return f.year == año_act and f.month == hoy.month
+        return False
+
+    pedidos = [p for p in _filtrar_pedidos(todos, zona_sel, czmap)
+               if en_periodo(p)]
+
+    # Agregación
+    agg = {}
+    for p in pedidos:
+        key = p["cliente"] if dim == "Clientes" else p["producto"]
+        agg[key] = agg.get(key, 0) + _val(p, var)
+
+    top = _top10_resto(agg)
+
+    # ── Pie chart ─────────────────────────────────────────────────────────────
+    if top:
+        col_pie, col_tabla = st.columns([1.4, 1])
+        with col_pie:
+            fig_pie = px.pie(
+                values=list(top.values()),
+                names=list(top.keys()),
+                title=f"Share de {dim} — {periodo} · {zona_sel}",
+                hole=0.35,
+            )
+            fig_pie.update_traces(textposition="inside", textinfo="percent+label")
+            fig_pie.update_layout(height=380, showlegend=True)
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        # ── Tabla crecimiento vs año anterior ─────────────────────────────────
+        with col_tabla:
+            st.markdown(f"**Variación vs año anterior ({dim})**")
+
+            # Mismo período año anterior
+            def en_periodo_ant(p):
+                if not p["fecha"]: return False
+                f = p["fecha"]
+                if periodo == "YTD":
+                    # PYTD: mismo período del año anterior (no FY completo)
+                    try: cutoff = hoy.replace(year=año_act - 1)
+                    except: cutoff = hoy.replace(year=año_act-1, day=28)
+                    return f.year == año_act - 1 and f <= cutoff
+                if periodo == "Trimestre Actual":
+                    return f.year == año_act - 1 and _quarter_num(f.month) == q_act
+                if periodo == "Último Mes":
+                    return f.year == año_act - 1 and f.month == hoy.month
+                return False
+
+            ped_ant = [p for p in _filtrar_pedidos(todos, zona_sel, czmap)
+                       if en_periodo_ant(p)]
+            agg_ant = {}
+            for p in ped_ant:
+                key = p["cliente"] if dim == "Clientes" else p["producto"]
+                agg_ant[key] = agg_ant.get(key, 0) + _val(p, var)
+
+            rows_tabla = []
+            for nombre in list(top.keys())[:10]:
+                act = agg.get(nombre, 0)
+                ant = agg_ant.get(nombre, 0)
+                if ant > 0:
+                    var_pct = (act - ant) / ant * 100
+                    icono   = "🟢" if var_pct >= 0 else "🔴"
+                    var_txt = f"{icono} {var_pct:+.1f}%"
+                else:
+                    var_txt = "✨ Nuevo"
+                rows_tabla.append({
+                    dim[:-1]:  nombre[:22],
+                    "Actual":  f"Q{act:,.0f}",
+                    "Ant.":    f"Q{ant:,.0f}" if ant else "—",
+                    "Var.":    var_txt,
+                })
+            if rows_tabla:
+                st.dataframe(pd.DataFrame(rows_tabla), hide_index=True,
+                             use_container_width=True,
+                             column_config={
+                                 dim[:-1]:  st.column_config.TextColumn(width="medium"),
+                                 "Actual":  st.column_config.TextColumn(width="small"),
+                                 "Ant.":    st.column_config.TextColumn(width="small"),
+                                 "Var.":    st.column_config.TextColumn(width="small"),
+                             })
+    else:
+        st.info("Sin datos para el período y zona seleccionados.")
+
+
+# ── TAB COMPARATIVO ANUAL ─────────────────────────────────────────────────────
+def _tab_comparativo(todos, clientes):
+    from datetime import date
+
+    czmap   = _cli_zona_map(clientes)
+    hoy     = date.today()
+    año_act = hoy.year
+    sem_act = hoy.isocalendar()[1]
+    mes_act = hoy.month
+    q_act   = _quarter_num(mes_act)
+
+    c1, c2, c3 = st.columns(3)
+    var      = c1.selectbox("Variable", ["Ventas", "Margen Neto"], key="cp_var")
+    zona_sel = c2.selectbox("Zona", list(ZONAS_DASH.keys()), key="cp_zona")
+    dim      = c3.selectbox("Ver por", ["Clientes", "Productos"], key="cp_dim")
+
+    pedidos = _filtrar_pedidos(todos, zona_sel, czmap)
+
+    st.divider()
+
+    # ── Gráfico 1: Años — YTD vs PYTD vs PY ──────────────────────────────────
+    st.markdown("#### 📅 Comparativo por Año")
+
+    def ytd_filter(p, año):
+        if not p["fecha"]: return False
+        f = p["fecha"]
+        return f.year == año and (
+            f < hoy.replace(year=año) if año < año_act else f <= hoy)
+
+    def full_year(p, año):
+        return p["fecha"] and p["fecha"].year == año
+
+    # Agregar por nombre para top10
+    def agg_pedidos(ped_list):
+        agg = {}
+        for p in ped_list:
+            key = p["cliente"] if dim == "Clientes" else p["producto"]
+            agg[key] = agg.get(key, 0) + _val(p, var)
+        return agg
+
+    ytd_data  = agg_pedidos([p for p in pedidos if ytd_filter(p, año_act)])
+    pytd_data = agg_pedidos([p for p in pedidos if ytd_filter(p, año_act-1)])
+    py_data   = agg_pedidos([p for p in pedidos if full_year(p, año_act-1)])
+
+    top_names = list(_top10_resto(ytd_data).keys())
+
+    fig_años = go.Figure()
+    for lbl, data, color in [
+        (f"YTD {año_act}",   ytd_data,  "#2D7A2D"),
+        (f"PYTD {año_act-1}",pytd_data, "#8DC63F"),
+        (f"PY {año_act-1}",  py_data,   "#CCCCCC"),
+    ]:
+        fig_años.add_trace(go.Bar(
+            name=lbl,
+            x=top_names,
+            y=[data.get(n, 0) for n in top_names],
+            marker_color=color,
+        ))
+    fig_años.update_layout(
+        barmode="group", height=380,
+        title=f"YTD vs PYTD vs Año Anterior — {dim}",
+        xaxis_tickangle=-30,
+    )
+    st.plotly_chart(fig_años, use_container_width=True)
+
+    st.divider()
+
+    # ── Gráfico 2: Últimos 5 trimestres (apilado por cliente/producto) ────────
+    st.markdown("#### 📊 Últimos 5 Trimestres")
+
+    def _5_quarters():
+        qs = []
+        q, a = q_act, año_act
+        for _ in range(5):
+            qs.append((q, a))
+            q -= 1
+            if q < 1: q = 4; a -= 1
+        return list(reversed(qs))
+
+    quarters = _5_quarters()
+    q_labels = [_quarter_label(q, a) for q, a in quarters]
+
+    def agg_quarter(p):
+        if not p["fecha"]: return None
+        return (_quarter_num(p["fecha"].month), p["fecha"].year)
+
+    # Agregar por (nombre, quarter)
+    q_data = {}  # {nombre: {qlabel: valor}}
+    for p in pedidos:
+        qk = agg_quarter(p)
+        if not qk or qk not in quarters: continue
+        ql  = _quarter_label(*qk)
+        key = p["cliente"] if dim == "Clientes" else p["producto"]
+        if key not in q_data: q_data[key] = {}
+        q_data[key][ql] = q_data[key].get(ql, 0) + _val(p, var)
+
+    # Top 10 por total
+    totales = {k: sum(v.values()) for k, v in q_data.items()}
+    top_q   = list(_top10_resto(totales, 9).keys())
+    # Agregar "Otros"
+    otros_q = {}
+    for ql in q_labels:
+        otros_q[ql] = sum(v.get(ql, 0) for k, v in q_data.items() if k not in top_q[:-1])
+    q_data["Otros"] = otros_q
+
+    fig_q = go.Figure()
+    colores_q = px.colors.qualitative.Set2
+    for i, nombre in enumerate(top_q):
+        if nombre not in q_data: continue
+        fig_q.add_trace(go.Bar(
+            name=nombre[:20],
+            x=q_labels,
+            y=[q_data[nombre].get(ql, 0) for ql in q_labels],
+            marker_color=colores_q[i % len(colores_q)],
+        ))
+    fig_q.update_layout(
+        barmode="stack", height=400,
+        title=f"Últimos 5 Trimestres — {dim} · {zona_sel}",
+    )
+    st.plotly_chart(fig_q, use_container_width=True)
+
+    st.divider()
+
+    # ── Gráfico 3: Últimos 13 meses (apilado) — comparación interanual ──────────
+    st.markdown("#### 📆 Últimos 13 Meses")
+
+    from datetime import date as dt_
+    def _13_months():
+        meses = []
+        m, a = mes_act, año_act
+        for _ in range(13):
+            meses.append((m, a))
+            m -= 1
+            if m < 1: m = 12; a -= 1
+        return list(reversed(meses))
+
+    meses12 = _13_months()
+    MESES_N = ["","Ene","Feb","Mar","Abr","May","Jun",
+               "Jul","Ago","Sep","Oct","Nov","Dic"]
+    m_labels = [f"{MESES_N[m]}-{str(a)[2:]}" for m, a in meses12]
+
+    # Agregar por (nombre, mes)
+    m_data = {}
+    for p in pedidos:
+        if not p["fecha"]: continue
+        mk  = (p["fecha"].month, p["fecha"].year)
+        if mk not in meses12: continue
+        ml  = f"{MESES_N[mk[0]]}-{str(mk[1])[2:]}"
+        key = p["cliente"] if dim == "Clientes" else p["producto"]
+        if key not in m_data: m_data[key] = {}
+        m_data[key][ml] = m_data[key].get(ml, 0) + _val(p, var)
+
+    totales_m = {k: sum(v.values()) for k, v in m_data.items()}
+    top_m     = list(_top10_resto(totales_m, 9).keys())
+    otros_m   = {ml: sum(v.get(ml, 0) for k, v in m_data.items()
+                         if k not in top_m[:-1])
+                 for ml in m_labels}
+    m_data["Otros"] = otros_m
+
+    fig_m = go.Figure()
+    for i, nombre in enumerate(top_m):
+        if nombre not in m_data: continue
+        fig_m.add_trace(go.Bar(
+            name=nombre[:20],
+            x=m_labels,
+            y=[m_data[nombre].get(ml, 0) for ml in m_labels],
+            marker_color=colores_q[i % len(colores_q)],
+        ))
+    fig_m.update_layout(
+        barmode="stack", height=400,
+        title=f"Últimos 13 Meses — {dim} · {zona_sel}",
+    )
+    st.plotly_chart(fig_m, use_container_width=True)

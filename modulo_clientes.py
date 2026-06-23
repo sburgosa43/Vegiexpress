@@ -1,217 +1,214 @@
 """
-modulo_casa.py — Resumen financiero personal: operacion vs gastos casa.
-Registro en modulo_gastos. Aqui solo analisis.
+modulo_clientes.py — CRUD de clientes
 """
 import streamlit as st
-import pandas as pd
-from datetime import date
-import calendar
+
+def _conf(key: str, msg: str):
+    """Guarda mensaje de confirmación para mostrar en el próximo render."""
+    st.session_state[f"_conf_{key}"] = msg
+
+def _show_conf(key: str):
+    """Muestra y consume el mensaje de confirmación (desaparece en siguiente acción)."""
+    msg = st.session_state.pop(f"_conf_{key}", None)
+    if msg:
+        st.success(msg)
+
+from data_helper  import cargar_clientes
+from excel_helper import agregar_cliente, editar_cliente, eliminar_cliente
+
+TIPOS_CLIENTE = ["Restaurante", "Bar", "Hotel", "Procesador", "Cocina", "Hogar", "Otro"]
+ESTATUS_OPC   = ["Cliente", "Pendiente"]
+LUGARES       = {
+    "L01 – Rio Dulce":       "L01",
+    "L02 – Monterrico":      "L02",
+    "L03 – Antigua":         "L03",
+    "L04 – Chimaltenango":   "L04",
+    "L05 – Guatemala":       "L05",
+    "L06 – Otro":            "L06",
+    "L20 – Hogares":         "L20",
+}
+LUGAR_KEYS = list(LUGARES.keys())
+LUGAR_VALS = list(LUGARES.values())
 
 
-def _sf(v):
-    try:    return float(str(v).replace(",","").strip() or 0)
-    except: return 0.0
+def _safe_key(texto: str) -> str:
+    """Convierte un texto a key seguro para Streamlit (sin espacios ni caracteres raros)."""
+    import re
+    return re.sub(r"[^a-zA-Z0-9_]", "_", str(texto))
 
 
-MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
-            "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
+def _form_cliente(prefill: dict = None, key_prefix: str = "new") -> dict | None:
+    pf = prefill or {}
+
+    tipo_idx = 0
+    if pf.get("tipo"):
+        tipos_norm = [t.lower() for t in TIPOS_CLIENTE]
+        if pf["tipo"].lower() in tipos_norm:
+            tipo_idx = tipos_norm.index(pf["tipo"].lower())
+
+    est_idx = 1
+    if pf.get("estatus") and pf["estatus"].lower() in ["cliente","pendiente"]:
+        est_idx = 0 if pf["estatus"].lower() == "cliente" else 1
+
+    lugar_actual = pf.get("codigo_lugar", "L05")
+    lugar_idx = LUGAR_VALS.index(lugar_actual) if lugar_actual in LUGAR_VALS else 4
+
+    with st.form(key=f"form_cli_{key_prefix}"):
+        col1, col2 = st.columns(2)
+        with col1:
+            nombre    = st.text_input("Nombre *",      value=pf.get("nombre",""))
+            empresa   = st.text_input("Empresa",        value=pf.get("empresa",""))
+            direccion = st.text_input("Dirección",      value=pf.get("direccion",""))
+            ubicacion = st.text_input("Ubicación",      value=pf.get("ubicacion",""))
+            telefono  = st.text_input("Teléfono",       value=pf.get("telefono",""))
+        with col2:
+            nit     = st.text_input("NIT",              value=pf.get("nit","0"))
+            tipo    = st.selectbox("Tipo",              TIPOS_CLIENTE, index=tipo_idx)
+            estatus = st.selectbox("Estatus",           ESTATUS_OPC,   index=est_idx)
+            credito = st.number_input("Días de crédito",
+                                       min_value=0, value=int(pf.get("credito",0)), step=1)
+            lugar_sel = st.selectbox("Código Lugar", LUGAR_KEYS, index=lugar_idx)
+
+        submitted = st.form_submit_button("💾 Guardar", type="primary")
+        if submitted:
+            if not nombre.strip():
+                st.error("El nombre es obligatorio.")
+                return None
+            return {
+                "nombre":       nombre.strip(),
+                "empresa":      empresa.strip() or nombre.strip(),
+                "direccion":    direccion.strip(),
+                "ubicacion":    ubicacion.strip(),
+                "telefono":     telefono.strip(),
+                "nit":          nit.strip() or "0",
+                "tipo":         tipo,
+                "estatus":      estatus,
+                "credito":      credito,
+                "codigo_lugar": LUGARES[lugar_sel],
+            }
+    return None
 
 
-def _get_data(sem_or_mes: int, año: int, modo: str):
-    """
-    Calcula resultado operacional, gastos casa y financiero
-    para semana o mes dado.
-    """
-    from modulo_gastos import (
-        _leer_gastos, _cargar_config, _filtro_gastos_semana,
-        _finanzas_detallado, _GASTOS_VEGGI_MAP,
-        _VEGGI_RIO_PCT, _VEGGI_ANT_PCT, _VEGGI_CHIM_PCT, _VEGGI_HOG_PCT,
-    )
-    from excel_helper import leer_pedidos
-    from data_helper  import cargar_clientes as _cc
-
-    cfg        = _cargar_config()
-    campo_clis = cfg["campo_clis"]
-    gastos_all = _leer_gastos()
-    pedidos    = leer_pedidos()
-
-    # ── Zona map ──────────────────────────────────────────────────────────────
-    _clis    = _cc()
-    cli_zona = {}
-    for c in _clis:
-        for z, cods in _GASTOS_VEGGI_MAP.items():
-            if c.get("codigo_lugar","") in cods:
-                cli_zona[c["nombre"].lower().strip()] = z
-                break
-
-    # ── Filtros segun modo ────────────────────────────────────────────────────
-    if modo == "Semana":
-        filtro_ped = lambda p: p["semana"] == sem_or_mes and p["año"] == año
-        gas_op     = _filtro_gastos_semana(gastos_all, sem_or_mes, año)
-        gas_casa   = [g for g in gas_op if g["categoria"] == "Casa"]
-        gas_fin    = [g for g in gas_op if g["categoria"] == "Financiero"]
-        gas_op_neg = [g for g in gas_op if g["categoria"] not in ("Casa","Financiero","Compras")]
-    else:
-        mes = sem_or_mes
-        filtro_ped = lambda p: (p["fecha"] and
-                                p["fecha"].month == mes and
-                                p["fecha"].year  == año)
-        gas_mes = [g for g in gastos_all
-                   if g["fecha"] and g["fecha"].month == mes and g["fecha"].year == año]
-        gas_casa   = [g for g in gas_mes if g["categoria"] == "Casa"]
-        gas_fin    = [g for g in gas_mes if g["categoria"] == "Financiero"]
-        gas_op_neg = [g for g in gas_mes if g["categoria"] not in ("Casa","Financiero","Compras")]
-
-    # ── Operacion ─────────────────────────────────────────────────────────────
-    fin    = _finanzas_detallado(pedidos, campo_clis, filtro_ped, cli_zona)
-    inc    = fin["inc"];  costo_p = fin["costo"]
-    def _t(d): return sum(d.values())
-
-    def _gas_cat(lst, cat):
-        d = {}
-        for g in lst:
-            if g["categoria"] == cat:
-                d[g["subcat"]] = d.get(g["subcat"], 0) + g["monto"]
-        return sum(d.values())
-
-    gas_campo_t = _gas_cat(gas_op_neg, "Campo")
-    gas_veggi_t = _gas_cat(gas_op_neg, "Veggi")
-    gas_vrio_t  = round(gas_veggi_t * _VEGGI_RIO_PCT,  2)
-    gas_vant_t  = round(gas_veggi_t * _VEGGI_ANT_PCT,  2)
-    gas_vchim_t = round(gas_veggi_t * _VEGGI_CHIM_PCT, 2)
-    gas_vhog_t  = round(gas_veggi_t * _VEGGI_HOG_PCT,  2)
-
-    campo_mn  = _t(inc["Campo"]) - gas_campo_t
-    vrio_mn   = _t(inc["Veggi"]["Rio"])          - _t(costo_p["Veggi"]["Rio"])          - gas_vrio_t
-    vant_mn   = _t(inc["Veggi"]["Antigua"])      - _t(costo_p["Veggi"]["Antigua"])      - gas_vant_t
-    vchim_mn  = _t(inc["Veggi"]["Chimaltenango"])- _t(costo_p["Veggi"]["Chimaltenango"])- gas_vchim_t
-    vh_mn     = _t(inc["Interno"])               - _t(costo_p["Interno"])               - gas_vhog_t
-    total_op  = campo_mn + vrio_mn + vant_mn + vchim_mn + vh_mn
-
-    op_detail = {
-        "Campo":               campo_mn,
-        "Veggi Rio":           vrio_mn,
-        "Veggi Antigua":       vant_mn,
-        "Veggi Chimaltenango": vchim_mn,
-        "Veggi Hogares":       vh_mn,
-    }
-
-    # ── Casa ──────────────────────────────────────────────────────────────────
-    casa_d = {}
-    for g in gas_casa:
-        casa_d[g["subcat"]] = casa_d.get(g["subcat"], 0) + g["monto"]
-    total_casa = sum(casa_d.values())
-
-    # ── Financiero ────────────────────────────────────────────────────────────
-    fin_d = {}
-    for g in gas_fin:
-        fin_d[g["subcat"]] = fin_d.get(g["subcat"], 0) + g["monto"]
-    total_fin = sum(fin_d.values())
-
-    return {
-        "op_detail":  op_detail,
-        "total_op":   total_op,
-        "casa_d":     casa_d,
-        "total_casa": total_casa,
-        "fin_d":      fin_d,
-        "total_fin":  total_fin,
-        "disponible": total_op - total_casa - total_fin,
-        "budgets":    cfg["budgets"],
-    }
+def _cargar_row_map():
+    """Retorna {nombre: row_num} desde Google Sheets."""
+    from data_helper import cargar_clientes
+    return {c["nombre"]: c["row_num"] for c in cargar_clientes()}
 
 
 def mostrar():
-    st.markdown("## 🏡 Casa / Personal")
-    if st.button("Inicio", key="btn_home_casa", type="secondary"):
+    _show_conf("cliente_new")
+    _show_conf("cliente_upd")
+    st.markdown("## 👥 Clientes")
+    # Botón de regreso al Inicio
+    if st.button("🏠 Inicio", key="btn_home_cli", type="secondary"):
         st.session_state["_nav_target"] = "🏠 Inicio"
         st.rerun()
     st.divider()
 
-    hoy = date.today()
 
-    # ── Selector de modo y periodo ────────────────────────────────────────────
-    modo = st.radio("Vista", ["Semana","Mes"], horizontal=True, key="casa_modo")
+    clientes = cargar_clientes()
+    tab_lista, tab_nuevo = st.tabs(["📋 Lista de clientes", "➕ Nuevo cliente"])
 
-    if modo == "Semana":
-        c1, c2 = st.columns(2)
-        periodo = c1.number_input("Semana", 1, 53,
-                                   hoy.isocalendar()[1], key="casa_sem")
-        año     = c2.number_input("Año", 2020, 2030, hoy.year, key="casa_año_s")
-        titulo  = f"Semana {periodo} / {año}"
-    else:
-        c1, c2 = st.columns(2)
-        periodo = c1.selectbox("Mes", list(range(1,13)),
-                                index=hoy.month-1,
-                                format_func=lambda m: MESES_ES[m-1],
-                                key="casa_mes")
-        año     = c2.number_input("Año", 2020, 2030, hoy.year, key="casa_año_m")
-        titulo  = f"{MESES_ES[periodo-1]} {año}"
-
-    with st.spinner("Calculando..."):
-        data = _get_data(periodo, año, modo)
-
-    st.markdown(f"### {titulo}")
-
-    # ── Top KPIs ──────────────────────────────────────────────────────────────
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Resultado Op.",    f"Q{data['total_op']:,.0f}")
-    k2.metric("Gastos Casa",      f"Q{data['total_casa']:,.0f}")
-    k3.metric("Compromisos Fin.", f"Q{data['total_fin']:,.0f}")
-    disp = data["disponible"]
-    k4.metric("Disponible",       f"Q{disp:,.0f}",
-              delta="✅" if disp >= 0 else "⚠️ Deficit",
-              delta_color="normal" if disp >= 0 else "inverse")
-    st.divider()
-
-    # ── Resultado Operacion ───────────────────────────────────────────────────
-    with st.expander("Resultado Operación", expanded=True):
-        rows_op = [{"Area": k, "Margen Neto": f"Q{v:,.0f}"}
-                   for k, v in data["op_detail"].items()]
-        rows_op.append({"Area": "── TOTAL", "Margen Neto": f"Q{data['total_op']:,.0f}"})
-        st.dataframe(pd.DataFrame(rows_op), hide_index=True, use_container_width=True)
-
-    # ── Gastos Casa ───────────────────────────────────────────────────────────
-    with st.expander("Gastos Personales (Casa)", expanded=True):
-        if data["casa_d"]:
-            budgets = data["budgets"]
-            rows_casa = []
-            for sub, monto in sorted(data["casa_d"].items(), key=lambda x: -x[1]):
-                bud = budgets.get(sub, 0)
-                rows_casa.append({
-                    "Categoria":    sub,
-                    "Gastado":      f"Q{monto:,.0f}",
-                    "Presupuesto":  f"Q{bud:,.0f}" if bud else "—",
-                    "Diferencia":   f"Q{bud-monto:,.0f}" if bud else "—",
-                })
-            rows_casa.append({
-                "Categoria":   "── TOTAL",
-                "Gastado":     f"Q{data['total_casa']:,.0f}",
-                "Presupuesto": f"Q{sum(budgets.values()):,.0f}" if budgets else "—",
-                "Diferencia":  f"Q{sum(budgets.values())-data['total_casa']:,.0f}" if budgets else "—",
-            })
-            st.dataframe(pd.DataFrame(rows_casa), hide_index=True, use_container_width=True)
+    # ── TAB: LISTA ────────────────────────────────────────────────────────────
+    with tab_lista:
+        if not clientes:
+            st.info("No hay clientes registrados.")
         else:
-            st.info("Sin gastos Casa registrados en este periodo.")
+            busqueda = st.text_input("🔍 Buscar", placeholder="Nombre, empresa o zona...")
+            lista_f  = (
+                [c for c in clientes
+                 if busqueda.lower() in c["nombre"].lower()
+                 or busqueda.lower() in c["empresa"].lower()
+                 or busqueda.lower() in c["codigo_lugar"].lower()]
+                if busqueda else clientes
+            )
+            st.markdown(f"**{len(lista_f)} clientes**")
+            st.divider()
 
-    # ── Compromisos Financieros ───────────────────────────────────────────────
-    with st.expander("Compromisos Financieros", expanded=True):
-        if data["fin_d"]:
-            rows_fin = [{"Concepto": k, "Monto": f"Q{v:,.0f}"}
-                        for k, v in sorted(data["fin_d"].items(), key=lambda x: -x[1])]
-            rows_fin.append({"Concepto": "── TOTAL", "Monto": f"Q{data['total_fin']:,.0f}"})
-            st.dataframe(pd.DataFrame(rows_fin), hide_index=True, use_container_width=True)
-        else:
-            st.info("Sin compromisos financieros en este periodo.")
+            # Cargar row_map una sola vez para toda la lista
+            if "cli_row_map" not in st.session_state:
+                st.session_state.cli_row_map = _cargar_row_map()
+            row_map = st.session_state.cli_row_map
 
-    # ── Resumen final ─────────────────────────────────────────────────────────
-    st.divider()
-    st.markdown("#### Resumen")
-    res_rows = [
-        {"Concepto": "Resultado Operacional",    "Monto": f"Q{data['total_op']:,.0f}"},
-        {"Concepto": "(-) Gastos Casa",          "Monto": f"Q{data['total_casa']:,.0f}"},
-        {"Concepto": "(-) Compromisos Financ.",  "Monto": f"Q{data['total_fin']:,.0f}"},
-        {"Concepto": "━━ Disponible",            "Monto": f"Q{data['disponible']:,.0f}"},
-    ]
-    st.dataframe(pd.DataFrame(res_rows), hide_index=True, use_container_width=True)
-    if data["disponible"] < 0:
-        st.error(f"⚠️ Déficit de Q{abs(data['disponible']):,.0f} — los gastos superan el resultado operacional.")
+            for idx, c in enumerate(lista_f):
+                # Key única basada en índice + código del cliente
+                uid      = f"{idx}_{_safe_key(c.get('codigo', '') or c['nombre'])}"
+                row_num  = row_map.get(c["nombre"])
+                badge    = "🟢" if c["activo"] else "🟡"
+                modo_key = f"modo_cli_{uid}"
+                if modo_key not in st.session_state:
+                    st.session_state[modo_key] = "ver"
+
+                with st.expander(
+                    f"{badge} **{c['nombre']}** · {c['empresa']} · "
+                    f"{c['codigo_lugar']} · {c.get('codigo','')}",
+                    expanded=False,
+                ):
+                    st.caption(
+                        f"📍 {c['direccion']} · 🏷️ {c['tipo']} · "
+                        f"💳 NIT: {c['nit']} · 📅 Crédito: {c['credito']} días"
+                    )
+
+                    col_e, col_d = st.columns(2)
+                    with col_e:
+                        if st.button("✏️ Editar", key=f"btn_e_{uid}"):
+                            st.session_state[modo_key] = "editar"
+                            st.rerun()
+                    with col_d:
+                        if st.button("🗑️ Eliminar", key=f"btn_d_{uid}",
+                                     type="secondary"):
+                            st.session_state[modo_key] = "confirmar"
+                            st.rerun()
+
+                    # ── Formulario de edición ─────────────────────────────────
+                    if st.session_state[modo_key] == "editar":
+                        st.divider()
+                        if not row_num:
+                            st.warning("No se encontró la fila en el Excel. "
+                                       "Recargá la página e intentá de nuevo.")
+                        else:
+                            datos = _form_cliente(prefill=c, key_prefix=f"e_{uid}")
+                            if datos:
+                                with st.spinner("Guardando..."):
+                                    editar_cliente(row_num, datos)
+                                    st.session_state.cli_row_map = _cargar_row_map()
+                                _conf("cliente_upd", "✅ Cliente actualizado correctamente.")
+                                st.session_state[modo_key] = "ver"
+                                st.rerun()
+
+                    # ── Confirmación de borrado ───────────────────────────────
+                    if st.session_state[modo_key] == "confirmar":
+                        st.error(
+                            f"⚠️ ¿Eliminar a **{c['nombre']}**? "
+                            "Esta acción no se puede deshacer."
+                        )
+                        cc1, cc2 = st.columns(2)
+                        with cc1:
+                            if st.button("✅ Sí, eliminar",
+                                         key=f"btn_yes_{uid}", type="primary"):
+                                if not row_num:
+                                    st.error("Fila no encontrada.")
+                                else:
+                                    with st.spinner("Eliminando..."):
+                                        eliminar_cliente(row_num)
+                                        st.session_state.cli_row_map = _cargar_row_map()
+                                    st.success("Cliente eliminado.")
+                                    st.session_state[modo_key] = "ver"
+                                    st.rerun()
+                        with cc2:
+                            if st.button("❌ Cancelar", key=f"btn_no_{uid}"):
+                                st.session_state[modo_key] = "ver"
+                                st.rerun()
+
+    # ── TAB: NUEVO CLIENTE ────────────────────────────────────────────────────
+    with tab_nuevo:
+        st.markdown("#### Agregar nuevo cliente")
+        datos = _form_cliente(key_prefix="nuevo")
+        if datos:
+            with st.spinner("Guardando..."):
+                codigo = agregar_cliente(datos)
+                # Refrescar el row_map
+                if "cli_row_map" in st.session_state:
+                    del st.session_state["cli_row_map"]
+            _conf("cliente_new", f"✅ Cliente guardado — {datos['nombre']} creado con código **{codigo}**."
+            )

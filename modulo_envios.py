@@ -1,326 +1,536 @@
 """
-modulo_datos.py — Sábana de datos completa.
-4 tipos: Pedidos | Gastos | Clientes | Productos
-Filtros + totales al pie + descarga CSV/Excel + sync a Sheet.
+modulo_envios.py — Envíos y Facturación Semana Actual
+Tres zonas: Antigua & Chimal | Guatemala & Santiago | Rio
 """
 import streamlit as st
 import pandas as pd
-import io
+import base64
+import streamlit.components.v1 as components
 from datetime import date
+from excel_helper import (leer_pedidos, cancelar_pedido,
+                          restaurar_pedido, guardar_cambios_precio)
+from data_helper  import cargar_clientes
+from pdf_helper   import generar_envio, nombre_archivo
+from config       import (ZONAS_MAP as _ZONAS_CFG, excluido_dashboard, es_hogar,
+                           calcular_liquido)
 
-MESES = {1:"Ene",2:"Feb",3:"Mar",4:"Abr",5:"May",6:"Jun",
-         7:"Jul",8:"Ago",9:"Sep",10:"Oct",11:"Nov",12:"Dic"}
+ZONAS_ENVIO = _ZONAS_CFG   # Fuente única: config.py
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def _fq(v): return f"Q{float(v or 0):,.2f}"
-
-def _df_to_excel(df: pd.DataFrame) -> bytes:
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as w:
-        df.to_excel(w, index=False, sheet_name="Datos")
-    return buf.getvalue()
-
-def _selectbox_all(label, opciones, key):
-    return st.selectbox(label, ["Todos"] + sorted(set(str(o) for o in opciones if o)),
-                        key=key)
-
-# ── PEDIDOS ───────────────────────────────────────────────────────────────────
-def _sabana_pedidos():
-    from excel_helper import leer_pedidos
-    from data_helper  import cargar_clientes
-    from config       import calcular_liquido, ZONAS_MAP
-
-    todos    = leer_pedidos()
-    clientes = {c["nombre"].lower().strip(): c for c in cargar_clientes()}
-
-    # Zona map inversa: codigo → nombre zona
-    cod_zona = {}
-    for zona, cods in ZONAS_MAP.items():
-        for c in cods: cod_zona[c] = zona
-
-    # ── Filtros ────────────────────────────────────────────────────────────────
-    f1, f2, f3, f4, f5, f6 = st.columns(6)
-    años_disp  = sorted({p["año"]  for p in todos}, reverse=True)
-    meses_disp = sorted({p["fecha"].month for p in todos if p["fecha"]})
-    año_sel    = f1.selectbox("Año",    años_disp,  key="dat_año")
-    mes_sel    = f2.selectbox("Mes", ["Todos"] + [MESES[m] for m in meses_disp],
-                               key="dat_mes")
-    cli_sel    = _selectbox_all("Cliente", [p["cliente"] for p in todos], f3.empty().__class__)
-    cli_sel    = f3.selectbox("Cliente", ["Todos"] + sorted({p["cliente"] for p in todos}),
-                               key="dat_cli")
-    zona_sel   = f4.selectbox("Zona",   ["Todas"] + list(ZONAS_MAP.keys()), key="dat_zona")
-    prod_sel   = f5.selectbox("Producto",["Todos"] + sorted({p["producto"] for p in todos}),
-                               key="dat_prod")
-    status_sel = f6.selectbox("Status", ["Todos","Pendiente","Entregado","Cancelado"],
-                               key="dat_status")
-
-    mes_num = next((k for k,v in MESES.items() if v == mes_sel), None)
-
-    # ── Filtrar ────────────────────────────────────────────────────────────────
-    filas = []
-    for p in todos:
-        if p["año"] != año_sel: continue
-        if mes_num and (not p["fecha"] or p["fecha"].month != mes_num): continue
-        if cli_sel != "Todos" and p["cliente"] != cli_sel: continue
-        if prod_sel != "Todos" and p["producto"] != prod_sel: continue
-        if status_sel != "Todos" and p["status"] != status_sel: continue
-
-        cli_d   = clientes.get(p["cliente"].lower().strip(), {})
-        cod     = cli_d.get("codigo_lugar","")
-        zona    = cod_zona.get(cod, "—")
-        if zona_sel != "Todas" and zona != zona_sel: continue
-
-        grupo   = cli_d.get("grupo","")
-        precio  = float(p.get("precio") or 0)
-        costo   = float(p.get("costo")  or 0)
-        cant    = float(p.get("cantidad") or 0)
-        total   = float(p.get("total")   or 0)
-        mb      = round((precio - costo) * cant, 2)
-        mn      = float(p.get("margen_q") or 0)
-        base_iv = round(total / 1.12, 2) if total else 0
-        liq, isr, desc = calcular_liquido(p["cliente"], total)
-
-        filas.append({
-            "Fecha":     p["fecha"].strftime("%d/%m/%Y") if p["fecha"] else "",
-            "Sem":       p["semana"],
-            "Mes":       MESES.get(p["fecha"].month,"") if p["fecha"] else "",
-            "Cliente":   p["cliente"],
-            "Zona":      zona,
-            "Grupo":     grupo,
-            "Producto":  p["producto"],
-            "Proveedor": p.get("proveedor",""),
-            "Cant":      cant,
-            "Precio Q":  precio,
-            "Costo Q":   costo,
-            "Total Q":   total,
-            "MB Q":      mb,
-            "MN Q":      mn,
-            "Base IVA":  base_iv,
-            "ISR Q":     isr,
-            "Líquido Q": liq,
-            "Status":    p["status"],
-        })
-
-    if not filas:
-        st.info("Sin datos para los filtros seleccionados.")
-        return pd.DataFrame()
-
-    df = pd.DataFrame(filas)
-
-    # Totales al pie
-    num_cols = ["Cant","Precio Q","Costo Q","Total Q","MB Q","MN Q",
-                "Base IVA","ISR Q","Líquido Q"]
-    tot = {c: df[c].sum() for c in num_cols}
-    st.dataframe(df, hide_index=True, use_container_width=True,
-                 height=min(600, 60 + len(df)*35))
-
-    st.markdown(
-        f"<div style='background:#e8f5e9;border-radius:6px;padding:8px 12px;"
-        f"font-size:.82rem'>"
-        f"<b>{len(df)} líneas</b> · "
-        f"Ingreso: <b>{_fq(tot['Total Q'])}</b> · "
-        f"MB: <b>{_fq(tot['MB Q'])}</b> · "
-        f"MN: <b>{_fq(tot['MN Q'])}</b> · "
-        f"Líquido: <b>{_fq(tot['Líquido Q'])}</b>"
-        f"</div>", unsafe_allow_html=True)
-    return df
-
-
-# ── GASTOS ────────────────────────────────────────────────────────────────────
-def _sabana_gastos():
-    from modulo_gastos import _leer_gastos
-    gastos = _leer_gastos()
-
-    f1,f2,f3,f4,f5 = st.columns(5)
-    años   = sorted({g["fecha"].year for g in gastos if g["fecha"]}, reverse=True)
-    año_s  = f1.selectbox("Año", años, key="dg_año")
-    mes_s  = f2.selectbox("Mes", ["Todos"]+[MESES[m] for m in range(1,13)], key="dg_mes")
-    cat_s  = f3.selectbox("Categoría",
-                          ["Todas"]+sorted({g["categoria"] for g in gastos}), key="dg_cat")
-    area_s = f4.selectbox("Área",
-                          ["Todas"]+sorted({g["area"] for g in gastos if g["area"]}),
-                          key="dg_area")
-    prov_s = f5.selectbox("Proveedor",
-                          ["Todos"]+sorted({g["proveedor"] for g in gastos if g["proveedor"]}),
-                          key="dg_prov")
-
-    mes_num = next((k for k,v in MESES.items() if v == mes_s), None)
-    filas = []
-    for g in gastos:
-        if not g["fecha"] or g["fecha"].year != año_s: continue
-        if mes_num and g["fecha"].month != mes_num: continue
-        if cat_s  != "Todas"  and g["categoria"]  != cat_s:  continue
-        if area_s != "Todas"  and g["area"]        != area_s: continue
-        if prov_s != "Todos"  and g["proveedor"]   != prov_s: continue
-        filas.append({
-            "Fecha":       g["fecha"].strftime("%d/%m/%Y"),
-            "Sem":         g.get("semana",""),
-            "Mes":         MESES.get(g["fecha"].month,""),
-            "Categoría":   g["categoria"],
-            "SubCat":      g["subcat"],
-            "Área":        g["area"],
-            "Frecuencia":  g.get("frecuencia",""),
-            "Proveedor":   g["proveedor"],
-            "Concepto":    g["concepto"],
-            "Monto Q":     float(g["monto"] or 0),
-        })
-
-    if not filas:
-        st.info("Sin gastos para los filtros."); return pd.DataFrame()
-
-    df = pd.DataFrame(filas)
-    st.dataframe(df, hide_index=True, use_container_width=True,
-                 height=min(600, 60+len(df)*35))
-    tot = df["Monto Q"].sum()
-    st.markdown(
-        f"<div style='background:#e8f5e9;border-radius:6px;padding:8px 12px;"
-        f"font-size:.82rem'><b>{len(df)} registros</b> · "
-        f"Total: <b>{_fq(tot)}</b></div>", unsafe_allow_html=True)
-    return df
-
-
-# ── CLIENTES ──────────────────────────────────────────────────────────────────
-def _sabana_clientes():
-    from data_helper import cargar_clientes
-    from config      import ZONAS_MAP
-
-    cod_zona = {}
-    for zona, cods in ZONAS_MAP.items():
-        for c in cods: cod_zona[c] = zona
-
-    clientes = cargar_clientes()
-    f1,f2,f3,f4 = st.columns(4)
-    zona_s = f1.selectbox("Zona",   ["Todas"]+list(ZONAS_MAP.keys()), key="dc_zona")
-    tipo_s = f2.selectbox("Tipo",   ["Todos"]+sorted({c["tipo"] for c in clientes}),
-                           key="dc_tipo")
-    est_s  = f3.selectbox("Estatus",["Todos","Cliente","Pendiente","Inactivo"],
-                           key="dc_est")
-    grp_s  = f4.selectbox("Grupo",  ["Todos"]+sorted({c.get("grupo","") for c in clientes
-                                                       if c.get("grupo","")}), key="dc_grp")
-    filas = []
-    for c in clientes:
-        cod  = c.get("codigo_lugar","")
-        zona = cod_zona.get(cod,"—")
-        if zona_s != "Todas"  and zona != zona_s: continue
-        if tipo_s != "Todos"  and c["tipo"] != tipo_s: continue
-        if est_s  != "Todos"  and c["estatus"] != est_s: continue
-        if grp_s  != "Todos"  and c.get("grupo","") != grp_s: continue
-        filas.append({
-            "Nombre":   c["nombre"],
-            "Tipo":     c["tipo"],
-            "Zona":     zona,
-            "Código":   cod,
-            "Grupo":    c.get("grupo",""),
-            "Estatus":  c["estatus"],
-            "Empresa":  c.get("empresa",""),
-            "NIT":      c.get("nit",""),
-            "Crédito":  "Sí" if c.get("credito") else "No",
-        })
-    if not filas:
-        st.info("Sin clientes para los filtros."); return pd.DataFrame()
-    df = pd.DataFrame(filas)
-    st.dataframe(df, hide_index=True, use_container_width=True,
-                 height=min(600, 60+len(df)*35))
-    st.caption(f"{len(df)} clientes")
-    return df
-
-
-# ── PRODUCTOS ─────────────────────────────────────────────────────────────────
-def _sabana_productos():
-    from excel_helper import leer_productos_con_fila
-    prods = leer_productos_con_fila(es_antigua=False)
-    f1,f2,f3 = st.columns(3)
-    seg_s  = f1.selectbox("Segmento", ["Todos"]+sorted({p.get("segmento","")
-                          for p in prods if p.get("segmento","")}), key="dp_seg")
-    prov_s = f2.selectbox("Proveedor",["Todos"]+sorted({p.get("proveedor","")
-                          for p in prods if p.get("proveedor","")}), key="dp_prov")
-    txt_s  = f3.text_input("Buscar nombre", key="dp_txt")
-
-    filas = []
-    for p in prods:
-        if seg_s  != "Todos" and p.get("segmento","") != seg_s:  continue
-        if prov_s != "Todos" and p.get("proveedor","") != prov_s: continue
-        if txt_s  and txt_s.lower() not in p["nombre"].lower(): continue
-        filas.append({
-            "Producto":  p["nombre"],
-            "Segmento":  p.get("segmento",""),
-            "Unidad":    p.get("unidad",""),
-            "Costo Q":   float(p.get("costo") or 0),
-            "Precio Q":  float(p.get("precio") or 0),
-            "Proveedor": p.get("proveedor",""),
-            "Parent":    p.get("parent",""),
-            "Tipo":      p.get("tipo_producto",""),
-        })
-    if not filas:
-        st.info("Sin productos para los filtros."); return pd.DataFrame()
-    df = pd.DataFrame(filas)
-    st.dataframe(df, hide_index=True, use_container_width=True,
-                 height=min(600, 60+len(df)*35))
-    st.caption(f"{len(df)} productos")
-    return df
-
-
-# ── SYNC AL SHEET ─────────────────────────────────────────────────────────────
-def _sync_sheet(df: pd.DataFrame, hoja: str = "datoscompletos"):
-    """Sobreescribe la hoja DatosCompletos con el DataFrame actual."""
-    from gsheets import ws as _ws
+@st.cache_data(ttl=300)
+def _get_cli_map():
     try:
-        sheet = _ws(hoja)
-        sheet.clear()
-        header = df.columns.tolist()
-        rows   = [header] + [[str(v) for v in row] for row in df.values]
-        sheet.update("A1", rows)
-        return True, len(df)
-    except Exception as e:
-        return False, str(e)
+        from data_helper import cargar_clientes
+        return {c["nombre"].lower().strip(): c for c in cargar_clientes()}
+    except Exception:
+        return {}
+
+def _zona_de(codigo: str) -> str | None:
+    for zona, codigos in ZONAS_ENVIO.items():
+        if codigo in codigos:
+            return zona
+    return None
+
+def _get_cli(nombre: str, mapa_exact: dict, mapa_lower: dict) -> dict:
+    return mapa_exact.get(nombre) or mapa_lower.get(nombre.lower(), {})
+
+def _detectar_zona(l0: dict, mapa_exact: dict, mapa_lower: dict) -> str | None:
+    cli   = _get_cli(l0["cliente"], mapa_exact, mapa_lower)
+    zona  = _zona_de(cli.get("codigo_lugar", ""))
+    if zona: return zona
+    return None  # Sin zona definida — revisar código_lugar del cliente
+
+def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
+    l0        = lineas[0]
+    cancelado = all(l["status"] == "Cancelado" for l in lineas)
+    fecha_ped = l0["fecha"] if l0["fecha"] else date.today()
+    total_orig = sum(l["total"] or 0 for l in lineas)
+
+    # Margen Bruto: (precio - costo) x cantidad  |  Margen Neto: formula margen_q
+    mb_ped = sum((float(l.get("precio") or 0) - float(l.get("costo") or 0))
+                 * float(l.get("cantidad") or 0) for l in lineas)
+    mn_ped = sum(float(l.get("margen_q") or 0) for l in lineas)
+
+    # Desglose fiscal sobre el total ORIGINAL (referencia de factura)
+    # Mismas reglas que Facturacion Mensual: calcular_liquido maneja ISR/descuento
+    liq_ped, isr_ped, desc_ped = calcular_liquido(l0["cliente"], total_orig)
+    base_iva = round(total_orig / 1.12, 2)
+
+    with st.expander(
+        f"{'🔴' if cancelado else '🟢'}  **{l0['cliente']}**  ·  "
+        f"{fecha_ped.strftime('%d/%m/%Y')}  ·  "
+        f"{len(lineas)} productos  ·  Q{total_orig:,.2f}",
+        expanded=False,
+    ):
+        extra_txt = ""
+        if isr_ped > 0:
+            extra_txt = f"ISR: Q{isr_ped:,.2f}  ·  "
+        elif desc_ped > 0:
+            extra_txt = f"Descuento: Q{desc_ped:,.2f}  ·  "
+        _nit = (cliente_info or {}).get("nit") or "—"
+        st.markdown(
+            f"<div style='background:#2D7A2D;color:white;padding:6px 10px;"
+            f"border-radius:4px;font-size:.82rem;font-weight:bold;"
+            f"margin:0 0 8px 0'>"
+            f"NIT: {_nit}  ·  Total: Q{total_orig:,.2f}  ·  Base IVA: Q{base_iva:,.2f}"
+            f"<br><span style='font-weight:normal;font-size:.78rem;opacity:.95'>"
+            f"{extra_txt}"
+            f"Líquido: Q{liq_ped:,.2f}  ·  "
+            f"MB: Q{mb_ped:,.0f}  ·  MN: Q{mn_ped:,.0f}</span></div>",
+            unsafe_allow_html=True)
+
+        st.caption("Ajustá precios si hay descuentos. "
+                   "'Guardar' actualiza el Excel y registra en historial.")
+
+        hdr = st.columns([4, 1.2, 1.8, 1.8])
+        hdr[0].markdown("**Producto**"); hdr[1].markdown("**Cant.**")
+        hdr[2].markdown("**Precio (Q)**"); hdr[3].markdown("**Subtotal**")
+
+        lineas_pdf = []; cambios = []; hay_cambios = False; total_ed = 0.0
+
+        for linea in sorted(lineas, key=lambda x: x["producto"]):
+            k         = f"env_{sufijo}_{unico}_{linea['row_num']}"
+            precio_xl = float(linea.get("precio_excel") or linea.get("precio") or 0)
+            if k not in st.session_state:
+                st.session_state[k] = precio_xl
+
+            r = st.columns([4, 1.2, 1.8, 1.8])
+            r[0].write(linea["producto"]); r[1].write(f"{linea['cantidad']}")
+            precio_ed = r[2].number_input("", min_value=0.0,
+                value=float(st.session_state[k]), step=0.25, key=k,
+                label_visibility="collapsed")
+            diff = precio_ed - precio_xl
+            if abs(diff) > 0.001:
+                hay_cambios = True
+                r[2].caption(f"{'▲' if diff>0 else '▼'} Q{abs(diff):.2f}")
+            sub = float(linea["cantidad"] or 0) * precio_ed
+            r[3].markdown(f"<div style='padding-top:8px;font-weight:bold'>"
+                          f"Q{sub:,.2f}</div>", unsafe_allow_html=True)
+            total_ed += sub
+            lineas_pdf.append({**linea, "precio": precio_ed, "total": sub})
+            cambios.append({"row_num": linea["row_num"], "cliente": linea["cliente"],
+                            "producto": linea["producto"], "precio_anterior": precio_xl,
+                            "precio_nuevo": precio_ed, "semana": linea["semana"],
+                            "año": linea["año"], "unico": unico})
+
+        st.markdown(f"<div style='text-align:right;font-weight:bold;margin:4px 0'>"
+                    f"Total: Q{total_ed:,.2f}</div>", unsafe_allow_html=True)
+        if hay_cambios:
+            st.caption("⚠️ Hay precios modificados.")
+        st.divider()
+
+        col_save, col_pdf, col_rem, col_acc = st.columns(4)
+        with col_save:
+            if st.button("💾 Guardar cambios" if hay_cambios else "✅ Sin cambios",
+                         key=f"env_save_{sufijo}_{unico}",
+                         type="primary" if hay_cambios else "secondary",
+                         disabled=not hay_cambios):
+                with st.spinner("Guardando..."):
+                    n = guardar_cambios_precio(cambios)
+                for linea in lineas:
+                    st.session_state.pop(f"env_{sufijo}_{unico}_{linea['row_num']}", None)
+                st.success(f"✅ {n} precio(s) guardado(s)."); st.rerun()
+
+        with col_pdf:
+            try:
+                pdf_bytes = generar_envio(cliente=cliente_info, fecha=fecha_ped,
+                                          lineas=lineas_pdf, unico=unico)
+                st.download_button("📄 Descargar PDF", data=pdf_bytes,
+                    file_name=nombre_archivo(l0["cliente"], fecha_ped),
+                    mime="application/pdf",
+                    key=f"env_pdf_{sufijo}_{unico}", type="primary")
+            except Exception as e:
+                st.error(f"Error PDF: {e}")
+
+        with col_rem:
+            try:
+                from pdf_helper import (generar_remision as _gen_rem,
+                                        boton_imprimir_html as _btn_imp)
+                _lr = [{"producto": l["producto"], "unidad": l.get("unidad",""),
+                        "cantidad": float(l.get("cantidad") or 0),
+                        "total": round(float(l.get("precio") or 0)*float(l.get("cantidad") or 0),2)}
+                       for l in lineas_pdf]
+                _rb = _gen_rem(l0["cliente"], _lr, int(l0["semana"]),
+                               int(l0["año"]), fecha_ped.strftime("%d/%m/%Y"))
+                components.html(
+                    _btn_imp(_rb, f"env_{sufijo}_{unico}", "🖨️ Remisión"),
+                    height=44)
+            except Exception as _e:
+                col_rem.caption("Rem: " + str(_e))
+
+        with col_acc:
+            if not cancelado:
+                if st.button("🔴 Cancelar", key=f"env_can_{sufijo}_{unico}",
+                             type="secondary"):
+                    with st.spinner(): cancelar_pedido(unico)
+                    st.success("Cancelado."); st.rerun()
+            else:
+                if st.button("🟢 Restaurar", key=f"env_res_{sufijo}_{unico}",
+                             type="secondary"):
+                    with st.spinner(): restaurar_pedido(unico)
+                    st.success("Restaurado."); st.rerun()
 
 
-# ── MOSTRAR ────────────────────────────────────────────────────────────────────
+AREAS_LIST = {
+    "🌊 Río":     lambda cli, z: z in ("L01", "L02"),
+    "🏙️ Guate":  lambda cli, z: z in ("L05", "L06") and z != "L20",
+    "🔖 Antigua": lambda cli, z: z == "L03",
+    "🔖 Chimal":  lambda cli, z: z == "L04",
+    "🏠 Hogares": lambda cli, z: z == "L20" or "veggi hogares" in cli.lower(),
+}
+
+
+def _tab_listados(todos, semana, año):
+    from pdf_helper import generar_listado_checklist
+
+    st.markdown("### 📋 Listado de Empaque")
+    st.caption("Semana actual — imprimible como checklist de preparación")
+
+    # Cargar mapa cliente → zona
+    cli_list = cargar_clientes()
+    cli_zona = {c["nombre"].lower(): c["codigo_lugar"] for c in cli_list}
+
+    # Filtro de área
+    areas_sel = st.multiselect(
+        "Seleccioná área(s):",
+        list(AREAS_LIST.keys()),
+        default=list(AREAS_LIST.keys()),
+        key="list_areas"
+    )
+    if not areas_sel:
+        st.info("Seleccioná al menos un área.")
+        return
+
+    # Filtrar pedidos de la semana actual por áreas seleccionadas
+    def en_area(p):
+        zona = cli_zona.get(p["cliente"].lower(), "")
+        return any(AREAS_LIST[a](p["cliente"], zona) for a in areas_sel)
+
+    pedidos = [
+        p for p in todos
+        if p["semana"] == semana and p["año"] == año
+        and p["status"] != "Cancelado"
+        and float(p.get("cantidad") or 0) > 0
+        and en_area(p)
+    ]
+
+    if not pedidos:
+        st.warning("Sin pedidos para las áreas seleccionadas.")
+        return
+
+    # Agrupar por cliente → lista de productos (ordenados alfabéticamente)
+    clientes_dict = {}
+    for p in pedidos:
+        cli = p["cliente"]
+        if cli not in clientes_dict:
+            clientes_dict[cli] = []
+        clientes_dict[cli].append({
+            "cliente":   cli,
+            "producto":  p["producto"],
+            "unidad":    p.get("unidad",""),
+            "cantidad":  float(p.get("cantidad") or 0),
+        })
+    # Ordenar productos dentro de cada cliente
+    for cli in clientes_dict:
+        clientes_dict[cli].sort(key=lambda x: x["producto"])
+
+    clientes_ord = sorted(clientes_dict.keys())
+    total = sum(len(v) for v in clientes_dict.values())
+    st.markdown(f"**{len(clientes_ord)} cliente(s) · {total} línea(s)**")
+    area_label = ", ".join(areas_sel)
+
+    # ── Generar PDF ───────────────────────────────────────────────────────────
+    # Agrupar por cliente para empaque inteligente
+    clientes_grupos = []
+    for cli in clientes_ord:
+        clientes_grupos.append((cli, clientes_dict[cli]))
+
+    with st.spinner("Generando listado..."):
+        pdf_bytes = generar_listado_checklist(
+            clientes_grupos, area_label, semana, año)
+    pdf_b64 = base64.b64encode(pdf_bytes).decode()
+
+    # Botones
+    bc1, bc2 = st.columns(2)
+
+    # Botón descarga PDF
+    bc1.download_button(
+        "📥 Descargar PDF",
+        data=pdf_bytes,
+        file_name=f"Listado_Sem{semana}_{año}_{area_label.replace(', ','_')}.pdf",
+        mime="application/pdf",
+        type="primary",
+        use_container_width=True,
+        key="dl_listado"
+    )
+
+    # Botón imprimir directo (nueva pestaña + auto-print)
+    html_print = f"""
+    <script>
+    function imprimirListado() {{
+        var b64 = '{pdf_b64}';
+        var byteChars = atob(b64);
+        var byteArr = new Uint8Array(byteChars.length);
+        for (var i = 0; i < byteChars.length; i++) {{
+            byteArr[i] = byteChars.charCodeAt(i);
+        }}
+        var blob = new Blob([byteArr], {{type: 'application/pdf'}});
+        var url  = URL.createObjectURL(blob);
+        var win  = window.open(url, '_blank');
+        win.onload = function() {{ win.print(); }};
+    }}
+    </script>
+    <button onclick="imprimirListado()" style="
+        background:#2D7A2D;color:white;border:none;border-radius:6px;
+        padding:8px 16px;font-size:14px;cursor:pointer;width:100%;
+        font-family:sans-serif;margin-top:2px">
+        🖨️ Imprimir directo
+    </button>
+    """
+    with bc2:
+        import streamlit.components.v1 as components
+        components.html(html_print, height=48)
+
+    # ── Vista previa embebida (blob URL) ────────────────────────────────────
+    st.markdown("**Vista previa:**")
+    import streamlit.components.v1 as components
+    preview_html = f"""
+    <div id="pdf-container" style="width:100%;height:700px;border:1px solid #ddd;border-radius:4px;">
+      <iframe id="pdf-frame" width="100%" height="700px"
+              style="border:none;border-radius:4px;"></iframe>
+    </div>
+    <script>
+      (function() {{
+        var b64 = '{pdf_b64}';
+        var raw = atob(b64);
+        var arr = new Uint8Array(raw.length);
+        for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+        var blob = new Blob([arr], {{type: 'application/pdf'}});
+        var url  = URL.createObjectURL(blob);
+        document.getElementById('pdf-frame').src = url;
+      }})();
+    </script>
+    """
+    components.html(preview_html, height=720, scrolling=False)
+
+
 def mostrar():
-    st.markdown("## 🗂️ Datos")
-    if st.button("Inicio", key="btn_home_dat", type="secondary"):
+    st.markdown("## 🚚 Envíos y Facturación — Semana Actual")
+    # Botón de regreso al Inicio
+    if st.button("🏠 Inicio", key="btn_home_env", type="secondary"):
         st.session_state["_nav_target"] = "🏠 Inicio"
         st.rerun()
     st.divider()
 
-    tipo = st.radio("Tipo de datos",
-                    ["📦 Pedidos","💸 Gastos","👤 Clientes","🛒 Productos"],
-                    horizontal=True, key="dat_tipo")
+
+    with st.spinner("Cargando..."):
+        todos    = leer_pedidos()
+        cli_list = cargar_clientes()
+
+    hoy        = date.today()
+    sem_act    = hoy.isocalendar()[1]
+    año_act    = hoy.year
+
+    pedidos_sem = [p for p in todos
+                   if p["semana"] == sem_act and p["año"] == año_act]
+
+    st.markdown(f"**Semana {sem_act} · {año_act}** — {hoy.strftime('%d/%m/%Y')}")
+
+    if not pedidos_sem:
+        st.info(f"No hay pedidos para la semana {sem_act}."); return
+
+    # Agrupar por Unico
+    grupos: dict = {}
+    for p in pedidos_sem:
+        grupos.setdefault(p["unico"], []).append(p)
+
+    # Mapas de clientes
+    mapa_exact = {c["nombre"]: c for c in cli_list}
+    mapa_lower = {c["nombre"].lower(): c for c in cli_list}
+
+    # Separar por zona
+    por_zona: dict = {z: {} for z in ZONAS_ENVIO}
+    sin_zona = {}
+    for unico, ls in grupos.items():
+        zona = _detectar_zona(ls[0], mapa_exact, mapa_lower)
+        if zona and zona in por_zona:
+            por_zona[zona][unico] = ls
+        else:
+            sin_zona[unico] = ls
+
+    # Ordenar por fecha desc
+    def _ord(d):
+        return dict(sorted(d.items(),
+                    key=lambda x: str(x[1][0]["fecha"] or ""), reverse=True))
+
+    por_zona = {z: _ord(v) for z, v in por_zona.items()}
+
+    # Resumen
+    total_peds = sum(len(v) for v in por_zona.values())
+    resumen    = " · ".join(f"{z}: {len(v)}" for z, v in por_zona.items() if v)
+    st.markdown(f"{total_peds} pedidos — {resumen}")
+
+    # Tabs por zona
+    # Add Listados as extra tab
+    tab_labels = [f"{z} ({len(por_zona[z])})" for z in ZONAS_ENVIO] + ["📋 Listados", "🖨️ Impresión Masiva"]
+    all_tabs   = st.tabs(tab_labels)
+    envio_tabs = all_tabs[:-2]
+    tab_list   = all_tabs[-2]
+    tab_masiva = all_tabs[-1]
+
+    for tab, zona in zip(envio_tabs, ZONAS_ENVIO):
+        with tab:
+            grupo_zona = por_zona[zona]
+            sufijo     = zona[:2].strip()
+            if not grupo_zona:
+                st.info(f"No hay pedidos para {zona} esta semana.")
+                continue
+            for unico, ls in grupo_zona.items():
+                cli_info = _get_cli(ls[0]["cliente"], mapa_exact, mapa_lower) \
+                           or {"nombre": ls[0]["cliente"]}
+                _pedido_card(unico, ls, cli_info, sufijo=sufijo)
+
+    # Pedidos sin zona identificada
+    if sin_zona:
+        with st.expander(f"⚠️ Sin zona identificada ({len(sin_zona)})", expanded=False):
+            for unico, ls in _ord(sin_zona).items():
+                cli_info = _get_cli(ls[0]["cliente"], mapa_exact, mapa_lower) \
+                           or {"nombre": ls[0]["cliente"]}
+                _pedido_card(unico, ls, cli_info, sufijo="sz")
+
+    # ── TAB LISTADOS ──────────────────────────────────────────────────────────
+    with tab_list:
+        _tab_listados(todos, sem_act, año_act)
+
+    with tab_masiva:
+        _tab_impresion_masiva(todos, cli_list, sem_act, año_act)
+
+
+# ── IMPRESIÓN MASIVA ───────────────────────────────────────────────────────────
+def _tab_impresion_masiva(todos: list, cli_list: list, sem_def: int, año_def: int):
+    """PDFs individuales por cliente para un área y semana — impresión masiva."""
+    import streamlit.components.v1 as components
+    from pdf_helper import generar_envio, nombre_archivo
+
+    st.markdown("### 🖨️ Impresión Masiva por Área")
+    st.caption("Un PDF por cliente · filtrá por semana y área · imprimí o descargá individualmente")
+
+    # ── Filtros ────────────────────────────────────────────────────────────────
+    fc1, fc2, fc3 = st.columns(3)
+    semana  = fc1.number_input("Semana", 1, 53, sem_def, key="im_sem")
+    año     = fc2.number_input("Año", 2020, 2030, año_def, key="im_año")
+    zonas   = list(ZONAS_ENVIO.keys())
+    area    = fc3.selectbox("Área", zonas, key="im_area")
+
+    # ── Filtrar pedidos ────────────────────────────────────────────────────────
+    codigos_zona = ZONAS_ENVIO[area]
+    cli_map  = {c["nombre"]: c for c in cli_list}
+    cli_zona = {c["nombre"].lower(): c["codigo_lugar"] for c in cli_list}
+
+    pedidos_sem = [
+        p for p in todos
+        if p["semana"] == semana and p["año"] == año
+        and p["status"] != "Cancelado"
+        and float(p.get("cantidad") or 0) > 0
+        and cli_zona.get(p["cliente"].lower(), "") in codigos_zona
+    ]
+
+    if not pedidos_sem:
+        st.info(f"Sin pedidos activos en {area} para semana {semana}/{año}.")
+        return
+
+    # Agrupar por cliente
+    por_cliente = {}
+    for p in pedidos_sem:
+        cli = p["cliente"]
+        if cli not in por_cliente:
+            por_cliente[cli] = []
+        por_cliente[cli].append(p)
+
+    st.divider()
+    total_lineas = sum(len(v) for v in por_cliente.values())
+    st.markdown(f"**{len(por_cliente)} cliente(s) · {total_lineas} línea(s) en {area}**")
+
+    # ── Selector de clientes ───────────────────────────────────────────────────
+    sel_clis = st.multiselect(
+        "Clientes a imprimir:",
+        sorted(por_cliente.keys()),
+        default=sorted(por_cliente.keys()),
+        key="im_sel_clis",
+    )
+
+    if not sel_clis:
+        st.info("Seleccioná al menos un cliente.")
+        return
+
     st.divider()
 
-    df = pd.DataFrame()
-    if tipo == "📦 Pedidos":
-        df = _sabana_pedidos()
-    elif tipo == "💸 Gastos":
-        df = _sabana_gastos()
-    elif tipo == "👤 Clientes":
-        df = _sabana_clientes()
-    elif tipo == "🛒 Productos":
-        df = _sabana_productos()
+    # ── PDF por cliente ────────────────────────────────────────────────────────
+    for cli_nombre in sorted(sel_clis):
+        peds = por_cliente[cli_nombre]
+        fechas   = [p["fecha"] for p in peds if p["fecha"]]
+        fecha_ent = max(fechas) if fechas else None
+        cli_info = cli_map.get(cli_nombre, {
+            "nombre": cli_nombre, "empresa": cli_nombre,
+            "direccion": "", "nit": "CF", "telefono": "",
+        })
 
-    if df is not None and not df.empty:
-        st.divider()
-        d1, d2, d3 = st.columns(3)
+        lineas = sorted([{
+            "producto": p["producto"],
+            "cantidad": float(p.get("cantidad") or 0),
+            "unidad":   p.get("unidad", ""),
+            "precio":   float(p.get("precio") or 0),
+            "total":    round(float(p.get("precio") or 0) *
+                              float(p.get("cantidad") or 0), 2),
+        } for p in peds], key=lambda x: x["producto"])
 
-        # CSV
-        csv = df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        d1.download_button("⬇️ Descargar CSV", data=csv,
-                           file_name=f"VeggiExpress_{tipo.split()[-1]}_{date.today()}.csv",
-                           mime="text/csv", key="dat_csv")
+        total_cli = sum(l["total"] for l in lineas)
 
-        # Excel
-        d2.download_button("⬇️ Descargar Excel",
-                           data=_df_to_excel(df),
-                           file_name=f"VeggiExpress_{tipo.split()[-1]}_{date.today()}.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           key="dat_xlsx")
+        # Generar PDF
+        try:
+            unico    = peds[0].get("unico", "") if peds else ""
+            pdf_bytes = generar_envio(cli_info, fecha_ent, lineas, unico)
+            pdf_b64   = base64.b64encode(pdf_bytes).decode()
+            nom_safe  = "".join(ch for ch in cli_nombre if ch.isalnum() or ch == "_")
+            filename  = f"Envio_{nom_safe}_S{semana}_{año}.pdf"
 
-        # Sync al Sheet
-        if d3.button("🔄 Sincronizar al Sheet", key="dat_sync",
-                     help="Sobreescribe la hoja 'DatosCompletos' con la vista actual"):
-            with st.spinner("Sincronizando..."):
-                ok, res = _sync_sheet(df)
-            if ok:
-                st.success(f"✅ {res} filas escritas en 'DatosCompletos'.")
-            else:
-                st.error(f"Error: {res}")
+            col_info, col_print, col_dl = st.columns([4, 1, 1])
+            col_info.markdown(
+                f"**{cli_nombre}** · {len(lineas)} línea(s) · "
+                f"Q{total_cli:,.2f} · "
+                f"{fecha_ent.strftime('%d/%m/%Y') if fecha_ent else f'Sem {semana}'}"
+            )
+
+            # Botón imprimir (PDF.js)
+            html_print = f"""
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+            <script>
+            pdfjsLib.GlobalWorkerOptions.workerSrc=
+              'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            function imp_{nom_safe}(){{
+              var raw=atob('{pdf_b64}');
+              var arr=new Uint8Array(raw.length);
+              for(var i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
+              var blob=new Blob([arr],{{type:'application/pdf'}});
+              var url=URL.createObjectURL(blob);
+              var w=window.open(url,'_blank');
+              w.onload=function(){{w.print();}};
+            }}
+            </script>
+            <button onclick="imp_{nom_safe}()" style="
+              background:#2D7A2D;color:white;border:none;border-radius:6px;
+              padding:6px 10px;font-size:12px;cursor:pointer;width:100%;
+              font-family:sans-serif">🖨️ Imprimir</button>"""
+            with col_print:
+                components.html(html_print, height=40)
+
+            col_dl.download_button(
+                "📥 PDF",
+                data=pdf_bytes,
+                file_name=filename,
+                mime="application/pdf",
+                key=f"im_dl_{nom_safe}_{semana}_{año}",
+                use_container_width=True,
+            )
+
+        except Exception as e:
+            st.error(f"{cli_nombre}: Error generando PDF — {e}")
