@@ -769,9 +769,7 @@ def generar_cotizacion_formal(
 
     hdr_right = [
         _p("COTIZACION COMERCIAL", S["cot_titulo"]),
-        _p("Distribucion de Frutas y Vegetales Frescos", S["cot_sub"]),
         Spacer(1, 3*mm),
-        _p(f"No. {num_cot}", S["cot_num"]),
         _p(f"Fecha: {_fecha_es(desde)}", S["cot_num"]),
         _p(f"Valida hasta: {_fecha_es(hasta)}", S["cot_num"]),
     ]
@@ -788,14 +786,6 @@ def generar_cotizacion_formal(
     story.append(Spacer(1, 4*mm))
 
     # ── 2. EMPRESA EMISORA ─────────────────────────────────────────────────────
-    emisora_info = [
-        "Productos Alimenticios Super Bueno",
-        "Guatemala, Guatemala",
-        "Tel. 5874-9679  |  sburgosa@gmail.com",
-    ]
-    em_rows = [[_p(l, sty("em", fontSize=8, textColor=GRIS_CARB, leading=11))]
-               for l in emisora_info]
-
     # ── 3. DESTINATARIO ────────────────────────────────────────────────────────
     dest_block = [
         _p("A:", S["dest_lbl"]),
@@ -805,25 +795,24 @@ def generar_cotizacion_formal(
         dest_block.append(_p(f"A la atencion de: {_s(atencion)}", S["dest_info"]))
 
     sec_table = Table(
-        [[em_rows, dest_block]],
-        colWidths=[CW * 0.42, CW * 0.58],
+        [[dest_block, em_rows]],
+        colWidths=[CW * 0.58, CW * 0.42],
     )
     sec_table.setStyle(TableStyle([
         ("VALIGN",  (0,0), (-1,-1), "TOP"),
         ("ALIGN",   (0,0), (0,0),   "LEFT"),
         ("ALIGN",   (1,0), (1,0),   "LEFT"),
-        ("LEFTPADDING",  (1,0), (1,0), 8),
-        ("BACKGROUND",   (1,0), (1,0), GRIS_TAB),
-        ("ROUNDEDCORNERS", [3]),
-        ("TOPPADDING",   (1,0), (1,0), 6),
-        ("BOTTOMPADDING",(1,0), (1,0), 6),
+        ("BACKGROUND", (0,0), (0,0), GRIS_TAB),  
+        ("LEFTPADDING", (0,0), (0,0), 8),
+        ("TOPPADDING", (0,0), (0,0), 6),
+        ("BOTTOMPADDING", (0,0), (0,0), 6),
     ]))
     story.append(sec_table)
     story.append(Spacer(1, 5*mm))
 
     # ── 4. CUERPO DE PRESENTACION ─────────────────────────────────────────────
     if cuerpo:
-        _cuerpo_just = ParagraphStyle("cuerpo_just", fontSize=9.5,
+        _cuerpo_just = ParagraphStyle("cuerpo_just", fontSize=8.5,
             textColor=GRIS_CARB, leading=14, alignment=TA_JUSTIFY, spaceAfter=4)
         for parrafo in _s(cuerpo).split("\n"):
             if parrafo.strip():
@@ -913,7 +902,7 @@ def generar_cotizacion_formal(
             ParagraphStyle("tot_lbl_f", fontSize=8.5, fontName="Helvetica-Bold",
                            textColor=VERDE_OSC, alignment=TA_RIGHT, leading=11))
         fila_total[ncols-1] = _p(f"Q{total_semana:,.2f}",
-            ParagraphStyle("tot_val_f", fontSize=9.5, fontName="Helvetica-Bold",
+            ParagraphStyle("tot_val_f", fontSize=8.5, fontName="Helvetica-Bold",
                            textColor=GRIS_CARB, alignment=TA_RIGHT, leading=12))
         tbl_data.append(fila_total)
         th_sty.add("BACKGROUND", (0, len(tbl_data)-1), (-1, len(tbl_data)-1), GRIS_CLR)
@@ -970,7 +959,7 @@ def generar_cotizacion_formal(
     cierre = ("Quedamos a sus ordenes para cualquier consulta, ajuste en "
               "especificaciones o coordinacion de visita. Esperamos poder "
               "ser su proveedor de confianza.")
-    _cierre_just = ParagraphStyle("cierre_just", fontSize=9.5, textColor=GRIS_CARB,
+    _cierre_just = ParagraphStyle("cierre_just", fontSize=8.5, textColor=GRIS_CARB,
                                    leading=14, alignment=TA_JUSTIFY)
     story.append(_p(cierre, _cierre_just))
     story.append(Spacer(1, 10*mm))
