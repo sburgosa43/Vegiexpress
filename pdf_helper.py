@@ -130,7 +130,7 @@ def generar_envio(cliente: dict, fecha: date, lineas: list, unico: str = "") -> 
 
     # ── 1. HEADER: Logo + Título ───────────────────────────────────────────────
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=52*mm, height=15*mm)
+        logo = RLImage(LOGO_PATH, width=49*mm, height=15*mm)
     else:
         logo = _p("VeggiExpress",
                   ParagraphStyle("lg", fontSize=18, fontName="Helvetica-Bold",
@@ -341,7 +341,7 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
 
     # ── HEADER (mismo que envío) ──────────────────────────────────────────────
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=52*mm, height=15*mm)
+        logo = RLImage(LOGO_PATH, width=49*mm, height=15*mm)
     else:
         logo = _p("VeggiExpress",
                   ParagraphStyle("lg", fontSize=18, fontName="Helvetica-Bold",
@@ -596,7 +596,7 @@ def generar_cotizacion(lineas: list, desde: "date", hasta: "date",
 
     # Header
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=52*mm, height=15*mm)
+        logo = RLImage(LOGO_PATH, width=49*mm, height=15*mm)
     else:
         logo = _p("VeggiExpress", ParagraphStyle("lg", fontSize=18,
                    fontName="Helvetica-Bold", textColor=VERDE_OSC))
@@ -762,13 +762,13 @@ def generar_cotizacion_formal(
 
     # ── 1. HEADER: Logo + Titulo + Numero ─────────────────────────────────────
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=52*mm, height=15*mm)
+        logo = RLImage(LOGO_PATH, width=49*mm, height=15*mm)
     else:
         logo = _p("VeggiExpress", ParagraphStyle("lg", fontSize=18,
                   fontName="Helvetica-Bold", textColor=VERDE_OSC))
 
     _cot_titulo_sm = ParagraphStyle("cot_titulo_sm", parent=S["cot_titulo"],
-                                     fontSize=16, leading=19)
+                                     fontSize=15, leading=18)
     hdr_right = [
         _p("COTIZACION COMERCIAL", _cot_titulo_sm),
         Spacer(1, 2*mm),
