@@ -441,7 +441,7 @@ def _tab_importar():
     cat_info   = {p["nombre"]: p for p in prods_gen}
     # cli_map: email_lower → cliente_dict
     clientes   = cargar_clientes()
-    cli_map    = {c["email"]: c for c in clientes if c.get("email")}
+    cli_map    = {c["email"].lower().strip(): c for c in clientes if c.get("email")}
 
     # ── Parámetros de importación ─────────────────────────────────────────────
     c1, c2 = st.columns(2)
@@ -524,16 +524,18 @@ def _tab_importar():
                 st.caption(f"👤 Cliente registrado: **{nombre_disp}** · "
                            f"📍 {resp['direccion']} · 💳 {resp['pago']}")
             else:
-                st.warning("Email no encontrado en la base de clientes. "
-                           "Asigná manualmente:")
+                st.warning(f"Email '{resp['email'] or '(vacío)'}' no encontrado "
+                           f"en la base de clientes. Asigná manualmente:")
+                # Mostrar TODOS los clientes (no filtrar por tipo, que puede variar)
                 nombres_cli = ["— seleccionar —"] + \
-                              sorted(c["nombre"] for c in clientes
-                                     if c.get("tipo","").lower() == "hogar")
+                              sorted(c["nombre"] for c in clientes if c.get("nombre"))
                 sel = st.selectbox("Cliente", nombres_cli,
                                    key=f"hog_cli_{idx}")
                 if sel != "— seleccionar —":
                     resp["cliente"] = next(
                         (c for c in clientes if c["nombre"] == sel), None)
+                    if resp["cliente"]:
+                        st.caption(f"✅ Asignado a: {sel}. Ahora podés importar.")
 
             # Tabla de productos
             if resp["lineas"]:
