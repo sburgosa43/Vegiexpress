@@ -536,15 +536,6 @@ def _tab_importar():
                         (c for c in clientes if c["nombre"] == sel), None)
                     if resp["cliente"]:
                         st.caption(f"✅ Asignado a: {sel}. Ahora podés importar.")
-            # Persistir asignación manual entre reruns (key estable por timestamp)
-            _asig_key = f"hog_asignado_{ts}"
-            if resp["cliente"] is not None:
-                st.session_state[_asig_key] = resp["cliente"]["nombre"]
-            elif _asig_key in st.session_state:
-                # Recuperar asignación previa si el email no matchea
-                resp["cliente"] = next(
-                    (c for c in clientes
-                     if c["nombre"] == st.session_state[_asig_key]), None)
 
             # Tabla de productos
             if resp["lineas"]:
@@ -592,28 +583,11 @@ def _tab_importar():
                                "agregá el producto al catálogo con el "
                                "nombre exacto del formulario.")
 
-            # Diagnóstico del estado del pedido (por qué el botón está o no activo)
-            _tiene_cli = resp["cliente"] is not None
-            _tiene_lin = bool(resp["lineas"])
-            _puede = _tiene_cli and _tiene_lin
-            if not _puede:
-                _faltan = []
-                if not _tiene_cli:
-                    _faltan.append("**cliente** (asigná uno arriba)")
-                if not _tiene_lin:
-                    _faltan.append("**productos con match** "
-                                   f"({len(resp['sin_match'])} sin match)")
-                st.error("No se puede importar — falta: " + " y ".join(_faltan))
-            else:
-                st.caption(f"✓ Listo para importar: cliente "
-                           f"**{resp['cliente']['nombre']}** · "
-                           f"{len(resp['lineas'])} línea(s)")
-
             # Botones
             b1, b2 = st.columns(2)
             if b1.button("✅ Importar pedido", type="primary",
                          key=f"hog_imp_{idx}",
-                         disabled=not _puede):
+                         disabled=not resp["lineas"] or resp["cliente"] is None):
                 try:
                     with st.spinner("Guardando..."):
                         n = _importar_pedido(resp, fecha_ent, cat_info, cli_precio)
