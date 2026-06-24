@@ -218,10 +218,8 @@ def _importar_pedido(resp: dict, fecha_ent: date,
                      cat_info: dict, cli_precios_fn):
     """Crea las líneas del pedido en el Sheet de Pedidos."""
     from order_helper import guardar_pedidos_batch
-    import uuid
 
     nombre_cli = resp["cliente"]["nombre"] if resp["cliente"] else resp["nombre_cli"]
-    unico      = f"HOG_{fecha_ent.strftime('%Y%m%d')}_{str(uuid.uuid4())[:6].upper()}"
 
     items = []
     for l in resp["lineas"]:
@@ -237,9 +235,17 @@ def _importar_pedido(resp: dict, fecha_ent: date,
             "costo":    float(prod.get("costo") or 0),
         })
 
-    guardar_pedidos_batch(nombre_cli, fecha_ent, items, unico=unico)
+    if not items:
+        return 0
+
+    # guardar_pedidos_batch espera una lista de pedidos (cola)
+    res = guardar_pedidos_batch([{
+        "cliente_nombre": nombre_cli,
+        "fecha":          fecha_ent,
+        "items":          items,
+    }])
     _registrar_importado(resp["timestamp"], nombre_cli, len(items))
-    return len(items)
+    return res.get("filas", len(items))
 
 
 # ── UI principal ───────────────────────────────────────────────────────────────
@@ -580,11 +586,18 @@ def _tab_importar():
             if b1.button("✅ Importar pedido", type="primary",
                          key=f"hog_imp_{idx}",
                          disabled=not resp["lineas"] or resp["cliente"] is None):
-                with st.spinner("Guardando..."):
-                    n = _importar_pedido(resp, fecha_ent, cat_info, cli_precio)
-                st.success(f"✅ {n} línea(s) importadas para "
-                           f"{resp['cliente']['nombre']}.")
-                st.rerun()
+                try:
+                    with st.spinner("Guardando..."):
+                        n = _importar_pedido(resp, fecha_ent, cat_info, cli_precio)
+                    if n > 0:
+                        st.success(f"✅ {n} línea(s) importadas para "
+                                   f"{resp['cliente']['nombre']}.")
+                        st.rerun()
+                    else:
+                        st.warning("No se importó ninguna línea — verificá que "
+                                   "el pedido tenga productos con cantidad > 0.")
+                except Exception as _ie:
+                    st.error(f"Error al importar: {type(_ie).__name__}: {_ie}")
 
             if b2.button("⏭️ Omitir", key=f"hog_skip_{idx}",
                          help="Marca como procesada sin crear pedido"):
