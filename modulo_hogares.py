@@ -216,36 +216,48 @@ def _parsear_respuesta(headers: list, row: list,
 # ── Importar pedido confirmado ────────────────────────────────────────────────
 def _importar_pedido(resp: dict, fecha_ent: date,
                      cat_info: dict, cli_precios_fn):
-    """Crea las líneas del pedido en el Sheet de Pedidos."""
+    """Crea las líneas del pedido en el Sheet de Pedidos.
+    Retorna dict con diagnóstico: {filas, items_armados, nombre_cli, detalle}."""
     from order_helper import guardar_pedidos_batch
 
     nombre_cli = resp["cliente"]["nombre"] if resp["cliente"] else resp["nombre_cli"]
 
     items = []
+    detalle = []
     for l in resp["lineas"]:
         prod    = cat_info.get(l["prod_cat"], {})
         precio, _ = cli_precios_fn(resp["cliente"] or {}, l["prod_cat"])
         if precio <= 0:
             precio = float(prod.get("precio") or 0)
+        cant = float(l["cantidad"] or 0)
         items.append({
             "nombre":   l["prod_cat"],
-            "unidad":   prod.get("unidad") or "",  # siempre del catálogo, nunca del form
-            "cantidad": l["cantidad"],
+            "unidad":   prod.get("unidad") or "",
+            "cantidad": cant,
             "precio":   precio,
             "costo":    float(prod.get("costo") or 0),
         })
+        detalle.append(f"{l['prod_cat']} x{cant} @Q{precio:.2f}")
 
     if not items:
-        return 0
+        return {"filas": 0, "items_armados": 0, "nombre_cli": nombre_cli,
+                "detalle": detalle, "error": "Sin items (lineas vacías)"}
 
-    # guardar_pedidos_batch espera una lista de pedidos (cola)
-    res = guardar_pedidos_batch([{
-        "cliente_nombre": nombre_cli,
-        "fecha":          fecha_ent,
-        "items":          items,
-    }])
-    _registrar_importado(resp["timestamp"], nombre_cli, len(items))
-    return res.get("filas", len(items))
+    try:
+        res = guardar_pedidos_batch([{
+            "cliente_nombre": nombre_cli,
+            "fecha":          fecha_ent,
+            "items":          items,
+        }])
+    except Exception as e:
+        return {"filas": 0, "items_armados": len(items), "nombre_cli": nombre_cli,
+                "detalle": detalle, "error": f"{type(e).__name__}: {e}"}
+
+    filas = res.get("filas", 0) if isinstance(res, dict) else 0
+    if filas > 0:
+        _registrar_importado(resp["timestamp"], nombre_cli, len(items))
+    return {"filas": filas, "items_armados": len(items), "nombre_cli": nombre_cli,
+            "detalle": detalle, "error": None, "res": res}
 
 
 # ── UI principal ───────────────────────────────────────────────────────────────
@@ -614,18 +626,23 @@ def _tab_importar():
             if b1.button("✅ Importar pedido", type="primary",
                          key=f"hog_imp_{idx}",
                          disabled=not _puede):
-                try:
-                    with st.spinner("Guardando..."):
-                        n = _importar_pedido(resp, fecha_ent, cat_info, cli_precio)
-                    if n > 0:
-                        st.success(f"✅ {n} línea(s) importadas para "
-                                   f"{resp['cliente']['nombre']}.")
-                        st.rerun()
-                    else:
-                        st.warning("No se importó ninguna línea — verificá que "
-                                   "el pedido tenga productos con cantidad > 0.")
-                except Exception as _ie:
-                    st.error(f"Error al importar: {type(_ie).__name__}: {_ie}")
+                with st.spinner("Guardando..."):
+                    r_imp = _importar_pedido(resp, fecha_ent, cat_info, cli_precio)
+                # Diagnóstico siempre visible
+                st.caption(f"🔎 Cliente: {r_imp['nombre_cli']} · "
+                           f"items armados: {r_imp['items_armados']} · "
+                           f"filas escritas: {r_imp['filas']}")
+                if r_imp.get("detalle"):
+                    st.caption("Productos: " + " | ".join(r_imp["detalle"]))
+                if r_imp.get("error"):
+                    st.error(f"❌ Error: {r_imp['error']}")
+                elif r_imp["filas"] > 0:
+                    st.success(f"✅ {r_imp['filas']} línea(s) importadas para "
+                               f"{r_imp['nombre_cli']}.")
+                    st.rerun()
+                else:
+                    st.warning(f"No se escribió ninguna fila. "
+                               f"Respuesta del guardado: {r_imp.get('res')}")
 
             if b2.button("⏭️ Omitir", key=f"hog_skip_{idx}",
                          help="Marca como procesada sin crear pedido"):
