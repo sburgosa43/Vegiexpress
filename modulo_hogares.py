@@ -47,18 +47,29 @@ def _parse_col_header(h: str) -> dict | None:
 
 
 def _abrir_form_sheet():
-    """Abre el Sheet de respuestas con la service account."""
-    import gspread
-    from google.oauth2.service_account import Credentials
-
-    SCOPES = ["https://spreadsheets.google.com/feeds",
-              "https://www.googleapis.com/auth/drive"]
-    if "GOOGLE_CREDENTIALS" in st.secrets:
-        info = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-    else:
-        info = dict(st.secrets["gcp_service_account"])
-    creds = Credentials.from_service_account_info(info, scopes=SCOPES)
-    gc    = gspread.authorize(creds)
+    """Abre el Sheet de respuestas con la service account.
+    Reutiliza el cliente gspread central (gsheets) para usar las mismas
+    credenciales que el resto de la app."""
+    # Reusar la conexión central — mismas credenciales que toda la app
+    try:
+        from gsheets import _gc as _gc_central
+        gc = _gc_central()
+    except Exception:
+        # Fallback: crear cliente propio
+        import gspread
+        from google.oauth2.service_account import Credentials
+        SCOPES = ["https://spreadsheets.google.com/feeds",
+                  "https://www.googleapis.com/auth/drive",
+                  "https://www.googleapis.com/auth/spreadsheets"]
+        if "GOOGLE_CREDENTIALS" in st.secrets:
+            info = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        elif "gcp_service_account" in st.secrets:
+            info = dict(st.secrets["gcp_service_account"])
+        else:
+            raise RuntimeError("No se encontraron credenciales en st.secrets "
+                               "(ni GOOGLE_CREDENTIALS ni gcp_service_account)")
+        creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+        gc = gspread.authorize(creds)
     return gc.open_by_key(FORM_SHEET_ID).sheet1
 
 
@@ -102,7 +113,27 @@ def _leer_respuestas() -> tuple[list[str], list[list]]:
             return [], []
         return todas[0], todas[1:]
     except Exception as e:
-        st.error(f"Error leyendo formulario: {e}")
+        _msg = str(e) or type(e).__name__
+        st.error(f"Error leyendo formulario: {_msg}")
+        # Diagnóstico útil según el tipo de error
+        _el = _msg.lower()
+        if "permission" in _el or "403" in _el or "does not have" in _el:
+            st.warning(
+                "El Sheet de respuestas no está compartido con la cuenta de "
+                "servicio. Abrí el Sheet de respuestas del formulario → "
+                "Compartir → agregá el email de la service account "
+                "(client_email en tus credenciales) como **Lector** o **Editor**.")
+        elif "not found" in _el or "404" in _el or "unable to open" in _el:
+            st.warning(
+                f"No se encontró el Sheet con ID `{FORM_SHEET_ID}`. Verificá "
+                "que sea el ID del **Sheet de respuestas** (no del formulario). "
+                "En el form: Respuestas → ícono de Sheets → copiá el ID de la "
+                "URL del Sheet que se abre.")
+        elif "secrets" in _el or "credential" in _el:
+            st.warning("Problema con las credenciales en st.secrets.")
+        else:
+            st.warning(f"Tipo de error: {type(e).__name__}. "
+                       "Revisá el log en 'Manage app' para más detalle.")
         return [], []
 
 
@@ -413,6 +444,32 @@ def _tab_importar():
     semana    = fecha_ent.isocalendar()[1]
     año       = fecha_ent.year
     c2.metric("Semana", f"{semana} / {año}")
+
+    # ── Diagnóstico de conexión ───────────────────────────────────────────────
+    with st.expander("🔧 Diagnóstico de conexión al formulario", expanded=False):
+        st.caption(f"Sheet de respuestas ID: `{FORM_SHEET_ID}`")
+        # Mostrar email de la service account (necesario para compartir el Sheet)
+        try:
+            if "GOOGLE_CREDENTIALS" in st.secrets:
+                _info = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+            else:
+                _info = dict(st.secrets.get("gcp_service_account", {}))
+            _email_sa = _info.get("client_email", "(no encontrado)")
+            st.caption(f"Cuenta de servicio: `{_email_sa}`")
+            st.caption("Este email debe tener acceso de **Lector** al Sheet de "
+                       "respuestas (Compartir → agregar este email).")
+        except Exception as _ce:
+            st.caption(f"No se pudo leer el email de la cuenta: {_ce}")
+        if st.button("🔍 Probar conexión", key="hog_test_conn"):
+            try:
+                _sh = _abrir_form_sheet()
+                _vals = _sh.get_all_values()
+                st.success(f"✅ Conexión OK — {len(_vals)} fila(s) en el Sheet "
+                           f"(incluyendo encabezado).")
+                if _vals:
+                    st.caption(f"Encabezados detectados: {len(_vals[0])} columnas")
+            except Exception as _te:
+                st.error(f"❌ Falló: {type(_te).__name__}: {_te}")
 
     st.divider()
     if not st.button("🔄 Leer formulario", type="primary", key="hog_leer"):
