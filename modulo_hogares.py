@@ -684,9 +684,13 @@ def _tab_importar():
                            f"{len(resp['lineas'])} línea(s)")
 
             # Botones (sin disabled — validamos adentro para ver siempre el motivo)
+            st.caption(f"DEBUG: idx={idx} · cliente={'sí' if _tiene_cli else 'NO'} "
+                       f"· líneas={len(resp['lineas'])} · key=hog_imp_{idx}")
             b1, b2 = st.columns(2)
-            if b1.button("✅ Importar pedido", type="primary",
-                         key=f"hog_imp_{idx}"):
+            _clicked = b1.button("✅ Importar pedido", type="primary",
+                                  key=f"hog_imp_{idx}")
+            if _clicked:
+                st.warning("DEBUG: botón presionado, ejecutando importación...")
                 if not _tiene_cli:
                     st.error("❌ Falta asignar el CLIENTE. Usá el selector arriba.")
                 elif not _tiene_lin:
