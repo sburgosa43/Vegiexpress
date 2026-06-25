@@ -1172,12 +1172,14 @@ def generar_listado_checklist(clientes_grupos: list,
 
     buf = _BIO()
     PW, PH = A4
-    ML = MR = 8*mm
-    MB = 10*mm
-    HEADER_H = 28*mm        # espacio reservado arriba para el header
-    MT = HEADER_H + 6*mm    # margen superior = header + pequeño gap
+    # Márgenes seguros para impresoras (área no imprimible típica ~10-12mm).
+    # Antes 8mm laterales hacía que se cortaran líneas al imprimir.
+    ML = MR = 12*mm
+    MB = 12*mm
+    HEADER_H = 24*mm        # espacio reservado arriba para el header
+    MT = HEADER_H + 5*mm    # margen superior = header + pequeño gap
 
-    GAP = 3*mm
+    GAP = 4*mm
     HW  = (PW - ML - MR - GAP) / 2   # ancho de cada columna ~94mm
     FH  = PH - MT - MB               # altura del frame de contenido ~680pt
 
@@ -1238,7 +1240,7 @@ def generar_listado_checklist(clientes_grupos: list,
 
     # ── Estimar filas por frame (muy conservador — nombres largos inflan filas) ──
     # Usar 40% del frame como máximo seguro por bloque
-    CAP = 35
+    CAP = 30   # filas por bloque (margen de seguridad para no desbordar)
 
     # ── Construir story ───────────────────────────────────────────────────────
     story = []
@@ -1440,25 +1442,40 @@ def boton_imprimir_html(pdf_bytes: bytes, fn_id: str,
     b64 = base64.b64encode(pdf_bytes).decode()
     fn  = "imp_" + str(fn_id).replace("-", "_").replace(".", "_").replace(" ", "_")
 
+    # Método robusto: iframe oculto que carga el PDF y dispara print desde su
+    # propia ventana cuando termina de cargar (onload). Es mucho más confiable
+    # que window.open + setTimeout, que el navegador suele bloquear.
     tmpl = (
         "<script>"
-        "function FN(){"
+        "function __FNID__(){"
         "var b64='B64';"
         "var raw=atob(b64);"
         "var arr=new Uint8Array(raw.length);"
         "for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);"
         "var blob=new Blob([arr],{type:'application/pdf'});"
         "var url=URL.createObjectURL(blob);"
-        "var win=window.open(url,'_blank');"
-        "if(win){setTimeout(function(){try{win.print();}catch(e){}},800);}"
+        "var old=document.getElementById('ifr__FNID__');"
+        "if(old){old.parentNode.removeChild(old);}"
+        "var ifr=document.createElement('iframe');"
+        "ifr.id='ifr__FNID__';"
+        "ifr.style.position='fixed';ifr.style.right='0';ifr.style.bottom='0';"
+        "ifr.style.width='0';ifr.style.height='0';ifr.style.border='0';"
+        "ifr.src=url;"
+        "ifr.onload=function(){"
+        "setTimeout(function(){"
+        "try{ifr.contentWindow.focus();ifr.contentWindow.print();}"
+        "catch(e){window.open(url,'_blank');}"
+        "},500);"
+        "};"
+        "document.body.appendChild(ifr);"
         "}"
         "</script>"
-        "<button onclick='FN()' style='"
+        "<button onclick='__FNID__()' style='"
         "background:COLOR;color:white;border:none;border-radius:6px;"
         "padding:7px 14px;font-size:13px;cursor:pointer;width:100%;"
         "font-family:sans-serif'>LABEL</button>"
     )
-    return (tmpl.replace("FN", fn)
+    return (tmpl.replace("__FNID__", fn)
                 .replace("B64", b64)
                 .replace("COLOR", color)
                 .replace("LABEL", label))

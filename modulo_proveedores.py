@@ -646,33 +646,21 @@ Imprimir: Ctrl+P (o Compartir → Imprimir en el teléfono)</p>
                     f"— {len(items_pdf)} línea(s)</div>",
                     unsafe_allow_html=True)
 
-                if items_pdf:
+                # PDF/Imprimir SIEMPRE activos: si hay cantidades usa items_pdf,
+                # si no, usa la lista completa (items_completa).
+                _items_para_pdf = items_pdf if items_pdf else items_completa
+                if _items_para_pdf:
                     try:
                         pdf_bytes = generar_lista_compras_proveedor(
-                            prov, items_pdf, semana, año)
+                            prov, _items_para_pdf, semana, año)
                         nom = "".join(ch for ch in prov
                                       if ch.isalnum() or ch == "_")
-                        _b64 = base64.b64encode(pdf_bytes).decode()
-                        _html_print = f"""
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script>
-pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-function imprimirProv_{nom}(){{
-  var raw=atob('{_b64}');
-  var arr=new Uint8Array(raw.length);
-  for(var i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
-  var blob=new Blob([arr],{{type:'application/pdf'}});
-  var url=URL.createObjectURL(blob);
-  var w=window.open(url,'_blank');
-  w.onload=function(){{w.print();}};
-}}
-</script>
-<button onclick="imprimirProv_{nom}()" style="
-  background:#2D7A2D;color:white;border:none;border-radius:6px;
-  padding:6px 10px;font-size:12px;cursor:pointer;width:100%;
-  font-family:sans-serif">🖨️ Imprimir</button>"""
+                        from pdf_helper import boton_imprimir_html as _btn_imp
                         with col_p:
-                            _cpv.html(_html_print, height=40)
+                            _cpv.html(
+                                _btn_imp(pdf_bytes, f"prov_{nom}_{semana}_{año}",
+                                         "🖨️ Imprimir", "#2D7A2D"),
+                                height=44)
                         col_d.download_button(
                             "📥 PDF", data=pdf_bytes,
                             file_name=f"Compras_{nom}_Sem{semana}_{año}.pdf",
@@ -682,8 +670,3 @@ function imprimirProv_{nom}(){{
                             use_container_width=True)
                     except Exception as e:
                         col_d.error(f"Error: {e}")
-                else:
-                    col_d.button("📥 PDF", disabled=True,
-                                   key=f"dl_dis_{prov}_{semana}_{año}",
-                                   help="Ingresá cantidades primero",
-                                   use_container_width=True)
