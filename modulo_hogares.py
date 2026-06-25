@@ -580,6 +580,8 @@ def _tab_importar():
     for idx, row in enumerate(nuevas):
         resp = _parsear_respuesta(headers, row, cat_map, cli_map)
         ts   = resp["timestamp"]
+        # Key estable y única por respuesta (sanitizada del timestamp + idx)
+        _uid = "".join(c for c in str(ts) if c.isalnum()) + f"_{idx}"
 
         # Header de la tarjeta
         cli_ok = resp["cliente"] is not None
@@ -604,7 +606,7 @@ def _tab_importar():
                 nombres_cli = ["— seleccionar —"] + \
                               sorted(c["nombre"] for c in clientes if c.get("nombre"))
                 sel = st.selectbox("Cliente", nombres_cli,
-                                   key=f"hog_cli_{idx}")
+                                   key=f"hog_cli_{_uid}")
                 if sel != "— seleccionar —":
                     resp["cliente"] = next(
                         (c for c in clientes if c["nombre"] == sel), None)
@@ -684,11 +686,11 @@ def _tab_importar():
                            f"{len(resp['lineas'])} línea(s)")
 
             # Botones (sin disabled — validamos adentro para ver siempre el motivo)
-            st.caption(f"DEBUG: idx={idx} · cliente={'sí' if _tiene_cli else 'NO'} "
-                       f"· líneas={len(resp['lineas'])} · key=hog_imp_{idx}")
+            st.caption(f"DEBUG: uid={_uid} · cliente={'sí' if _tiene_cli else 'NO'} "
+                       f"· líneas={len(resp['lineas'])}")
             b1, b2 = st.columns(2)
             _clicked = b1.button("✅ Importar pedido", type="primary",
-                                  key=f"hog_imp_{idx}")
+                                  key=f"hog_imp_{_uid}")
             if _clicked:
                 st.warning("DEBUG: botón presionado, ejecutando importación...")
                 if not _tiene_cli:
@@ -731,7 +733,7 @@ def _tab_importar():
                         st.warning(f"No se escribió ninguna fila. "
                                    f"Respuesta del guardado: {r_imp.get('res')}")
 
-            if b2.button("⏭️ Omitir", key=f"hog_skip_{idx}",
+            if b2.button("⏭️ Omitir", key=f"hog_skip_{_uid}",
                          help="Marca como procesada sin crear pedido"):
                 _registrar_importado(ts, resp["nombre_cli"] or "omitido", 0)
                 st.rerun()
