@@ -12,6 +12,17 @@ from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido,
 from order_helper import guardar_edicion_pedidos
 from pdf_helper import generar_envio, nombre_archivo
 
+# ── SESSION STATE KEYS (prefijo: gest_ / ajp_) ────────────────────────────────
+# rev_sel:           list  — pedidos seleccionados en el tab Revisar
+# _conf_{key}:       str   — mensajes de confirmación post-rerun (patrón utils)
+# ajp_sem_cargada:   str   — "semana/año" de la última carga del ajuste precio
+# ajp_año_cargado:   int   — año de la última carga
+# ajp_data:          list  — datos cargados del ajuste precio/costo
+# g_hist, g_clis…:   varios — filtros del tab Revisar (generados con sufijo _rev)
+# key_nv_{unico}:    list  — líneas nuevas en edición por pedido
+# conf_{unico}:      bool  — confirmación de eliminación por pedido
+# ──────────────────────────────────────────────────────────────────────────────
+
 
 MESES_LABEL = {
     1:"01-Ene", 2:"02-Feb", 3:"03-Mar", 4:"04-Abr",

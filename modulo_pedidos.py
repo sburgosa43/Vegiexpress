@@ -15,6 +15,19 @@ try:
 except ImportError:
     openpyxl = None
 
+# ── SESSION STATE KEYS (prefijo: ped_) ─────────────────────────────────────────
+# ped_paso:       int   — paso actual del wizard (1-4)
+# ped_cliente:    dict  — cliente seleccionado
+# ped_fecha:      date  — fecha de entrega
+# ped_lineas:     list  — líneas de productos confirmadas (paso 3→4)
+# ped_grid:       DataFrame — tabla editable del paso 2
+# ped_nfilas:     int   — cantidad de filas en la grilla
+# ped_p3_{i}:     float — precio ajustado por línea en el paso 3
+# cola_pedidos:   list  — cola de pedidos en memoria (multi-cliente)
+# costos_revisados: str — confirmación del aviso de costos
+# imp_raw_df:     DataFrame — datos importados desde Excel (tab importar)
+# ──────────────────────────────────────────────────────────────────────────────
+
 AVISO_KEY = "costos_revisados"
 COLA_KEY  = "cola_pedidos"
 
