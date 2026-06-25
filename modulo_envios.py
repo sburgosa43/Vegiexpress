@@ -263,32 +263,14 @@ def _tab_listados(todos, semana, año):
         key="dl_listado"
     )
 
-    # Botón imprimir directo (nueva pestaña + auto-print)
-    html_print = f"""
-    <script>
-    function imprimirListado() {{
-        var b64 = '{pdf_b64}';
-        var byteChars = atob(b64);
-        var byteArr = new Uint8Array(byteChars.length);
-        for (var i = 0; i < byteChars.length; i++) {{
-            byteArr[i] = byteChars.charCodeAt(i);
-        }}
-        var blob = new Blob([byteArr], {{type: 'application/pdf'}});
-        var url  = URL.createObjectURL(blob);
-        var win  = window.open(url, '_blank');
-        win.onload = function() {{ win.print(); }};
-    }}
-    </script>
-    <button onclick="imprimirListado()" style="
-        background:#2D7A2D;color:white;border:none;border-radius:6px;
-        padding:8px 16px;font-size:14px;cursor:pointer;width:100%;
-        font-family:sans-serif;margin-top:2px">
-        🖨️ Imprimir directo
-    </button>
-    """
+    # Botón imprimir usando el helper unificado (iframe + opción abrir a 100%)
+    from pdf_helper import boton_imprimir_html as _btn_imp_lst
     with bc2:
         import streamlit.components.v1 as components
-        components.html(html_print, height=48)
+        components.html(
+            _btn_imp_lst(pdf_bytes, f"listado_{semana}_{año}",
+                         "🖨️ Imprimir directo", "#2D7A2D"),
+            height=48)
 
     # ── Vista previa embebida (blob URL) ────────────────────────────────────
     st.markdown("**Vista previa:**")

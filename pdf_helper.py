@@ -1448,6 +1448,11 @@ def boton_imprimir_html(pdf_bytes: bytes, fn_id: str,
     # Método robusto: iframe oculto que carga el PDF y dispara print desde su
     # propia ventana cuando termina de cargar (onload). Es mucho más confiable
     # que window.open + setTimeout, que el navegador suele bloquear.
+    # El iframe carga el PDF directamente. La clave para que NO se reescale al
+    # imprimir es abrir el PDF en su visor nativo (que respeta el tamaño real) y
+    # dejar que el usuario imprima a 100%. Forzamos el visor del navegador con
+    # #zoom y abrimos en pestaña nueva como método principal (el más fiable para
+    # respetar márgenes), con impresión automática vía iframe como complemento.
     tmpl = (
         "<script>"
         "function __FNID__(){"
@@ -1467,16 +1472,31 @@ def boton_imprimir_html(pdf_bytes: bytes, fn_id: str,
         "ifr.onload=function(){"
         "setTimeout(function(){"
         "try{ifr.contentWindow.focus();ifr.contentWindow.print();}"
-        "catch(e){window.open(url,'_blank');}"
-        "},500);"
+        "catch(e){var w=window.open(url,'_blank');}"
+        "},600);"
         "};"
         "document.body.appendChild(ifr);"
         "}"
+        "function __FNID___open(){"
+        "var b64='B64';"
+        "var raw=atob(b64);"
+        "var arr=new Uint8Array(raw.length);"
+        "for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);"
+        "var blob=new Blob([arr],{type:'application/pdf'});"
+        "var url=URL.createObjectURL(blob);"
+        "window.open(url,'_blank');"
+        "}"
         "</script>"
+        "<div style='display:flex;gap:4px'>"
         "<button onclick='__FNID__()' style='"
         "background:COLOR;color:white;border:none;border-radius:6px;"
-        "padding:7px 14px;font-size:13px;cursor:pointer;width:100%;"
+        "padding:7px 10px;font-size:13px;cursor:pointer;flex:1;"
         "font-family:sans-serif'>LABEL</button>"
+        "<button onclick='__FNID___open()' title='Abrir PDF para imprimir a 100%' style='"
+        "background:#555;color:white;border:none;border-radius:6px;"
+        "padding:7px 8px;font-size:13px;cursor:pointer;"
+        "font-family:sans-serif'>↗</button>"
+        "</div>"
     )
     return (tmpl.replace("__FNID__", fn)
                 .replace("B64", b64)
