@@ -76,14 +76,27 @@ def _abrir_form_sheet():
 def _get_imported_timestamps() -> set:
     """Timestamps ya importados (de la hoja FormImports)."""
     try:
+        _ensure_formimports()
         from gsheets import get_all_rows
         return {str(r[0]).strip() for r in get_all_rows("formimports") if r}
     except Exception:
         return set()
 
 
+def _ensure_formimports():
+    """Crea la hoja FormImports si no existe."""
+    from gsheets import ensure_ws
+    try:
+        ensure_ws("formimports",
+                  ["timestamp", "fecha_import", "cliente", "n_lineas"])
+    except Exception as e:
+        if "already exists" not in str(e).lower():
+            raise
+
+
 def _registrar_importado(timestamp: str, cliente: str, n_lineas: int):
     from gsheets import append_rows
+    _ensure_formimports()
     hoy = date.today().strftime("%d/%m/%Y")
     append_rows("formimports", [[timestamp, hoy, cliente, n_lineas]])
 
@@ -494,6 +507,7 @@ def _tab_importar():
                    "pedidos ya importados para poder volver a importarlos):")
         if st.button("🔄 Limpiar registro de importados", key="hog_clear_imp"):
             try:
+                _ensure_formimports()
                 from gsheets import ws
                 _w = ws("formimports")
                 _w.clear()
@@ -502,7 +516,7 @@ def _tab_importar():
                 st.success("✅ Registro limpiado. Las respuestas del formulario "
                            "volverán a aparecer como nuevas para reimportar.")
             except Exception as _ce:
-                st.error(f"No se pudo limpiar: {_ce}")
+                st.error(f"No se pudo limpiar: {type(_ce).__name__}: {_ce}")
 
     st.divider()
     if not st.button("🔄 Leer formulario", type="primary", key="hog_leer"):
