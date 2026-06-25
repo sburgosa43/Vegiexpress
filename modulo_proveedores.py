@@ -116,17 +116,6 @@ def _editores_fragment(sel_prov, base_dfs, prod_map, todas_areas,
         # Persistencia unidireccional editor → base_df (session_state)
         if "A Comprar" in edited.columns:
             base_df["A Comprar"] = edited["A Comprar"].values
-            # Guardar también en un mapa persistente por proveedor+producto,
-            # para que la generación del PDF (fuera del fragmento) vea los valores.
-            _ac_key = f"acomprar_{prov}_{semana}_{año}"
-            _ac_map = {}
-            for _idx2, _r2 in base_df.iterrows():
-                _prod_nm = str(_r2.get("Producto", ""))
-                _ac_val = str(edited.loc[_idx2, "A Comprar"]
-                              if _idx2 in edited.index else "")
-                if _prod_nm:
-                    _ac_map[_prod_nm] = _ac_val
-            st.session_state[_ac_key] = _ac_map
 
         # ── Costo por área (demanda × costo, siempre visible) ───────────────
         est_prov   = 0.0
@@ -615,9 +604,6 @@ Imprimir: Ctrl+P (o Compartir → Imprimir en el teléfono)</p>
 
                 items_pdf      = []   # solo lineas con valor (PDF actual)
                 items_completa = []   # TODAS las lineas, A Comprar vacio (para anotar a mano)
-                # Leer las cantidades "A Comprar" del mapa persistente del editor
-                _ac_key = f"acomprar_{prov}_{semana}_{año}"
-                _ac_map = st.session_state.get(_ac_key, {})
                 for i, row in base_dfs[prov].iterrows():
                     base_item = {
                         "producto":  row["Producto"],
@@ -629,10 +615,7 @@ Imprimir: Ctrl+P (o Compartir → Imprimir en el teléfono)</p>
 
                     items_completa.append({**base_item, "a_comprar": ""})
 
-                    # Valor editado: primero del mapa persistente, si no del row
-                    _prod_nm = str(row.get("Producto", ""))
-                    val = str(_ac_map.get(_prod_nm,
-                              row.get("A Comprar", "")) or "")
+                    val = str(row.get("A Comprar", "") or "")
                     ok, pend, n = _val_comprar(val)
                     if ok:
                         items_pdf.append({**base_item,
@@ -663,13 +646,10 @@ Imprimir: Ctrl+P (o Compartir → Imprimir en el teléfono)</p>
                     f"— {len(items_pdf)} línea(s)</div>",
                     unsafe_allow_html=True)
 
-                # PDF/Imprimir SIEMPRE activos: si hay cantidades usa items_pdf,
-                # si no, usa la lista completa (items_completa).
-                _items_para_pdf = items_pdf if items_pdf else items_completa
-                if _items_para_pdf:
+                if items_pdf:
                     try:
                         pdf_bytes = generar_lista_compras_proveedor(
-                            prov, _items_para_pdf, semana, año)
+                            prov, items_pdf, semana, año)
                         nom = "".join(ch for ch in prov
                                       if ch.isalnum() or ch == "_")
                         from pdf_helper import boton_imprimir_html as _btn_imp
@@ -687,3 +667,8 @@ Imprimir: Ctrl+P (o Compartir → Imprimir en el teléfono)</p>
                             use_container_width=True)
                     except Exception as e:
                         col_d.error(f"Error: {e}")
+                else:
+                    col_d.button("📥 PDF", disabled=True,
+                                   key=f"dl_dis_{prov}_{semana}_{año}",
+                                   help="Ingresá cantidades primero",
+                                   use_container_width=True)
