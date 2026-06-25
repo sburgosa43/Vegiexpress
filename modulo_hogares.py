@@ -489,6 +489,21 @@ def _tab_importar():
             except Exception as _te:
                 st.error(f"❌ Falló: {type(_te).__name__}: {_te}")
 
+        st.divider()
+        st.caption("Reintentar importaciones (limpia el registro de "
+                   "pedidos ya importados para poder volver a importarlos):")
+        if st.button("🔄 Limpiar registro de importados", key="hog_clear_imp"):
+            try:
+                from gsheets import ws
+                _w = ws("formimports")
+                _w.clear()
+                _w.update("A1", [["timestamp", "fecha_import", "cliente", "n_lineas"]],
+                          value_input_option="USER_ENTERED")
+                st.success("✅ Registro limpiado. Las respuestas del formulario "
+                           "volverán a aparecer como nuevas para reimportar.")
+            except Exception as _ce:
+                st.error(f"No se pudo limpiar: {_ce}")
+
     st.divider()
     if not st.button("🔄 Leer formulario", type="primary", key="hog_leer"):
         st.info("Elegí la fecha de entrega y presioná 'Leer formulario'.")
@@ -637,12 +652,28 @@ def _tab_importar():
                 if r_imp.get("error"):
                     st.error(f"❌ Error: {r_imp['error']}")
                 elif r_imp["filas"] > 0:
-                    st.success(f"✅ {r_imp['filas']} línea(s) importadas para "
-                               f"{r_imp['nombre_cli']}. "
-                               f"Ya aparece en Gestión de Pedidos. "
-                               f"(Este pedido quedó marcado como importado; "
-                               f"recargá la pestaña para que desaparezca de la lista.)")
-                    st.balloons()
+                    # Verificar que REALMENTE se escribió releyendo pedidos
+                    try:
+                        from excel_helper import leer_pedidos
+                        leer_pedidos.clear()
+                        _peds = leer_pedidos()
+                        _encontrados = sum(
+                            1 for p in _peds
+                            if p["cliente"] == r_imp["nombre_cli"]
+                            and p["fecha"] == fecha_ent)
+                        st.success(f"✅ {r_imp['filas']} línea(s) escritas. "
+                                   f"Verificación: {_encontrados} línea(s) de "
+                                   f"{r_imp['nombre_cli']} encontradas en Pedidos "
+                                   f"para el {fecha_ent.strftime('%d/%m/%Y')}.")
+                        if _encontrados == 0:
+                            st.error("⚠️ Se reportó escritura pero NO aparece al "
+                                     "releer. Puede ser un problema de permisos de "
+                                     "escritura en el Sheet de Pedidos, o que el "
+                                     "Sheet de Pedidos no esté compartido con "
+                                     "permiso de **Editor** (no solo Lector).")
+                    except Exception as _ve:
+                        st.success(f"✅ {r_imp['filas']} línea(s) importadas.")
+                        st.caption(f"(No se pudo verificar: {_ve})")
                 else:
                     st.warning(f"No se escribió ninguna fila. "
                                f"Respuesta del guardado: {r_imp.get('res')}")
