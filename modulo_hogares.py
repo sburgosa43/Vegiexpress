@@ -505,6 +505,39 @@ def _tab_importar():
         st.divider()
         st.caption("Reintentar importaciones (limpia el registro de "
                    "pedidos ya importados para poder volver a importarlos):")
+        st.divider()
+        st.caption("Prueba de escritura directa a Pedidos (diagnóstico):")
+        if st.button("🧪 Escribir pedido de prueba", key="hog_test_write"):
+            from order_helper import guardar_pedidos_batch
+            from excel_helper import leer_pedidos
+            _test_cola = [{
+                "cliente_nombre": "PRUEBA_DIAGNOSTICO",
+                "fecha": date.today(),
+                "items": [{"nombre": "TEST_PRODUCTO", "unidad": "lb",
+                           "cantidad": 1.0, "precio": 1.0, "costo": 0.5}],
+            }]
+            try:
+                _res = guardar_pedidos_batch(_test_cola)
+                st.write(f"Respuesta de guardar_pedidos_batch: `{_res}`")
+                # Releer para verificar
+                leer_pedidos.clear()
+                _peds = leer_pedidos()
+                _hall = [p for p in _peds if p["cliente"] == "PRUEBA_DIAGNOSTICO"]
+                if _hall:
+                    st.success(f"✅ ESCRITURA OK — el pedido de prueba SÍ se "
+                               f"grabó ({len(_hall)} línea). El guardado funciona. "
+                               f"Podés borrar la fila PRUEBA_DIAGNOSTICO del Sheet.")
+                else:
+                    st.error("❌ guardar_pedidos_batch dijo OK pero el pedido NO "
+                             "aparece al releer. Problema de permisos de ESCRITURA "
+                             "en el Sheet de Pedidos (la cuenta de servicio "
+                             "necesita rol **Editor**, no solo Lector).")
+            except Exception as _we:
+                st.error(f"❌ Error al escribir: {type(_we).__name__}: {_we}")
+                import traceback
+                st.code(traceback.format_exc())
+
+        st.divider()
         if st.button("🔄 Limpiar registro de importados", key="hog_clear_imp"):
             try:
                 _ensure_formimports()
