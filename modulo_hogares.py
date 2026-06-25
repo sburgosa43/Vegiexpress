@@ -638,8 +638,11 @@ def _tab_importar():
                     st.error(f"❌ Error: {r_imp['error']}")
                 elif r_imp["filas"] > 0:
                     st.success(f"✅ {r_imp['filas']} línea(s) importadas para "
-                               f"{r_imp['nombre_cli']}.")
-                    st.rerun()
+                               f"{r_imp['nombre_cli']}. "
+                               f"Ya aparece en Gestión de Pedidos. "
+                               f"(Este pedido quedó marcado como importado; "
+                               f"recargá la pestaña para que desaparezca de la lista.)")
+                    st.balloons()
                 else:
                     st.warning(f"No se escribió ninguna fila. "
                                f"Respuesta del guardado: {r_imp.get('res')}")
