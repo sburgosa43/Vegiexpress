@@ -468,6 +468,13 @@ def _tab_importar():
     clientes   = cargar_clientes()
     cli_map    = {c["email"].lower().strip(): c for c in clientes if c.get("email")}
 
+    # ── TEST: botón mínimo para verificar si los clics funcionan ───────────────
+    _test_n = st.session_state.get("hog_test_counter", 0)
+    if st.button(f"🧪 TEST CLICK (contador: {_test_n})", key="hog_test_click_btn"):
+        st.session_state["hog_test_counter"] = _test_n + 1
+        st.rerun()
+    st.caption("Si el contador sube al presionar TEST CLICK, los botones funcionan.")
+
     # ── Procesar importación pendiente (fuera del expander, sobrevive al rerun) ──
     if "hog_importar" in st.session_state:
         _imp = st.session_state.pop("hog_importar")
