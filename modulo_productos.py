@@ -219,10 +219,17 @@ def _tab_actualizar(es_antigua: bool = False):
         prev_edits = st.session_state[ED_KEY].get("edited_rows", {})
 
     # ── Construir DataFrame ───────────────────────────────────────────────────
+    # IMPORTANTE: el DataFrame base SIEMPRE lleva los valores ORIGINALES en las
+    # columnas editables (Precio/Costo Nuevo arrancan = al actual). NO se
+    # reinyectan las ediciones previas: el data_editor mantiene sus cambios por
+    # su cuenta (edited_rows). Reinyectar causaba que cada Enter "resetee" la
+    # celda, impidiendo editar varias a la vez.
     rows = []
     for idx, p in enumerate(filtrados):
         cs = float(p.get("costo")  or 0)
         ps = float(p.get("precio") or 0)
+        # Solo para el cálculo del margen en vivo leemos las ediciones previas,
+        # pero NO las metemos en las columnas editables del df.
         edits   = prev_edits.get(idx, prev_edits.get(str(idx), {}))
         c_nuevo = float(edits.get("Costo Nuevo",  cs))
         p_nuevo = float(edits.get("Precio Nuevo", ps))
@@ -234,8 +241,8 @@ def _tab_actualizar(es_antigua: bool = False):
             "Precio Act":    ps,
             "Costo Act":     cs,
             "Margen Act":    _mg_txt(mg_act),
-            "Precio Nuevo":  p_nuevo,
-            "Costo Nuevo":   c_nuevo,
+            "Precio Nuevo":  ps,   # arranca = actual; el editor guarda los cambios
+            "Costo Nuevo":   cs,   # arranca = actual; el editor guarda los cambios
             "Margen Nuevo":  _mg_txt(mg_new, mg_act),
             "_rn":           p["row_num"],
             "_cs":           cs,
