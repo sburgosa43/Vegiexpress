@@ -683,47 +683,49 @@ def _tab_importar():
                            f"**{resp['cliente']['nombre']}** · "
                            f"{len(resp['lineas'])} línea(s)")
 
-            # Botones
+            # Botones (sin disabled — validamos adentro para ver siempre el motivo)
             b1, b2 = st.columns(2)
             if b1.button("✅ Importar pedido", type="primary",
-                         key=f"hog_imp_{idx}",
-                         disabled=not _puede):
-                with st.spinner("Guardando..."):
-                    r_imp = _importar_pedido(resp, fecha_ent, cat_info, cli_precio)
-                # Diagnóstico siempre visible
-                st.caption(f"🔎 Cliente: {r_imp['nombre_cli']} · "
-                           f"items armados: {r_imp['items_armados']} · "
-                           f"filas escritas: {r_imp['filas']}")
-                if r_imp.get("detalle"):
-                    st.caption("Productos: " + " | ".join(r_imp["detalle"]))
-                if r_imp.get("error"):
-                    st.error(f"❌ Error: {r_imp['error']}")
-                elif r_imp["filas"] > 0:
-                    # Verificar que REALMENTE se escribió releyendo pedidos
-                    try:
-                        from excel_helper import leer_pedidos
-                        leer_pedidos.clear()
-                        _peds = leer_pedidos()
-                        _encontrados = sum(
-                            1 for p in _peds
-                            if p["cliente"] == r_imp["nombre_cli"]
-                            and p["fecha"] == fecha_ent)
-                        st.success(f"✅ {r_imp['filas']} línea(s) escritas. "
-                                   f"Verificación: {_encontrados} línea(s) de "
-                                   f"{r_imp['nombre_cli']} encontradas en Pedidos "
-                                   f"para el {fecha_ent.strftime('%d/%m/%Y')}.")
-                        if _encontrados == 0:
-                            st.error("⚠️ Se reportó escritura pero NO aparece al "
-                                     "releer. Puede ser un problema de permisos de "
-                                     "escritura en el Sheet de Pedidos, o que el "
-                                     "Sheet de Pedidos no esté compartido con "
-                                     "permiso de **Editor** (no solo Lector).")
-                    except Exception as _ve:
-                        st.success(f"✅ {r_imp['filas']} línea(s) importadas.")
-                        st.caption(f"(No se pudo verificar: {_ve})")
+                         key=f"hog_imp_{idx}"):
+                if not _tiene_cli:
+                    st.error("❌ Falta asignar el CLIENTE. Usá el selector arriba.")
+                elif not _tiene_lin:
+                    st.error(f"❌ No hay productos con match "
+                             f"({len(resp['sin_match'])} sin coincidencia).")
                 else:
-                    st.warning(f"No se escribió ninguna fila. "
-                               f"Respuesta del guardado: {r_imp.get('res')}")
+                    st.info("⏳ Importando...")
+                    r_imp = _importar_pedido(resp, fecha_ent, cat_info, cli_precio)
+                    # Diagnóstico siempre visible
+                    st.caption(f"🔎 Cliente: {r_imp['nombre_cli']} · "
+                               f"items armados: {r_imp['items_armados']} · "
+                               f"filas escritas: {r_imp['filas']}")
+                    if r_imp.get("detalle"):
+                        st.caption("Productos: " + " | ".join(r_imp["detalle"]))
+                    if r_imp.get("error"):
+                        st.error(f"❌ Error: {r_imp['error']}")
+                    elif r_imp["filas"] > 0:
+                        # Verificar que REALMENTE se escribió releyendo pedidos
+                        try:
+                            from excel_helper import leer_pedidos
+                            leer_pedidos.clear()
+                            _peds = leer_pedidos()
+                            _encontrados = sum(
+                                1 for p in _peds
+                                if p["cliente"] == r_imp["nombre_cli"]
+                                and p["fecha"] == fecha_ent)
+                            st.success(f"✅ {r_imp['filas']} línea(s) escritas. "
+                                       f"Verificación: {_encontrados} línea(s) de "
+                                       f"{r_imp['nombre_cli']} en Pedidos "
+                                       f"para el {fecha_ent.strftime('%d/%m/%Y')}.")
+                            if _encontrados == 0:
+                                st.error("⚠️ Escritura reportada pero NO aparece "
+                                         "al releer. Revisá permisos de Editor.")
+                        except Exception as _ve:
+                            st.success(f"✅ {r_imp['filas']} línea(s) importadas.")
+                            st.caption(f"(No se pudo verificar: {_ve})")
+                    else:
+                        st.warning(f"No se escribió ninguna fila. "
+                                   f"Respuesta del guardado: {r_imp.get('res')}")
 
             if b2.button("⏭️ Omitir", key=f"hog_skip_{idx}",
                          help="Marca como procesada sin crear pedido"):
