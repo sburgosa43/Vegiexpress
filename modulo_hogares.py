@@ -117,8 +117,10 @@ def _match_producto(nombre_form: str, cat_map: dict) -> tuple[str | None, str]:
 
 
 # ── Leer y parsear respuestas ─────────────────────────────────────────────────
+@st.cache_data(ttl=60, show_spinner=False)
 def _leer_respuestas() -> tuple[list[str], list[list]]:
-    """Retorna (headers, rows) del sheet de respuestas."""
+    """Retorna (headers, rows) del sheet de respuestas. Cacheado 60s para
+    no saturar la cuota de lecturas de Google Sheets."""
     try:
         sheet = _abrir_form_sheet()
         todas = sheet.get_all_values()
