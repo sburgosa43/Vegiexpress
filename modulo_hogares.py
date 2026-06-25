@@ -468,13 +468,6 @@ def _tab_importar():
     clientes   = cargar_clientes()
     cli_map    = {c["email"].lower().strip(): c for c in clientes if c.get("email")}
 
-    # ── TEST: botón mínimo para verificar si los clics funcionan ───────────────
-    _test_n = st.session_state.get("hog_test_counter", 0)
-    if st.button(f"🧪 TEST CLICK (contador: {_test_n})", key="hog_test_click_btn"):
-        st.session_state["hog_test_counter"] = _test_n + 1
-        st.rerun()
-    st.caption("Si el contador sube al presionar TEST CLICK, los botones funcionan.")
-
     # ── Procesar importación pendiente (fuera del expander, sobrevive al rerun) ──
     if "hog_importar" in st.session_state:
         _imp = st.session_state.pop("hog_importar")
@@ -729,27 +722,27 @@ def _tab_importar():
                            f"**{resp['cliente']['nombre']}** · "
                            f"{len(resp['lineas'])} línea(s)")
 
-            # Botones (sin disabled — validamos adentro para ver siempre el motivo)
-            b1, b2 = st.columns(2)
-            if b1.button("✅ Importar pedido", type="primary",
-                         key=f"hog_imp_{_uid}"):
-                if not _tiene_cli:
-                    st.session_state["hog_msg"] = ("error",
-                        "❌ Falta asignar el CLIENTE antes de importar.")
-                elif not _tiene_lin:
-                    st.session_state["hog_msg"] = ("error",
-                        "❌ No hay productos con match para importar.")
-                else:
-                    # Guardar la intención de importar; se procesa al inicio del tab
-                    st.session_state["hog_importar"] = {
-                        "resp": resp, "fecha": fecha_ent,
-                    }
-                st.rerun()
+        # ── Botones FUERA del expander (acá los clics SÍ se registran) ──
+        b1, b2 = st.columns(2)
+        if b1.button("✅ Importar pedido", type="primary",
+                     key=f"hog_imp_{_uid}"):
+            if not _tiene_cli:
+                st.session_state["hog_msg"] = ("error",
+                    "❌ Falta asignar el CLIENTE antes de importar.")
+            elif not _tiene_lin:
+                st.session_state["hog_msg"] = ("error",
+                    "❌ No hay productos con match para importar.")
+            else:
+                # Guardar la intención de importar; se procesa al inicio del tab
+                st.session_state["hog_importar"] = {
+                    "resp": resp, "fecha": fecha_ent,
+                }
+            st.rerun()
 
-            if b2.button("⏭️ Omitir", key=f"hog_skip_{_uid}",
-                         help="Marca como procesada sin crear pedido"):
-                _registrar_importado(ts, resp["nombre_cli"] or "omitido", 0)
-                st.rerun()
+        if b2.button("⏭️ Omitir", key=f"hog_skip_{_uid}",
+                     help="Marca como procesada sin crear pedido"):
+            _registrar_importado(ts, resp["nombre_cli"] or "omitido", 0)
+            st.rerun()
 
     st.divider()
     st.caption(f"Sheet del formulario: `{FORM_SHEET_ID}`")
