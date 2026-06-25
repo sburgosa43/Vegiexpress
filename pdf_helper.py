@@ -1238,27 +1238,30 @@ def generar_listado_checklist(clientes_grupos: list,
         t.setStyle(BASE_STYLE)
         return t
 
-    # ── Estimar filas por frame (muy conservador — nombres largos inflan filas) ──
-    # Usar 40% del frame como máximo seguro por bloque
-    CAP = 30   # filas por bloque (margen de seguridad para no desbordar)
+    # ── Máximo de filas por bloque ─────────────────────────────────────────────
+    CAP = 48
 
-    # ── Construir story ───────────────────────────────────────────────────────
+    # ── Construir story midiendo alturas para forzar salto de columna ──────────
+    # Medimos cuánto se llenó la columna. Cuando un pedido no cabe en lo que
+    # resta, FrameBreak lo manda COMPLETO a la otra columna (no se desborda).
     story = []
+    _usado = [0.0]
+    _EPS = 2 * mm
+
+    def _emitir(tbl):
+        _w, _h = tbl.wrap(HW, FH)
+        if _usado[0] > 0 and (_usado[0] + _h) > (FH - _EPS):
+            story.append(FrameBreak())
+            _usado[0] = 0.0
+        story.append(KeepTogether(tbl))
+        _usado[0] += _h
 
     for nombre, rows in clientes_grupos:
         if len(rows) <= CAP:
-            # Cliente completo en un solo bloque
-            story.append(KeepTogether(make_mini_table(rows)))
+            _emitir(make_mini_table(rows))
         else:
-            # Cliente grande: dividir en 2 mitades
-            mid    = (len(rows) + 1) // 2
-            blk1   = rows[:mid]
-            blk2   = rows[mid:]
-            t1     = make_mini_table(blk1)
-            t2     = make_mini_table(blk2)
-            # KeepTogether en cada bloque; irán a frames consecutivos
-            story.append(KeepTogether(t1))
-            story.append(KeepTogether(t2))
+            for _ini in range(0, len(rows), CAP):
+                _emitir(make_mini_table(rows[_ini:_ini + CAP]))
 
     # ── Callback: header por página ───────────────────────────────────────────
     today = date.today().strftime("%d/%m/%Y")
