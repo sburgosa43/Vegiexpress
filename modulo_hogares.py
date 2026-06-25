@@ -468,6 +468,43 @@ def _tab_importar():
     clientes   = cargar_clientes()
     cli_map    = {c["email"].lower().strip(): c for c in clientes if c.get("email")}
 
+    # ── Procesar importación pendiente (fuera del expander, sobrevive al rerun) ──
+    if "hog_importar" in st.session_state:
+        _imp = st.session_state.pop("hog_importar")
+        _resp_imp = _imp["resp"]
+        _fecha_imp = _imp["fecha"]
+        with st.spinner("Guardando pedido..."):
+            r_imp = _importar_pedido(_resp_imp, _fecha_imp, cat_info, cli_precio)
+        st.caption(f"🔎 Cliente: {r_imp['nombre_cli']} · "
+                   f"items armados: {r_imp['items_armados']} · "
+                   f"filas escritas: {r_imp['filas']}")
+        if r_imp.get("detalle"):
+            st.caption("Productos: " + " | ".join(r_imp["detalle"]))
+        if r_imp.get("error"):
+            st.error(f"❌ Error al importar: {r_imp['error']}")
+        elif r_imp["filas"] > 0:
+            try:
+                from excel_helper import leer_pedidos
+                leer_pedidos.clear()
+                _peds = leer_pedidos()
+                _enc = sum(1 for p in _peds
+                           if p["cliente"] == r_imp["nombre_cli"]
+                           and p["fecha"] == _fecha_imp)
+                st.success(f"✅ {r_imp['filas']} línea(s) importadas para "
+                           f"{r_imp['nombre_cli']}. Verificación: {_enc} en Pedidos.")
+                if _enc == 0:
+                    st.error("⚠️ Reportó escritura pero no aparece al releer. "
+                             "Revisá permisos de Editor en el Sheet de Pedidos.")
+            except Exception as _ve:
+                st.success(f"✅ {r_imp['filas']} línea(s) importadas.")
+        else:
+            st.warning(f"No se escribió ninguna fila. Detalle: {r_imp.get('res')}")
+
+    # Mensaje pendiente de validación (cliente/líneas faltantes)
+    if "hog_msg" in st.session_state:
+        _tipo, _txt = st.session_state.pop("hog_msg")
+        getattr(st, _tipo)(_txt)
+
     # ── Parámetros de importación ─────────────────────────────────────────────
     c1, c2 = st.columns(2)
     fecha_ent = c1.date_input("📅 Fecha de entrega", value=date.today(),
@@ -686,52 +723,21 @@ def _tab_importar():
                            f"{len(resp['lineas'])} línea(s)")
 
             # Botones (sin disabled — validamos adentro para ver siempre el motivo)
-            st.caption(f"DEBUG: uid={_uid} · cliente={'sí' if _tiene_cli else 'NO'} "
-                       f"· líneas={len(resp['lineas'])}")
             b1, b2 = st.columns(2)
-            _clicked = b1.button("✅ Importar pedido", type="primary",
-                                  key=f"hog_imp_{_uid}")
-            if _clicked:
-                st.warning("DEBUG: botón presionado, ejecutando importación...")
+            if b1.button("✅ Importar pedido", type="primary",
+                         key=f"hog_imp_{_uid}"):
                 if not _tiene_cli:
-                    st.error("❌ Falta asignar el CLIENTE. Usá el selector arriba.")
+                    st.session_state["hog_msg"] = ("error",
+                        "❌ Falta asignar el CLIENTE antes de importar.")
                 elif not _tiene_lin:
-                    st.error(f"❌ No hay productos con match "
-                             f"({len(resp['sin_match'])} sin coincidencia).")
+                    st.session_state["hog_msg"] = ("error",
+                        "❌ No hay productos con match para importar.")
                 else:
-                    st.info("⏳ Importando...")
-                    r_imp = _importar_pedido(resp, fecha_ent, cat_info, cli_precio)
-                    # Diagnóstico siempre visible
-                    st.caption(f"🔎 Cliente: {r_imp['nombre_cli']} · "
-                               f"items armados: {r_imp['items_armados']} · "
-                               f"filas escritas: {r_imp['filas']}")
-                    if r_imp.get("detalle"):
-                        st.caption("Productos: " + " | ".join(r_imp["detalle"]))
-                    if r_imp.get("error"):
-                        st.error(f"❌ Error: {r_imp['error']}")
-                    elif r_imp["filas"] > 0:
-                        # Verificar que REALMENTE se escribió releyendo pedidos
-                        try:
-                            from excel_helper import leer_pedidos
-                            leer_pedidos.clear()
-                            _peds = leer_pedidos()
-                            _encontrados = sum(
-                                1 for p in _peds
-                                if p["cliente"] == r_imp["nombre_cli"]
-                                and p["fecha"] == fecha_ent)
-                            st.success(f"✅ {r_imp['filas']} línea(s) escritas. "
-                                       f"Verificación: {_encontrados} línea(s) de "
-                                       f"{r_imp['nombre_cli']} en Pedidos "
-                                       f"para el {fecha_ent.strftime('%d/%m/%Y')}.")
-                            if _encontrados == 0:
-                                st.error("⚠️ Escritura reportada pero NO aparece "
-                                         "al releer. Revisá permisos de Editor.")
-                        except Exception as _ve:
-                            st.success(f"✅ {r_imp['filas']} línea(s) importadas.")
-                            st.caption(f"(No se pudo verificar: {_ve})")
-                    else:
-                        st.warning(f"No se escribió ninguna fila. "
-                                   f"Respuesta del guardado: {r_imp.get('res')}")
+                    # Guardar la intención de importar; se procesa al inicio del tab
+                    st.session_state["hog_importar"] = {
+                        "resp": resp, "fecha": fecha_ent,
+                    }
+                st.rerun()
 
             if b2.button("⏭️ Omitir", key=f"hog_skip_{_uid}",
                          help="Marca como procesada sin crear pedido"):
