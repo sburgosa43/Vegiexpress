@@ -2,19 +2,9 @@
 modulo_pedidos_entrantes.py — Revisión y aprobación de pedidos del catálogo cliente.
 """
 import streamlit as st
-
-def _conf(key: str, msg: str):
-    """Guarda mensaje de confirmación para mostrar en el próximo render."""
-    st.session_state[f"_conf_{key}"] = msg
-
-def _show_conf(key: str):
-    """Muestra y consume el mensaje de confirmación (desaparece en siguiente acción)."""
-    msg = st.session_state.pop(f"_conf_{key}", None)
-    if msg:
-        st.success(msg)
-
 import pandas as pd
 from datetime import date
+from utils import _conf, _show_conf
 
 
 def mostrar():

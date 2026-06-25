@@ -1434,10 +1434,11 @@ def boton_imprimir_html(pdf_bytes: bytes, fn_id: str,
                         label: str = "Imprimir",
                         color: str = "#2D7A2D") -> str:
     """
-    Genera el HTML+JS de un botón que abre el PDF en nueva pestaña e imprime.
-    Patrón unificado: usado por modulo_gestion, modulo_envios.
-    Usa placeholders (no f-string) en el bloque JS para evitar corrupción de
-    llaves. Renderizar con: components.html(boton_imprimir_html(...), height=44)
+    Genera el HTML+JS de un botón que abre el PDF en una pestaña nueva con el
+    visor PDF nativo del navegador, donde el usuario imprime con Ctrl+P
+    respetando márgenes y tamaño real (igual que Adobe). Imprimir desde un
+    iframe embebido reescala y pierde márgenes; por eso abrimos en pestaña.
+    Patrón unificado: usado por modulo_gestion, modulo_envios, modulo_proveedores.
 
     fn_id: identificador único de la función JS (sin guiones ni puntos).
     """
@@ -1445,14 +1446,10 @@ def boton_imprimir_html(pdf_bytes: bytes, fn_id: str,
     b64 = base64.b64encode(pdf_bytes).decode()
     fn  = "imp_" + str(fn_id).replace("-", "_").replace(".", "_").replace(" ", "_")
 
-    # Método robusto: iframe oculto que carga el PDF y dispara print desde su
-    # propia ventana cuando termina de cargar (onload). Es mucho más confiable
-    # que window.open + setTimeout, que el navegador suele bloquear.
-    # El iframe carga el PDF directamente. La clave para que NO se reescale al
-    # imprimir es abrir el PDF en su visor nativo (que respeta el tamaño real) y
-    # dejar que el usuario imprima a 100%. Forzamos el visor del navegador con
-    # #zoom y abrimos en pestaña nueva como método principal (el más fiable para
-    # respetar márgenes), con impresión automática vía iframe como complemento.
+    # OPCIÓN A: abrir el PDF en pestaña nueva con el visor NATIVO del navegador
+    # (igual que Adobe). Ahí el usuario imprime con Ctrl+P respetando márgenes y
+    # tamaño real. Imprimir desde un iframe embebido reescala el PDF y pierde los
+    # márgenes; el visor nativo no. Por eso abrimos en pestaña en vez de iframe.
     tmpl = (
         "<script>"
         "function __FNID__(){"
@@ -1462,20 +1459,7 @@ def boton_imprimir_html(pdf_bytes: bytes, fn_id: str,
         "for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);"
         "var blob=new Blob([arr],{type:'application/pdf'});"
         "var url=URL.createObjectURL(blob);"
-        "var old=document.getElementById('ifr__FNID__');"
-        "if(old){old.parentNode.removeChild(old);}"
-        "var ifr=document.createElement('iframe');"
-        "ifr.id='ifr__FNID__';"
-        "ifr.style.position='fixed';ifr.style.right='0';ifr.style.bottom='0';"
-        "ifr.style.width='0';ifr.style.height='0';ifr.style.border='0';"
-        "ifr.src=url;"
-        "ifr.onload=function(){"
-        "setTimeout(function(){"
-        "try{ifr.contentWindow.focus();ifr.contentWindow.print();}"
-        "catch(e){var w=window.open(url,'_blank');}"
-        "},600);"
-        "};"
-        "document.body.appendChild(ifr);"
+        "window.open(url,'_blank');"
         "}"
         "</script>"
         "<button onclick='__FNID__()' style='"

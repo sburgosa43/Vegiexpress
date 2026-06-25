@@ -269,7 +269,7 @@ def _tab_listados(todos, semana, año):
         import streamlit.components.v1 as components
         components.html(
             _btn_imp_lst(pdf_bytes, f"listado_{semana}_{año}",
-                         "🖨️ Imprimir directo", "#2D7A2D"),
+                         "🖨️ Abrir e imprimir", "#2D7A2D"),
             height=48)
 
     # ── Vista previa embebida (blob URL) ────────────────────────────────────

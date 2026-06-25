@@ -11,8 +11,7 @@ from excel_helper import (leer_productos_con_fila, agregar_producto,
 from data_helper import (cargar_productos, get_proveedores,
                          guardar_precio_especial, eliminar_precio_especial,
                          leer_precios_capa, limpiar_cache_precios)
-
-# ── Constantes ────────────────────────────────────────────────────────────────
+from utils import _conf, _show_conf
 UNIDADES   = ["Libra","Unidad","Manojo","Caja","Kilo","Onza","Docena","Bandeja",
                "Galon","Paquete","Penca","Red","lbs","libra","1 Onza","4 Onzas",
                "6 Onzas","8 Onzas","12 Onzas","16 Onzas","32 Onzas","Gramo",
@@ -34,13 +33,6 @@ def _proveedores():
                     "Importado","Otro","Sin Proveedor"]
 
 # ── Helpers de UI ─────────────────────────────────────────────────────────────
-def _conf(key, msg):
-    st.session_state[f"_conf_{key}"] = msg
-
-def _show_conf(key):
-    msg = st.session_state.pop(f"_conf_{key}", None)
-    if msg: st.success(msg)
-
 def _ref_precios(costo: float, tipo2: str):
     segs = {"Premium":50,"Alto":40,"Media Alta":35,"Media":30,
             "Media Baja":25,"Baja":20,"Sin Segmento":0}

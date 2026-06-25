@@ -2,26 +2,15 @@
 modulo_gestion.py — Gestión de Pedidos (Revisar y Editar)
 """
 import streamlit as st
-
-def _conf(key: str, msg: str):
-    """Guarda mensaje de confirmación para mostrar en el próximo render."""
-    st.session_state[f"_conf_{key}"] = msg
-
-def _show_conf(key: str):
-    """Muestra y consume el mensaje de confirmación (desaparece en siguiente acción)."""
-    msg = st.session_state.pop(f"_conf_{key}", None)
-    if msg:
-        st.success(msg)
-
 import base64
 from datetime import date
-from data_helper  import cargar_clientes, cli_precio
+from utils import _conf, _show_conf
+from data_helper  import cargar_clientes, cli_precio, cargar_productos
 from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido,
-                          editar_linea, editar_fecha_pedido, eliminar_pedido)
+                          editar_linea, editar_fecha_pedido, eliminar_pedido,
+                          guardar_cambios_precio)
 from order_helper import guardar_edicion_pedidos
-from data_helper import cargar_clientes, cargar_productos
 from pdf_helper import generar_envio, nombre_archivo
-from excel_helper import guardar_cambios_precio
 
 
 MESES_LABEL = {

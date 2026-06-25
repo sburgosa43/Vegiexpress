@@ -6,11 +6,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 import calendar
-
-
-def _sf(v):
-    try:    return float(str(v).replace(",","").strip() or 0)
-    except: return 0.0
+from utils import _sf
 
 
 MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",

@@ -6,6 +6,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date, datetime
 from gsheets import get_all_rows, append_rows, update_cells, ws as _ws
+from utils import _sf, _si
 
 _K_G  = "gastos"
 _K_GC = "gastosconfig"
@@ -60,17 +61,6 @@ def _proveedores():
     except Exception:
         return ["CENMA","Patojas","El Huerto","Productor Directo",
                 "Importado","Otro","Sin Proveedor"]
-
-
-# ── Helpers numericos ─────────────────────────────────────────────────────────
-def _sf(v):
-    try:    return float(str(v).replace(",","").strip() or 0)
-    except: return 0.0
-
-def _si(v):
-    try:    return int(float(str(v).replace(",","").strip() or 0))
-    except: return 0
-
 
 # ── Config I/O ────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=600, show_spinner=False)

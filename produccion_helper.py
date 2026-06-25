@@ -6,6 +6,7 @@ Auto-crea las 4 hojas con datos precargados la primera vez.
 import streamlit as st
 from datetime import date, datetime, timedelta
 from gsheets import get_all_rows, append_rows, update_cells, ensure_ws, ws
+from utils import _sf, _parse_fecha
 
 # ── Nombres de hojas (claves en HOJAS) ────────────────────────────────────────
 _K_SIEMBRA = "produccion"
@@ -75,27 +76,6 @@ def inicializar_hojas() -> dict:
     # La hoja Produccion ya existe (la creo el usuario), pero garantizamos headers
     creadas["siembra"]  = ensure_ws(_K_SIEMBRA, _HDR_SIEMBRA, [])
     return creadas
-
-
-# ── Helpers de parseo ─────────────────────────────────────────────────────────
-def _sf(v) -> float:
-    try:
-        return float(str(v).replace(",", "").strip() or 0)
-    except Exception:
-        return 0.0
-
-
-def _parse_fecha(s):
-    if not s:
-        return None
-    s = str(s).strip()
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y"):
-        try:
-            return datetime.strptime(s, fmt).date()
-        except Exception:
-            continue
-    return None
-
 
 # ── Lecturas cacheadas ────────────────────────────────────────────────────────
 @st.cache_data(ttl=120, show_spinner=False)

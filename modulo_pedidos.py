@@ -135,7 +135,8 @@ def _paso1():
     else:
         st.info("Seleccioná un cliente para continuar.")
 
-# ── PASO 2 ────────────────────────────────────────────────────────────────────
+# ── PASO 2 — fragmentado para que "+ líneas" no reruna toda la app ────────────
+@st.fragment
 def _paso2():
     c   = st.session_state.ped_cliente
     fec = st.session_state.ped_fecha
@@ -184,15 +185,18 @@ def _paso2():
     with c1:
         if st.button("+ 5 líneas"):
             st.session_state.ped_grid   = editado
-            st.session_state.ped_nfilas = len(editado) + 5; st.rerun()
+            st.session_state.ped_nfilas = len(editado) + 5
+            st.rerun()          # scope="fragment" — solo re-dibuja esta sección
     with c2:
         if st.button("+ 10 líneas"):
             st.session_state.ped_grid   = editado
-            st.session_state.ped_nfilas = len(editado) + 10; st.rerun()
+            st.session_state.ped_nfilas = len(editado) + 10
+            st.rerun()          # scope="fragment"
     with c3:
         if st.button("🗑 Limpiar", type="secondary"):
             st.session_state.ped_grid   = None
-            st.session_state.ped_nfilas = 15; st.rerun()
+            st.session_state.ped_nfilas = 15
+            st.rerun()          # scope="fragment"
 
     if validas:
         total_est = sum(r["Cantidad"] * (cli_precio(c, r["Producto"])[0]
@@ -210,10 +214,12 @@ def _paso2():
     with bc:
         if st.button("← Cambiar cliente", type="secondary"):
             st.session_state.ped_grid = editado
-            st.session_state.ped_paso = 1; st.rerun()
+            st.session_state.ped_paso = 1
+            st.rerun(scope="app")   # cambia de paso → reruna toda la app
     with bx:
         if st.button("❌ Cancelar pedido", type="secondary"):
-            _reset_pedido(); st.rerun()
+            _reset_pedido()
+            st.rerun(scope="app")
     with bn:
         if st.button("Revisar y Confirmar →", type="primary"):
             lineas = []
@@ -233,7 +239,8 @@ def _paso2():
             else:
                 st.session_state.ped_grid   = editado
                 st.session_state.ped_lineas = lineas
-                st.session_state.ped_paso   = 3; st.rerun()
+                st.session_state.ped_paso   = 3
+                st.rerun(scope="app")   # avanza al paso 3
 
 # ── PASO 3 ────────────────────────────────────────────────────────────────────
 def _paso3():
@@ -322,7 +329,8 @@ def _paso3():
                 st.session_state.pop(f"ped_p3_{i}", None)
             st.session_state.ped_paso = 4; st.rerun()
 
-# ── PASO 4: COLA ──────────────────────────────────────────────────────────────
+# ── PASO 4: COLA — fragmentado para que borrar ítems no reruna toda la app ────
+@st.fragment
 def _paso4():
     cola = st.session_state.get(COLA_KEY, [])
     st.success(f"✅ Pedido agregado a la cola.")
@@ -337,7 +345,8 @@ def _paso4():
         if c2.button("🗑", key=f"del_{pedido['id']}_{i}",
                      help="Quitar de la cola"):
             cola.pop(i)
-            st.session_state[COLA_KEY] = cola; st.rerun()
+            st.session_state[COLA_KEY] = cola
+            st.rerun()          # scope="fragment" — solo actualiza la lista
 
     st.divider()
     total_cola = sum(p["total"] for p in cola)
@@ -353,7 +362,8 @@ def _paso4():
     with ba:
         if st.button("➕ Ingresar otro pedido", type="secondary",
                      use_container_width=True):
-            _reset_pedido(); st.rerun()
+            _reset_pedido()
+            st.rerun(scope="app")   # vuelve al paso 1
 
     with bg:
         lbl = f"📤 Grabar {len(cola)} pedido(s) al Excel"
@@ -372,7 +382,7 @@ def _paso4():
                     st.info("📊 Refrescá tablas dinámicas en Excel "
                             "(Datos → Actualizar todo).")
                     _reset_pedido()
-                    st.rerun()
+                    st.rerun(scope="app")   # reinicia el wizard completo
                 except Exception as e:
                     st.error(f"❌ Error al grabar: {e}")
 

@@ -13,6 +13,7 @@ Hojas (auto-creadas con datos precargados):
 """
 import streamlit as st
 from datetime import date, timedelta
+from utils import _sf, _parse_fecha
 import json, uuid
 
 # ── Claves de hojas ───────────────────────────────────────────────────────────
@@ -250,25 +251,6 @@ def _col_letra(n: int) -> str:
         n, r = divmod(n - 1, 26)
         s = chr(65 + r) + s
     return s
-
-
-def _sf(v) -> float:
-    try:
-        return float(str(v).replace(",", "").strip() or 0)
-    except (ValueError, AttributeError):
-        return 0.0
-
-
-def _parse_fecha(v):
-    if not v:
-        return None
-    from datetime import datetime
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(str(v).strip(), fmt).date()
-        except (ValueError, TypeError):
-            continue
-    return None
 
 
 def _calc_mezcla(aplicaciones: list, fert_map: dict) -> dict:
@@ -834,6 +816,7 @@ def _tab_siembras_activas():
 
 
 
+@st.fragment
 def _editor_fertilizacion(s, fert_map):
     """Editor de aplicaciones de fertilización de una siembra (editar/agregar/eliminar)."""
     st.markdown("**Editar fertilización** — corregí, agregá o eliminá aplicaciones.")
@@ -981,7 +964,7 @@ def _editor_fertilizacion(s, fert_map):
                 st.session_state.pop(k, None)
         st.session_state[f"prod_fert_{sid}"] = False
         st.success("✅ Fertilización actualizada.")
-        st.rerun()
+        st.rerun(scope="app")   # reruna toda la app para cerrar el editor
 
 
 # ── Vista: Cosecha / Cierre ───────────────────────────────────────────────────
