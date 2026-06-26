@@ -162,6 +162,7 @@ def _tab_nuevo():
 
 
 # ── TAB 2: Actualizar Producto ────────────────────────────────────────────────
+@st.fragment
 def _tab_actualizar(es_antigua: bool = False):
     """Tabla inline con data_editor — Actual vs Nuevo + Margen en vivo."""
     import pandas as pd
@@ -276,9 +277,27 @@ def _tab_actualizar(es_antigua: bool = False):
     if cambios:
         n = len(cambios)
         st.info(f"**{n}** producto(s) con cambios pendientes")
+
+        # Opción de actualizar también los pedidos de la semana actual
+        from datetime import date as _date
+        _hoy   = _date.today()
+        _sem   = _hoy.isocalendar()[1]
+        _año   = _hoy.year
+        upd_pedidos = st.checkbox(
+            f"📅 Actualizar también pedidos de la semana {_sem}/{_año}",
+            value=True, key=f"upd_pedidos_{lbl}",
+            help="Aplica los nuevos precios/costos a todos los pedidos activos "
+                 "de esta semana. Desmarcá si solo querés actualizar el catálogo.")
+        if upd_pedidos:
+            st.caption(f"✅ Se actualizará el catálogo + pedidos semana {_sem}/{_año}.")
+        else:
+            st.caption("⚠️ Solo se actualizará el catálogo. "
+                       "Los pedidos ya ingresados conservarán el precio anterior.")
+
         if st.button(f"💾 Guardar {n} cambio(s)", type="primary",
                      key=f"upd_save_all_{lbl}"):
-            for p, c_new, p_new, cs_orig, _ in cambios:
+            from excel_helper import actualizar_precio_semana
+            for p, c_new, p_new, cs_orig, ps_orig in cambios:
                 costo_cambio = abs(c_new - cs_orig) > 0.001
                 with st.spinner(f"Guardando {p['nombre']}..."):
                     editar_producto(p["row_num"],
@@ -286,11 +305,29 @@ def _tab_actualizar(es_antigua: bool = False):
                                     es_antigua)
                 if costo_cambio:
                     _cascade_parent(p["nombre"], c_new, todos)
-            # Clear editor state
+
+            if upd_pedidos:
+                # Actualizar también las filas de pedidos de la semana actual
+                cambios_sem = [{
+                    "producto":    p["nombre"],
+                    "precio_nuevo": p_new,
+                    "precio_ant":   ps_orig,
+                    "costo_nuevo":  c_new,
+                    "costo_ant":    cs_orig,
+                    "p_cambia":     abs(p_new   - ps_orig) > 0.001,
+                    "c_cambia":     abs(c_new   - cs_orig) > 0.001,
+                } for p, c_new, p_new, cs_orig, ps_orig in cambios]
+                with st.spinner(f"Actualizando pedidos semana {_sem}/{_año}..."):
+                    res = actualizar_precio_semana(
+                        cambios_sem, _sem, _año,
+                        actualizar_catalogo=False)  # catálogo ya se actualizó arriba
+                extra = f" · {res['filas_pedidos']} fila(s) de pedidos actualizadas"
+            else:
+                extra = ""
+
             st.session_state.pop(ED_KEY, None)
-            _conf("prod_upd",
-                  f"✅ {n} producto(s) actualizados.")
-            st.rerun()
+            _conf("prod_upd", f"✅ {n} producto(s) actualizados{extra}.")
+            st.rerun(scope="app")   # sale del fragment para refrescar la vista
 
     # ── Edición completa (expander) ───────────────────────────────────────────
     st.divider()

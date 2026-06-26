@@ -149,13 +149,17 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
                         "cantidad": float(l.get("cantidad") or 0),
                         "total": round(float(l.get("precio") or 0)*float(l.get("cantidad") or 0),2)}
                        for l in lineas_pdf]
-                _rb = _gen_rem(l0["cliente"], _lr, int(l0["semana"]),
-                               int(l0["año"]), fecha_ped.strftime("%d/%m/%Y"))
+                # Conversión defensiva: Sheets puede devolver float "26.0" o str "26"
+                _sem = int(float(str(l0.get("semana") or 0) or 0))
+                _año = int(float(str(l0.get("año")   or 2026) or 2026))
+                _fec = (fecha_ped.strftime("%d/%m/%Y")
+                        if hasattr(fecha_ped, "strftime") else str(fecha_ped))
+                _rb = _gen_rem(l0["cliente"], _lr, _sem, _año, _fec)
                 components.html(
                     _btn_imp(_rb, f"env_{sufijo}_{unico}", "🖨️ Remisión"),
                     height=44)
             except Exception as _e:
-                col_rem.caption("Rem: " + str(_e))
+                col_rem.warning(f"⚠️ Remisión: {_e}")
 
         with col_acc:
             if not cancelado:

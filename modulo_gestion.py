@@ -659,6 +659,7 @@ def _tab_remision(todos: list):
     )
 
 
+@st.fragment
 def _ajuste_precios():
     """Actualiza precios de productos en pedidos de la semana actual + catálogo."""
     _show_conf("ajuste")
@@ -784,7 +785,7 @@ def _ajuste_precios():
                           if upd_cat else " · Solo pedidos de esta semana"))
             _conf("ajuste", msg)
             st.session_state.pop("ajp_data", None)
-            st.rerun()
+            st.rerun(scope="app")
     else:
         st.info("Sin cambios detectados.")
 
