@@ -20,7 +20,7 @@ Para importar desde un módulo UI:
 from pdf_base import (
     _s, _p, _S, _logo_proporcional, boton_imprimir_html, nombre_archivo,
     VERDE_OSC, VERDE_LIM, GRIS_CARB, GRIS_CLR, GRIS_TAB, BLANCO,
-    LOGO_PATH, PAGE_W, PAGE_H, CONTENT_W, _MESES_ES,
+    LOGO_PATH, PAGE_W, PAGE_H, CONTENT_W, _MESES_ES, MESES_ES,
 )
 
 from pdf_envio       import generar_envio
@@ -36,7 +36,7 @@ __all__ = [
     "_s", "_p", "_S", "_logo_proporcional", "boton_imprimir_html",
     "nombre_archivo", "VERDE_OSC", "VERDE_LIM", "GRIS_CARB",
     "GRIS_CLR", "GRIS_TAB", "BLANCO", "LOGO_PATH",
-    "PAGE_W", "PAGE_H", "CONTENT_W", "_MESES_ES",
+    "PAGE_W", "PAGE_H", "CONTENT_W", "_MESES_ES", "MESES_ES",
     # envio
     "generar_envio",
     # facturacion

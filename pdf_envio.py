@@ -213,10 +213,3 @@ def generar_envio(cliente: dict, fecha: date, lineas: list, unico: str = "") -> 
 
     doc.build(story)
     return buffer.getvalue()
-
-
-# ── PDF DE FACTURACIÓN MENSUAL ────────────────────────────────────────────────
-MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
-             "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
-
-

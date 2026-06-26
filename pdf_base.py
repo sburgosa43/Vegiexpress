@@ -25,9 +25,14 @@ from reportlab.platypus import Image as RLImage
 VERDE_OSC = colors.HexColor('#2D7A2D')
 
 # Meses en español (nivel de módulo, reutilizable desde otros módulos)
+# Meses en español — dos variantes que usan distintos módulos:
 _MESES_ES = {1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo",
              6: "junio", 7: "julio", 8: "agosto", 9: "septiembre",
              10: "octubre", 11: "noviembre", 12: "diciembre"}
+
+# Lista con mayúsculas (índice 0-based: MESES_ES[mes-1])
+MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 VERDE_LIM = colors.HexColor('#8DC63F')
 GRIS_CARB = colors.HexColor('#4A4A4A')
 GRIS_CLR  = colors.HexColor('#F5F5F5')
