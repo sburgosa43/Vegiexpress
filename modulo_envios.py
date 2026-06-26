@@ -3,6 +3,7 @@ modulo_envios.py — Envíos y Facturación Semana Actual
 Tres zonas: Antigua & Chimal | Guatemala & Santiago | Rio
 """
 import streamlit as st
+import re
 import pandas as pd
 import base64
 import streamlit.components.v1 as components
@@ -142,24 +143,43 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
                 st.error(f"Error PDF: {e}")
 
         with col_rem:
-            try:
-                from pdf_helper import (generar_remision as _gen_rem,
-                                        boton_imprimir_html as _btn_imp)
-                _lr = [{"producto": l["producto"], "unidad": l.get("unidad",""),
+            # Sanitizar key: solo ASCII alfanumérico + guión bajo
+            _safe_uf = re.sub(r"[^a-zA-Z0-9_]", "_", f"{sufijo}_{unico}")
+            _rem_ss  = f"rem_pdf_{_safe_uf}"
+
+            # Botón para generar el PDF (la generación es cara; solo cuando se pide)
+            if st.button("📄 Remisión", key=f"btn_rem_{_safe_uf}",
+                         use_container_width=True):
+                try:
+                    from pdf_helper import generar_remision as _gr
+                    _lr2 = [{
+                        "producto": l.get("producto", ""),
+                        "unidad":   l.get("unidad",   ""),
                         "cantidad": float(l.get("cantidad") or 0),
-                        "total": round(float(l.get("precio") or 0)*float(l.get("cantidad") or 0),2)}
-                       for l in lineas_pdf]
-                # Conversión defensiva: Sheets puede devolver float "26.0" o str "26"
-                _sem = int(float(str(l0.get("semana") or 0) or 0))
-                _año = int(float(str(l0.get("año")   or 2026) or 2026))
-                _fec = (fecha_ped.strftime("%d/%m/%Y")
-                        if hasattr(fecha_ped, "strftime") else str(fecha_ped))
-                _rb = _gen_rem(l0["cliente"], _lr, _sem, _año, _fec)
-                components.html(
-                    _btn_imp(_rb, f"env_{sufijo}_{unico}", "🖨️ Remisión"),
-                    height=44)
-            except Exception as _e:
-                col_rem.warning(f"⚠️ Remisión: {_e}")
+                        "total":    round(float(l.get("precio") or 0)
+                                          * float(l.get("cantidad") or 0), 2),
+                    } for l in lineas_pdf]
+                    _sem2 = int(float(str(l0.get("semana") or 0) or 0))
+                    _año2 = int(float(str(l0.get("año") or 2026) or 2026))
+                    _fec2 = (fecha_ped.strftime("%d/%m/%Y")
+                             if hasattr(fecha_ped, "strftime") else str(fecha_ped))
+                    st.session_state[_rem_ss] = _gr(
+                        l0.get("cliente",""), _lr2, _sem2, _año2, _fec2)
+                except Exception as _e:
+                    st.session_state.pop(_rem_ss, None)
+                    st.error(f"Error generando remisión: {_e}")
+
+            # Mostrar botón de descarga si el PDF ya fue generado
+            if _rem_ss in st.session_state:
+                st.download_button(
+                    "⬇️ Descargar PDF",
+                    data=st.session_state[_rem_ss],
+                    file_name=f"remision_{_safe_uf}.pdf",
+                    mime="application/pdf",
+                    key=f"dl_rem_{_safe_uf}",
+                    use_container_width=True,
+                    type="primary",
+                )
 
         with col_acc:
             if not cancelado:

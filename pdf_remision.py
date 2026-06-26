@@ -100,12 +100,12 @@ def generar_remision(cliente: str, lineas: list,
     ]]
     total_gral = 0.0
     for l in lineas:
-        total_gral += float(l["total"] or 0)
+        total_gral += float(l.get("total") or 0)
         rows.append([
-            _p(_s(l["producto"]),       s_td),
-            _p(_s(l["unidad"]),         s_td_c),
-            _p(f"{l['cantidad']:g}",    s_td_c),
-            _p(f"Q {l['total']:,.2f}",  s_td_r),
+            _p(_s(l.get("producto","")), s_td),
+            _p(_s(l.get("unidad","")),  s_td_c),
+            _p(f"{float(l.get('cantidad') or 0):g}", s_td_c),
+            _p(f"Q {float(l.get('total') or 0):,.2f}",  s_td_r),
         ])
 
     # Fila de total
