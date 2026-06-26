@@ -143,43 +143,33 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
                 st.error(f"Error PDF: {e}")
 
         with col_rem:
-            # Sanitizar key: solo ASCII alfanumérico + guión bajo
-            _safe_uf = re.sub(r"[^a-zA-Z0-9_]", "_", f"{sufijo}_{unico}")
-            _rem_ss  = f"rem_pdf_{_safe_uf}"
+            # Key sin caracteres no-ASCII (sufijo "Río" → "R_")
+            _safe = re.sub(r"[^a-zA-Z0-9_]", "_", f"{sufijo}_{unico}")
 
-            # Botón para generar el PDF (la generación es cara; solo cuando se pide)
-            if st.button("📄 Remisión", key=f"btn_rem_{_safe_uf}",
-                         use_container_width=True):
-                try:
-                    from pdf_helper import generar_remision as _gr
-                    _lr2 = [{
-                        "producto": l.get("producto", ""),
-                        "unidad":   l.get("unidad",   ""),
-                        "cantidad": float(l.get("cantidad") or 0),
-                        "total":    round(float(l.get("precio") or 0)
-                                          * float(l.get("cantidad") or 0), 2),
-                    } for l in lineas_pdf]
-                    _sem2 = int(float(str(l0.get("semana") or 0) or 0))
-                    _año2 = int(float(str(l0.get("año") or 2026) or 2026))
-                    _fec2 = (fecha_ped.strftime("%d/%m/%Y")
-                             if hasattr(fecha_ped, "strftime") else str(fecha_ped))
-                    st.session_state[_rem_ss] = _gr(
-                        l0.get("cliente",""), _lr2, _sem2, _año2, _fec2)
-                except Exception as _e:
-                    st.session_state.pop(_rem_ss, None)
-                    st.error(f"Error generando remisión: {_e}")
+            try:
+                from pdf_helper import (generar_remision   as _gen_rem,
+                                        boton_imprimir_html as _btn_imp)
+                _lr = [{
+                    "producto": l.get("producto", ""),
+                    "unidad":   l.get("unidad",   ""),
+                    "cantidad": float(l.get("cantidad") or 0),
+                    "total":    round(
+                        float(l.get("precio") or 0) * float(l.get("cantidad") or 0), 2),
+                } for l in lineas_pdf]
+                _sem = int(float(str(l0.get("semana") or 0) or 0))
+                _año = int(float(str(l0.get("año") or 2026) or 2026))
+                _fec = (fecha_ped.strftime("%d/%m/%Y")
+                        if hasattr(fecha_ped, "strftime") else str(fecha_ped))
+                _rb = _gen_rem(l0.get("cliente", ""), _lr, _sem, _año, _fec)
 
-            # Mostrar botón de descarga si el PDF ya fue generado
-            if _rem_ss in st.session_state:
-                st.download_button(
-                    "⬇️ Descargar PDF",
-                    data=st.session_state[_rem_ss],
-                    file_name=f"remision_{_safe_uf}.pdf",
-                    mime="application/pdf",
-                    key=f"dl_rem_{_safe_uf}",
-                    use_container_width=True,
-                    type="primary",
+                # Mismo patrón que modulo_gestion _tab_remision:
+                # abrir en pestaña nueva → el usuario imprime con Ctrl+P
+                components.html(
+                    _btn_imp(_rb, f"rem_{_safe}", "🖨️ Imprimir Remisión"),
+                    height=44,
                 )
+            except Exception as _e:
+                st.error(f"Remisión: {type(_e).__name__}: {_e}")
 
         with col_acc:
             if not cancelado:
