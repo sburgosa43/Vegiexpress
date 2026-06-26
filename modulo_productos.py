@@ -198,13 +198,25 @@ def _tab_actualizar(es_antigua: bool = False):
         st.info("Sin productos con esos filtros.")
         return
 
+    # ── Margen neto: (1-ISR) * (precio - costo*(1+IVA)) / precio * 100 ─────────
+    IVA, ISR = 0.12, 0.05
+    def _mg(costo, precio):
+        if precio <= 0: return 0.0
+        return (1 - ISR) * (precio - costo * (1 + IVA)) / precio * 100
+
+    def _mg_badge(mg):
+        b = "🟢" if mg >= 35 else ("🟡" if mg >= 20 else "🔴")
+        return f"{b} {mg:.1f}%"
+
     # ── FORM: ningún widget dispara rerun hasta el submit ────────────────────
     # value=ps funciona correctamente dentro de un form porque no hay reruns
     # intermedios que puedan resetear el widget al valor original.
+    # Margen actual se muestra como referencia — el delta se calcula al guardar.
+    COL_W = [2.8, 1.1, 1.5, 1.1, 1.5, 1.4]
     with st.form(key=f"form_precios_{lbl}"):
-        h = st.columns([3.5, 1.3, 1.8, 1.3, 1.8])
-        for col, txt in zip(h, ["**Producto**", "**Precio actual**", "**Precio nuevo**",
-                                  "**Costo actual**", "**Costo nuevo**"]):
+        h = st.columns(COL_W)
+        for col, txt in zip(h, ["**Producto**", "**Precio act**", "**Precio nuevo**",
+                                  "**Costo act**", "**Costo nuevo**", "**Margen act**"]):
             col.markdown(txt)
         st.divider()
 
@@ -212,10 +224,12 @@ def _tab_actualizar(es_antigua: bool = False):
         for p in filtrados:
             ps  = float(p.get("precio") or 0)
             cs  = float(p.get("costo")  or 0)
-            row = st.columns([3.5, 1.3, 1.8, 1.3, 1.8])
-            row[0].write(f"{p['nombre']}")
+            mg  = _mg(cs, ps)
+            row = st.columns(COL_W)
+            row[0].write(p["nombre"])
             row[1].markdown(f"<small>Q {ps:.2f}</small>", unsafe_allow_html=True)
             row[3].markdown(f"<small>Q {cs:.2f}</small>", unsafe_allow_html=True)
+            row[5].markdown(f"<small>{_mg_badge(mg)}</small>", unsafe_allow_html=True)
             p_nuevo = row[2].number_input(
                 "", value=ps, min_value=0.0, step=0.25, format="%.2f",
                 key=f"fp_{lbl}_{p['row_num']}", label_visibility="collapsed")
@@ -245,7 +259,23 @@ def _tab_actualizar(es_antigua: bool = False):
         if not cambios:
             st.info("Sin cambios detectados.")
         else:
+            # Mostrar preview de margen ANTES de guardar
             n = len(cambios)
+            for p, c_new, p_new, cs_orig, ps_orig in cambios:
+                mg_old = _mg(cs_orig, ps_orig)
+                mg_new = _mg(c_new,   p_new)
+                delta  = mg_new - mg_old
+                arrow  = ("↑" if delta > 0.05 else ("↓" if delta < -0.05 else "→"))
+                color  = ("green" if delta > 0.05 else ("red" if delta < -0.05 else "gray"))
+                st.markdown(
+                    f"<small>**{p['nombre']}** — "
+                    f"Precio: Q{ps_orig:.2f}→Q{p_new:.2f} · "
+                    f"Costo: Q{cs_orig:.2f}→Q{c_new:.2f} · "
+                    f"Margen: {_mg_badge(mg_old)} "
+                    f"<span style='color:{color}'>{arrow} {mg_new:.1f}% "
+                    f"({'+' if delta>=0 else ''}{delta:.1f}pp)</span></small>",
+                    unsafe_allow_html=True)
+            st.divider()
             for p, c_new, p_new, cs_orig, ps_orig in cambios:
                 with st.spinner(f"Guardando {p['nombre']}..."):
                     editar_producto(p["row_num"],
