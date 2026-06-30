@@ -217,7 +217,7 @@ def mostrar():
                 "ISR": "Sí" if reg["isr"] else "No",
                 "Desc %": reg["desc"],
             })
-        diag.sort(key=lambda x: x["Cliente"])
+        diag.sort(key=lambda x: x["Cliente (nombre exacto)"])
         st.dataframe(pd.DataFrame(diag), hide_index=True,
                      use_container_width=True)
 
