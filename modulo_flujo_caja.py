@@ -205,12 +205,17 @@ def mostrar():
                    "agregar su nombre en las reglas de pago (config).")
         diag = []
         for f in filas_f:
-            reg = _reglas(f["Cliente"])
+            cli = f["Cliente"]
+            reg = _reglas(cli)
+            # Detectar qué clave de regla hizo match (para depurar nombres)
+            k = cli.lower().strip()
+            match = next((key for key in REGLAS if key in k), "— ninguna (lag 0) —")
             diag.append({
-                "Cliente": f["Cliente"],
-                "Rezago (semanas)": reg["lag"],
+                "Cliente (nombre exacto)": cli,
+                "Regla que matchea": match,
+                "Rezago (sem)": reg["lag"],
                 "ISR": "Sí" if reg["isr"] else "No",
-                "Descuento %": reg["desc"],
+                "Desc %": reg["desc"],
             })
         diag.sort(key=lambda x: x["Cliente"])
         st.dataframe(pd.DataFrame(diag), hide_index=True,
