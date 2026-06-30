@@ -198,6 +198,24 @@ def mostrar():
     st.caption("La columna con * es la semana actual. "
                "Los valores son el líquido a recibir cada semana de pago.")
 
+    # Diagnóstico: rezago de cobro aplicado a cada cliente
+    with st.expander("🔍 Ver rezago de cobro por cliente"):
+        st.caption("Verificá que cada cliente tenga el rezago correcto. Si un "
+                   "cliente muestra lag 0 pero debería cobrar después, hay que "
+                   "agregar su nombre en las reglas de pago (config).")
+        diag = []
+        for f in filas_f:
+            reg = _reglas(f["Cliente"])
+            diag.append({
+                "Cliente": f["Cliente"],
+                "Rezago (semanas)": reg["lag"],
+                "ISR": "Sí" if reg["isr"] else "No",
+                "Descuento %": reg["desc"],
+            })
+        diag.sort(key=lambda x: x["Cliente"])
+        st.dataframe(pd.DataFrame(diag), hide_index=True,
+                     use_container_width=True)
+
     # ── Resumen: total por área ───────────────────────────────────────────────
     st.divider()
     st.markdown("### 📊 Total por área (13 semanas)")
