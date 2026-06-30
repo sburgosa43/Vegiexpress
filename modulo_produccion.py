@@ -12,7 +12,7 @@ Hojas (auto-creadas con datos precargados):
   ProduccionFertilizantes — catálogo N-P-K
 """
 import streamlit as st
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import json, uuid
 
 # ── Claves de hojas ───────────────────────────────────────────────────────────
@@ -1117,6 +1117,45 @@ def _tab_cosecha():
 
 
 # ── Vista: Proyección ─────────────────────────────────────────────────────────
+def _abono_estado_siembra(id_siembra: str, todas_aplic: list) -> dict:
+    """Devuelve el estado de abonado por número de aplicación para una siembra.
+    Retorna {1: {"aplicado": bool, "fecha": "dd/mm/yyyy"|""},
+             2: {...}, ...} agrupando todas las filas de cada App.
+    """
+    estado = {}
+    for a in todas_aplic:
+        if a["id_siembra"] != id_siembra:
+            continue
+        nap = a["aplicacion"]
+        if nap <= 0:
+            continue
+        if nap not in estado:
+            estado[nap] = {"aplicado": False, "fecha": ""}
+        # Si CUALQUIER fila de esta App está marcada como aplicada, cuenta como sí
+        if str(a.get("aplicado_real", "No")).strip().lower() in ("si", "sí", "yes", "true"):
+            estado[nap]["aplicado"] = True
+            if a.get("fecha_aplicado"):
+                estado[nap]["fecha"] = a["fecha_aplicado"]
+    return estado
+
+
+def _marcar_abono(id_siembra: str, num_app: int, fecha_str: str):
+    """Marca (o desmarca) todas las filas de una aplicación como aplicadas,
+    con la fecha indicada. fecha_str vacío = desmarcar."""
+    aplic = _leer_aplicaciones(id_siembra)
+    aplicado = "Sí" if fecha_str else "No"
+    nuevas_filas = []
+    for a in aplic:
+        es_esta_app = (a["aplicacion"] == num_app)
+        nuevas_filas.append([
+            a["id_siembra"], a["aplicacion"], a["dia_desde"], a["dia_hasta"],
+            a["temporada"], a["fertilizante"], a["lbs"],
+            aplicado if es_esta_app else a["aplicado_real"],
+            fecha_str if es_esta_app else a["fecha_aplicado"],
+        ])
+    _reescribir_aplicaciones(id_siembra, nuevas_filas)
+
+
 def _tab_proyeccion():
     siembras = _leer_siembras()
     activas = [s for s in siembras if s["estado"] == "Activa"]
@@ -1128,19 +1167,59 @@ def _tab_proyeccion():
     hoy = date.today()
     import pandas as pd
 
+    # Lectura única de todas las aplicaciones (para estado de abono)
+    todas_aplic = _leer_aplicaciones()
+
+    # ── Tabla resumen con estado de abonado (sincronizada) ────────────────────
+    st.markdown("### 📋 Resumen de siembras activas")
+    st.caption("Marcá la fecha real de cada abonado. Se sincroniza con el "
+               "programa de fertilización de cada siembra.")
+
     rows = []
+    meta = []   # guarda id_siembra y estado por fila para el guardado
     for s in sorted(activas, key=lambda x: x["fecha_cosecha_est"] or date.max):
         if not s["fecha_cosecha_est"]:
             continue
         dias_falta = (s["fecha_cosecha_est"] - hoy).days
+        # Si ya pasó la fecha de cosecha, mostrar "Cosechado" en vez de negativo
+        if dias_falta < 0:
+            sem_falta_txt = "Cosechado"
+            dias_txt = "Cosechado"
+        else:
+            sem_falta_txt = dias_falta // 7
+            dias_txt = dias_falta
+
+        estado = _abono_estado_siembra(s["id_siembra"], todas_aplic)
+        f_ab1 = estado.get(1, {}).get("fecha", "")
+        f_ab2 = estado.get(2, {}).get("fecha", "")
+
+        def _to_date(txt):
+            if not txt:
+                return None
+            try:
+                return datetime.strptime(txt, "%d/%m/%Y").date()
+            except Exception:
+                try:
+                    return datetime.strptime(txt, "%Y-%m-%d").date()
+                except Exception:
+                    return None
+
         rows.append({
-            "Variedad":  s["variedad"],
-            "Lugar":     s["lugar"],
-            "Cosecha":   s["fecha_cosecha_est"].strftime("%d/%m/%Y"),
-            "Semana":    s["semana_cosecha"],
-            "En días":   dias_falta,
-            "Lbs mín":   s["lbs_proyectadas_min"],
-            "Lbs máx":   s["lbs_proyectadas_max"],
+            "Variedad":       s["variedad"],
+            "Lugar":          s["lugar"],
+            "Siembra":        (s["fecha_siembra"].strftime("%d/%m/%Y")
+                               if s["fecha_siembra"] else "—"),
+            "Cosecha":        s["fecha_cosecha_est"].strftime("%d/%m/%Y"),
+            "Sem.":           s["semana_cosecha"],
+            "Sem. faltan":    sem_falta_txt,
+            "Días faltan":    dias_txt,
+            "Abono 1":        _to_date(f_ab1),
+            "Abono 2":        _to_date(f_ab2),
+        })
+        meta.append({
+            "id_siembra": s["id_siembra"],
+            "f_ab1_orig": f_ab1,
+            "f_ab2_orig": f_ab2,
         })
 
     if not rows:
@@ -1148,10 +1227,49 @@ def _tab_proyeccion():
         return
 
     df = pd.DataFrame(rows)
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    edited = st.data_editor(
+        df,
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        disabled=["Variedad", "Lugar", "Siembra", "Cosecha", "Sem.",
+                  "Sem. faltan", "Días faltan"],
+        column_config={
+            "Abono 1": st.column_config.DateColumn(
+                "Abono 1", help="Fecha real del primer abonado",
+                format="DD/MM/YYYY"),
+            "Abono 2": st.column_config.DateColumn(
+                "Abono 2", help="Fecha real del segundo abonado",
+                format="DD/MM/YYYY"),
+        },
+        key="proy_abono_editor",
+    )
 
-    # Totales próximas 4 semanas
-    sem_actual = hoy.isocalendar()[1]
+    # ── Detectar cambios en abonos y guardar (sincroniza fertilización) ───────
+    if st.button("💾 Guardar abonados", type="primary", key="proy_guardar_abono"):
+        cambios = 0
+        for i, m_ in enumerate(meta):
+            new_ab1 = edited.iloc[i]["Abono 1"]
+            new_ab2 = edited.iloc[i]["Abono 2"]
+            new_ab1_str = new_ab1.strftime("%d/%m/%Y") if pd.notna(new_ab1) and new_ab1 else ""
+            new_ab2_str = new_ab2.strftime("%d/%m/%Y") if pd.notna(new_ab2) and new_ab2 else ""
+            if new_ab1_str != m_["f_ab1_orig"]:
+                _marcar_abono(m_["id_siembra"], 1, new_ab1_str)
+                cambios += 1
+            if new_ab2_str != m_["f_ab2_orig"]:
+                _marcar_abono(m_["id_siembra"], 2, new_ab2_str)
+                cambios += 1
+        if cambios:
+            st.success(f"✅ {cambios} abonado(s) actualizado(s) y sincronizado(s) "
+                       f"con el programa de fertilización.")
+            _leer_aplicaciones.clear()
+            st.rerun()
+        else:
+            st.info("No hubo cambios en los abonados.")
+
+    st.divider()
+
+    # ── Totales próximas 4 semanas ────────────────────────────────────────────
     prox = [s for s in activas
             if s["fecha_cosecha_est"]
             and 0 <= (s["fecha_cosecha_est"] - hoy).days <= 28]
@@ -1160,7 +1278,6 @@ def _tab_proyeccion():
         tmax = sum(s["lbs_proyectadas_max"] for s in prox)
         st.success(f"📊 Próximas 4 semanas: **{tmin:.0f} – {tmax:.0f} lbs** "
                    f"en {len(prox)} cosecha(s)")
-
 
 # ── Vista: Historial (siembras cosechadas) ────────────────────────────────────
 def _tab_historial():
