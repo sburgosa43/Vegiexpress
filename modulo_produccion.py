@@ -1156,6 +1156,60 @@ def _marcar_abono(id_siembra: str, num_app: int, fecha_str: str):
     _reescribir_aplicaciones(id_siembra, nuevas_filas)
 
 
+def _abonos_pendientes(activas: list, todas_aplic: list) -> list:
+    """Detecta abonados pendientes cuya semana teórica cae en la ventana de
+    3 semanas (la actual y 2 anteriores). La semana teórica de cada aplicación
+    se calcula desde la fecha de siembra + el día programado (dia_desde).
+
+    Retorna lista de dicts: {variedad, lugar, num_app, semana_teorica,
+    id_siembra, dias_atraso}.
+    """
+    hoy = date.today()
+    sem_actual = hoy.isocalendar()[1]
+    # Ventana: semana actual y las 2 anteriores
+    ventana = {sem_actual, sem_actual - 1, sem_actual - 2}
+
+    # Estado de abono por siembra (qué Apps ya están marcadas)
+    pendientes = []
+    for s in activas:
+        if not s["fecha_siembra"]:
+            continue
+        sid = s["id_siembra"]
+        estado = _abono_estado_siembra(sid, todas_aplic)
+        # Agrupar aplicaciones de esta siembra por número, con su dia_desde
+        apps_dia = {}
+        for a in todas_aplic:
+            if a["id_siembra"] != sid:
+                continue
+            nap = a["aplicacion"]
+            if nap <= 0:
+                continue
+            # Usar el menor dia_desde de la aplicación como inicio teórico
+            if nap not in apps_dia or a["dia_desde"] < apps_dia[nap]:
+                apps_dia[nap] = a["dia_desde"]
+
+        for nap, dia_desde in apps_dia.items():
+            # ¿Ya está aplicado? entonces no es pendiente
+            if estado.get(nap, {}).get("aplicado"):
+                continue
+            # Semana teórica = fecha_siembra + dia_desde
+            fecha_teorica = s["fecha_siembra"] + timedelta(days=int(dia_desde))
+            sem_teorica = fecha_teorica.isocalendar()[1]
+            if sem_teorica in ventana:
+                dias_atraso = (hoy - fecha_teorica).days
+                pendientes.append({
+                    "variedad":       s["variedad"],
+                    "lugar":          s["lugar"],
+                    "num_app":        nap,
+                    "semana_teorica": sem_teorica,
+                    "id_siembra":     sid,
+                    "dias_atraso":    dias_atraso,
+                })
+    # Ordenar por más atrasado primero
+    pendientes.sort(key=lambda x: -x["dias_atraso"])
+    return pendientes
+
+
 def _tab_proyeccion():
     siembras = _leer_siembras()
     activas = [s for s in siembras if s["estado"] == "Activa"]
@@ -1169,6 +1223,20 @@ def _tab_proyeccion():
 
     # Lectura única de todas las aplicaciones (para estado de abono)
     todas_aplic = _leer_aplicaciones()
+
+    # ── Alerta: abonados pendientes (ventana de 3 semanas) ────────────────────
+    pendientes = _abonos_pendientes(activas, todas_aplic)
+    if pendientes:
+        sem_actual = hoy.isocalendar()[1]
+        st.warning(f"🧪 **{len(pendientes)} abonado(s) pendiente(s)** "
+                   f"(semanas {sem_actual-2}–{sem_actual}):")
+        for p in pendientes:
+            atraso_txt = (f"hace {p['dias_atraso']} día(s)" if p["dias_atraso"] > 0
+                          else "esta semana")
+            st.caption(f"  · **{p['variedad']}** ({p['lugar']}) — "
+                       f"Abono {p['num_app']} tocaba semana {p['semana_teorica']} "
+                       f"({atraso_txt}), sin marcar")
+        st.divider()
 
     # ── Tabla resumen con estado de abonado (sincronizada) ────────────────────
     st.markdown("### 📋 Resumen de siembras activas")
