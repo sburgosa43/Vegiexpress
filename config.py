@@ -107,8 +107,7 @@ REGLAS_PAGO = {
     "nanajuana": {"lag": 1, "isr": True,  "desc": 0},
     "tijax":     {"lag": 1, "isr": True,  "desc": 0},
     "amis":      {"lag": 1, "isr": False, "desc": 15},
-    "hotelito":  {"lag": 0, "isr": False, "desc": 15},
-    "sundog":    {"lag": 0, "isr": False, "desc": 0},
+    "hotelito":  {"lag": 0, "isr": False, "desc": 12},
 }
 
 def reglas_cliente(nombre: str) -> dict:
