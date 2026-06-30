@@ -2,26 +2,26 @@
 modulo_gestion.py — Gestión de Pedidos (Revisar y Editar)
 """
 import streamlit as st
+
+def _conf(key: str, msg: str):
+    """Guarda mensaje de confirmación para mostrar en el próximo render."""
+    st.session_state[f"_conf_{key}"] = msg
+
+def _show_conf(key: str):
+    """Muestra y consume el mensaje de confirmación (desaparece en siguiente acción)."""
+    msg = st.session_state.pop(f"_conf_{key}", None)
+    if msg:
+        st.success(msg)
+
 import base64
 from datetime import date
-from utils import _conf, _show_conf
-from data_helper  import cargar_clientes, cli_precio, cargar_productos
+from data_helper  import cargar_clientes, cli_precio
 from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido,
-                          editar_linea, editar_fecha_pedido, eliminar_pedido,
-                          guardar_cambios_precio)
+                          editar_linea, editar_fecha_pedido, eliminar_pedido)
 from order_helper import guardar_edicion_pedidos
+from data_helper import cargar_clientes, cargar_productos
 from pdf_helper import generar_envio, nombre_archivo
-
-# ── SESSION STATE KEYS (prefijo: gest_ / ajp_) ────────────────────────────────
-# rev_sel:           list  — pedidos seleccionados en el tab Revisar
-# _conf_{key}:       str   — mensajes de confirmación post-rerun (patrón utils)
-# ajp_sem_cargada:   str   — "semana/año" de la última carga del ajuste precio
-# ajp_año_cargado:   int   — año de la última carga
-# ajp_data:          list  — datos cargados del ajuste precio/costo
-# g_hist, g_clis…:   varios — filtros del tab Revisar (generados con sufijo _rev)
-# key_nv_{unico}:    list  — líneas nuevas en edición por pedido
-# conf_{unico}:      bool  — confirmación de eliminación por pedido
-# ──────────────────────────────────────────────────────────────────────────────
+from excel_helper import guardar_cambios_precio
 
 
 MESES_LABEL = {
@@ -659,7 +659,6 @@ def _tab_remision(todos: list):
     )
 
 
-@st.fragment
 def _ajuste_precios():
     """Actualiza precios de productos en pedidos de la semana actual + catálogo."""
     _show_conf("ajuste")
@@ -785,7 +784,7 @@ def _ajuste_precios():
                           if upd_cat else " · Solo pedidos de esta semana"))
             _conf("ajuste", msg)
             st.session_state.pop("ajp_data", None)
-            st.rerun(scope="app")
+            st.rerun()
     else:
         st.info("Sin cambios detectados.")
 

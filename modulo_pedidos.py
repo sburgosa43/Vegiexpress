@@ -15,19 +15,6 @@ try:
 except ImportError:
     openpyxl = None
 
-# ── SESSION STATE KEYS (prefijo: ped_) ─────────────────────────────────────────
-# ped_paso:       int   — paso actual del wizard (1-4)
-# ped_cliente:    dict  — cliente seleccionado
-# ped_fecha:      date  — fecha de entrega
-# ped_lineas:     list  — líneas de productos confirmadas (paso 3→4)
-# ped_grid:       DataFrame — tabla editable del paso 2
-# ped_nfilas:     int   — cantidad de filas en la grilla
-# ped_p3_{i}:     float — precio ajustado por línea en el paso 3
-# cola_pedidos:   list  — cola de pedidos en memoria (multi-cliente)
-# costos_revisados: str — confirmación del aviso de costos
-# imp_raw_df:     DataFrame — datos importados desde Excel (tab importar)
-# ──────────────────────────────────────────────────────────────────────────────
-
 AVISO_KEY = "costos_revisados"
 COLA_KEY  = "cola_pedidos"
 
@@ -148,8 +135,7 @@ def _paso1():
     else:
         st.info("Seleccioná un cliente para continuar.")
 
-# ── PASO 2 — fragmentado para que "+ líneas" no reruna toda la app ────────────
-@st.fragment
+# ── PASO 2 ────────────────────────────────────────────────────────────────────
 def _paso2():
     c   = st.session_state.ped_cliente
     fec = st.session_state.ped_fecha
@@ -198,18 +184,15 @@ def _paso2():
     with c1:
         if st.button("+ 5 líneas"):
             st.session_state.ped_grid   = editado
-            st.session_state.ped_nfilas = len(editado) + 5
-            st.rerun()          # scope="fragment" — solo re-dibuja esta sección
+            st.session_state.ped_nfilas = len(editado) + 5; st.rerun()
     with c2:
         if st.button("+ 10 líneas"):
             st.session_state.ped_grid   = editado
-            st.session_state.ped_nfilas = len(editado) + 10
-            st.rerun()          # scope="fragment"
+            st.session_state.ped_nfilas = len(editado) + 10; st.rerun()
     with c3:
         if st.button("🗑 Limpiar", type="secondary"):
             st.session_state.ped_grid   = None
-            st.session_state.ped_nfilas = 15
-            st.rerun()          # scope="fragment"
+            st.session_state.ped_nfilas = 15; st.rerun()
 
     if validas:
         total_est = sum(r["Cantidad"] * (cli_precio(c, r["Producto"])[0]
@@ -227,12 +210,10 @@ def _paso2():
     with bc:
         if st.button("← Cambiar cliente", type="secondary"):
             st.session_state.ped_grid = editado
-            st.session_state.ped_paso = 1
-            st.rerun(scope="app")   # cambia de paso → reruna toda la app
+            st.session_state.ped_paso = 1; st.rerun()
     with bx:
         if st.button("❌ Cancelar pedido", type="secondary"):
-            _reset_pedido()
-            st.rerun(scope="app")
+            _reset_pedido(); st.rerun()
     with bn:
         if st.button("Revisar y Confirmar →", type="primary"):
             lineas = []
@@ -252,8 +233,7 @@ def _paso2():
             else:
                 st.session_state.ped_grid   = editado
                 st.session_state.ped_lineas = lineas
-                st.session_state.ped_paso   = 3
-                st.rerun(scope="app")   # avanza al paso 3
+                st.session_state.ped_paso   = 3; st.rerun()
 
 # ── PASO 3 ────────────────────────────────────────────────────────────────────
 def _paso3():
@@ -342,8 +322,7 @@ def _paso3():
                 st.session_state.pop(f"ped_p3_{i}", None)
             st.session_state.ped_paso = 4; st.rerun()
 
-# ── PASO 4: COLA — fragmentado para que borrar ítems no reruna toda la app ────
-@st.fragment
+# ── PASO 4: COLA ──────────────────────────────────────────────────────────────
 def _paso4():
     cola = st.session_state.get(COLA_KEY, [])
     st.success(f"✅ Pedido agregado a la cola.")
@@ -358,8 +337,7 @@ def _paso4():
         if c2.button("🗑", key=f"del_{pedido['id']}_{i}",
                      help="Quitar de la cola"):
             cola.pop(i)
-            st.session_state[COLA_KEY] = cola
-            st.rerun()          # scope="fragment" — solo actualiza la lista
+            st.session_state[COLA_KEY] = cola; st.rerun()
 
     st.divider()
     total_cola = sum(p["total"] for p in cola)
@@ -375,8 +353,7 @@ def _paso4():
     with ba:
         if st.button("➕ Ingresar otro pedido", type="secondary",
                      use_container_width=True):
-            _reset_pedido()
-            st.rerun(scope="app")   # vuelve al paso 1
+            _reset_pedido(); st.rerun()
 
     with bg:
         lbl = f"📤 Grabar {len(cola)} pedido(s) al Excel"
@@ -395,7 +372,7 @@ def _paso4():
                     st.info("📊 Refrescá tablas dinámicas en Excel "
                             "(Datos → Actualizar todo).")
                     _reset_pedido()
-                    st.rerun(scope="app")   # reinicia el wizard completo
+                    st.rerun()
                 except Exception as e:
                     st.error(f"❌ Error al grabar: {e}")
 

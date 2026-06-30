@@ -2,7 +2,17 @@
 modulo_clientes.py — CRUD de clientes
 """
 import streamlit as st
-from utils import _conf, _show_conf
+
+def _conf(key: str, msg: str):
+    """Guarda mensaje de confirmación para mostrar en el próximo render."""
+    st.session_state[f"_conf_{key}"] = msg
+
+def _show_conf(key: str):
+    """Muestra y consume el mensaje de confirmación (desaparece en siguiente acción)."""
+    msg = st.session_state.pop(f"_conf_{key}", None)
+    if msg:
+        st.success(msg)
+
 from data_helper  import cargar_clientes
 from excel_helper import agregar_cliente, editar_cliente, eliminar_cliente
 

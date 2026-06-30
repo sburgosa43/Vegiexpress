@@ -3,7 +3,7 @@ data_helper.py — Caché de clientes y productos via Google Sheets.
 """
 import streamlit as st
 from gsheets import get_all_rows
-from utils import _sf, _si
+from excel_helper import _sf, _si
 
 _K_CLI  = "clientes"
 _K_PROD = "productos"

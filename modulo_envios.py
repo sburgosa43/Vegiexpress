@@ -3,7 +3,6 @@ modulo_envios.py — Envíos y Facturación Semana Actual
 Tres zonas: Antigua & Chimal | Guatemala & Santiago | Rio
 """
 import streamlit as st
-import re
 import pandas as pd
 import base64
 import streamlit.components.v1 as components
@@ -143,33 +142,20 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
                 st.error(f"Error PDF: {e}")
 
         with col_rem:
-            # Key sin caracteres no-ASCII (sufijo "Río" → "R_")
-            _safe = re.sub(r"[^a-zA-Z0-9_]", "_", f"{sufijo}_{unico}")
-
             try:
-                from pdf_helper import (generar_remision   as _gen_rem,
+                from pdf_helper import (generar_remision as _gen_rem,
                                         boton_imprimir_html as _btn_imp)
-                _lr = [{
-                    "producto": l.get("producto", ""),
-                    "unidad":   l.get("unidad",   ""),
-                    "cantidad": float(l.get("cantidad") or 0),
-                    "total":    round(
-                        float(l.get("precio") or 0) * float(l.get("cantidad") or 0), 2),
-                } for l in lineas_pdf]
-                _sem = int(float(str(l0.get("semana") or 0) or 0))
-                _año = int(float(str(l0.get("año") or 2026) or 2026))
-                _fec = (fecha_ped.strftime("%d/%m/%Y")
-                        if hasattr(fecha_ped, "strftime") else str(fecha_ped))
-                _rb = _gen_rem(l0.get("cliente", ""), _lr, _sem, _año, _fec)
-
-                # Mismo patrón que modulo_gestion _tab_remision:
-                # abrir en pestaña nueva → el usuario imprime con Ctrl+P
+                _lr = [{"producto": l["producto"], "unidad": l.get("unidad",""),
+                        "cantidad": float(l.get("cantidad") or 0),
+                        "total": round(float(l.get("precio") or 0)*float(l.get("cantidad") or 0),2)}
+                       for l in lineas_pdf]
+                _rb = _gen_rem(l0["cliente"], _lr, int(l0["semana"]),
+                               int(l0["año"]), fecha_ped.strftime("%d/%m/%Y"))
                 components.html(
-                    _btn_imp(_rb, f"rem_{_safe}", "🖨️ Imprimir Remisión"),
-                    height=44,
-                )
+                    _btn_imp(_rb, f"env_{sufijo}_{unico}", "🖨️ Remisión"),
+                    height=44)
             except Exception as _e:
-                st.error(f"Remisión: {type(_e).__name__}: {_e}")
+                col_rem.caption("Rem: " + str(_e))
 
         with col_acc:
             if not cancelado:

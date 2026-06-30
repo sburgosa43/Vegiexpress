@@ -458,293 +458,339 @@ def mostrar():
         _tab_formulario()
 
 def _tab_importar():
-    from data_helper import cargar_clientes, cargar_productos, cli_precio
+    """Importación de pedidos desde el formulario.
+
+    Flujo limpio:
+      1. Leer formulario (respuestas nuevas, no importadas) — cacheado.
+      2. Cada pedido se muestra con: checkbox, cliente (auto/manual/crear),
+         productos con match, alertas de sin-match, y campo de texto libre
+         (productos extra) donde se pueden agregar productos del catálogo.
+      3. Botón único "Importar seleccionados" (fuera de las tarjetas).
+
+    Pensado genérico para reutilizar en Hoteles y Restaurantes: solo cambia
+    la configuración (FORM_SHEET_ID y las columnas a ignorar).
+    """
+    from data_helper import cargar_clientes, cli_precio
     from excel_helper import leer_productos_con_fila
-    # ── Preparar catálogo y mapa de clientes ──────────────────────────────────
-    prods_gen  = leer_productos_con_fila(es_antigua=False)
-    # cat_map: nombre_normalizado → nombre_exacto
-    cat_map    = {_norm(p["nombre"]): p["nombre"] for p in prods_gen}
-    # cat_info: nombre_exacto → dict de producto
-    cat_info   = {p["nombre"]: p for p in prods_gen}
-    # cli_map: email_lower → cliente_dict
-    clientes   = cargar_clientes()
-    cli_map    = {c["email"].lower().strip(): c for c in clientes if c.get("email")}
 
-    # ── Procesar importación pendiente (fuera del expander, sobrevive al rerun) ──
-    if "hog_importar" in st.session_state:
-        _imp = st.session_state.pop("hog_importar")
-        _resp_imp = _imp["resp"]
-        _fecha_imp = _imp["fecha"]
-        with st.spinner("Guardando pedido..."):
-            r_imp = _importar_pedido(_resp_imp, _fecha_imp, cat_info, cli_precio)
-        st.caption(f"🔎 Cliente: {r_imp['nombre_cli']} · "
-                   f"items armados: {r_imp['items_armados']} · "
-                   f"filas escritas: {r_imp['filas']}")
-        if r_imp.get("detalle"):
-            st.caption("Productos: " + " | ".join(r_imp["detalle"]))
-        if r_imp.get("error"):
-            st.error(f"❌ Error al importar: {r_imp['error']}")
-        elif r_imp["filas"] > 0:
-            try:
-                from excel_helper import leer_pedidos
-                leer_pedidos.clear()
-                _peds = leer_pedidos()
-                _enc = sum(1 for p in _peds
-                           if p["cliente"] == r_imp["nombre_cli"]
-                           and p["fecha"] == _fecha_imp)
-                st.success(f"✅ {r_imp['filas']} línea(s) importadas para "
-                           f"{r_imp['nombre_cli']}. Verificación: {_enc} en Pedidos.")
-                if _enc == 0:
-                    st.error("⚠️ Reportó escritura pero no aparece al releer. "
-                             "Revisá permisos de Editor en el Sheet de Pedidos.")
-            except Exception as _ve:
-                st.success(f"✅ {r_imp['filas']} línea(s) importadas.")
-        else:
-            st.warning(f"No se escribió ninguna fila. Detalle: {r_imp.get('res')}")
+    # ── Catálogo y mapa de clientes ───────────────────────────────────────────
+    prods_gen = leer_productos_con_fila(es_antigua=False)
+    cat_map   = {_norm(p["nombre"]): p["nombre"] for p in prods_gen}
+    cat_info  = {p["nombre"]: p for p in prods_gen}
+    nombres_catalogo = sorted(p["nombre"] for p in prods_gen)
 
-    # Mensaje pendiente de validación (cliente/líneas faltantes)
-    if "hog_msg" in st.session_state:
-        _tipo, _txt = st.session_state.pop("hog_msg")
-        getattr(st, _tipo)(_txt)
+    clientes = cargar_clientes()
+    cli_map  = {c["email"].lower().strip(): c
+                for c in clientes if c.get("email")}
+    nombres_clientes = sorted(c["nombre"] for c in clientes if c.get("nombre"))
 
-    # ── Parámetros de importación ─────────────────────────────────────────────
-    c1, c2 = st.columns(2)
-    fecha_ent = c1.date_input("📅 Fecha de entrega", value=date.today(),
-                               key="hog_fecha")
-    semana    = fecha_ent.isocalendar()[1]
-    año       = fecha_ent.year
-    c2.metric("Semana", f"{semana} / {año}")
+    # ── Procesar importación pendiente (al inicio, fuera de tarjetas) ──────────
+    if "hog_do_import" in st.session_state:
+        intento = st.session_state.pop("hog_do_import")
+        _ejecutar_importacion(intento, cat_info, cli_precio)
 
-    # ── Diagnóstico de conexión ───────────────────────────────────────────────
-    with st.expander("🔧 Diagnóstico de conexión al formulario", expanded=False):
-        st.caption(f"Sheet de respuestas ID: `{FORM_SHEET_ID}`")
-        # Mostrar email de la service account (necesario para compartir el Sheet)
-        try:
-            if "GOOGLE_CREDENTIALS" in st.secrets:
-                _info = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-            else:
-                _info = dict(st.secrets.get("gcp_service_account", {}))
-            _email_sa = _info.get("client_email", "(no encontrado)")
-            st.caption(f"Cuenta de servicio: `{_email_sa}`")
-            st.caption("Este email debe tener acceso de **Lector** al Sheet de "
-                       "respuestas (Compartir → agregar este email).")
-        except Exception as _ce:
-            st.caption(f"No se pudo leer el email de la cuenta: {_ce}")
-        if st.button("🔍 Probar conexión", key="hog_test_conn"):
-            try:
-                _sh = _abrir_form_sheet()
-                _vals = _sh.get_all_values()
-                st.success(f"✅ Conexión OK — {len(_vals)} fila(s) en el Sheet "
-                           f"(incluyendo encabezado).")
-                if _vals:
-                    st.caption(f"Encabezados detectados: {len(_vals[0])} columnas")
-            except Exception as _te:
-                st.error(f"❌ Falló: {type(_te).__name__}: {_te}")
+    # ── Encabezado y botón de lectura ─────────────────────────────────────────
+    st.markdown("### 📥 Importar pedidos del formulario")
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        leer = st.button("🔄 Leer formulario", type="primary",
+                         key="hog_leer_form", use_container_width=True)
+    with c2:
+        if st.button("🧹 Limpiar registro de importados",
+                     key="hog_limpiar_imp", use_container_width=True,
+                     help="Hace que las respuestas vuelvan a aparecer como nuevas"):
+            _limpiar_importados()
+            st.success("Registro limpiado. Volvé a leer el formulario.")
+            st.cache_data.clear()
 
-        st.divider()
-        st.caption("Reintentar importaciones (limpia el registro de "
-                   "pedidos ya importados para poder volver a importarlos):")
-        st.divider()
-        st.caption("Prueba de escritura directa a Pedidos (diagnóstico):")
-        if st.button("🧪 Escribir pedido de prueba", key="hog_test_write"):
-            from order_helper import guardar_pedidos_batch
-            from excel_helper import leer_pedidos
-            _test_cola = [{
-                "cliente_nombre": "PRUEBA_DIAGNOSTICO",
-                "fecha": date.today(),
-                "items": [{"nombre": "TEST_PRODUCTO", "unidad": "lb",
-                           "cantidad": 1.0, "precio": 1.0, "costo": 0.5}],
-            }]
-            try:
-                _res = guardar_pedidos_batch(_test_cola)
-                st.write(f"Respuesta de guardar_pedidos_batch: `{_res}`")
-                # Releer para verificar
-                leer_pedidos.clear()
-                _peds = leer_pedidos()
-                _hall = [p for p in _peds if p["cliente"] == "PRUEBA_DIAGNOSTICO"]
-                if _hall:
-                    st.success(f"✅ ESCRITURA OK — el pedido de prueba SÍ se "
-                               f"grabó ({len(_hall)} línea). El guardado funciona. "
-                               f"Podés borrar la fila PRUEBA_DIAGNOSTICO del Sheet.")
-                else:
-                    st.error("❌ guardar_pedidos_batch dijo OK pero el pedido NO "
-                             "aparece al releer. Problema de permisos de ESCRITURA "
-                             "en el Sheet de Pedidos (la cuenta de servicio "
-                             "necesita rol **Editor**, no solo Lector).")
-            except Exception as _we:
-                st.error(f"❌ Error al escribir: {type(_we).__name__}: {_we}")
-                import traceback
-                st.code(traceback.format_exc())
+    if leer:
+        st.session_state["hog_leido"] = True
+        # forzar relectura
+        _leer_respuestas.clear()
 
-        st.divider()
-        if st.button("🔄 Limpiar registro de importados", key="hog_clear_imp"):
-            try:
-                _ensure_formimports()
-                from gsheets import ws
-                _w = ws("formimports")
-                _w.clear()
-                _w.update("A1", [["timestamp", "fecha_import", "cliente", "n_lineas"]],
-                          value_input_option="USER_ENTERED")
-                st.success("✅ Registro limpiado. Las respuestas del formulario "
-                           "volverán a aparecer como nuevas para reimportar.")
-            except Exception as _ce:
-                st.error(f"No se pudo limpiar: {type(_ce).__name__}: {_ce}")
-
-    st.divider()
-    if not st.button("🔄 Leer formulario", type="primary", key="hog_leer"):
-        st.info("Elegí la fecha de entrega y presioná 'Leer formulario'.")
+    if not st.session_state.get("hog_leido"):
+        st.info("Presioná **Leer formulario** para traer los pedidos nuevos.")
         return
 
     # ── Leer respuestas ───────────────────────────────────────────────────────
-    with st.spinner("Leyendo respuestas del formulario..."):
-        headers, rows = _leer_respuestas()
-        ya_importados = _get_imported_timestamps()
+    headers, rows = _leer_respuestas()
+    if not headers:
+        return  # _leer_respuestas ya mostró el error
 
-    if not rows:
-        st.warning("Sin respuestas en el formulario.")
-        return
-
-    nuevas = [r for r in rows
-              if r and str(r[0]).strip() not in ya_importados]
-
-    st.success(f"**{len(nuevas)}** respuesta(s) nuevas · "
-               f"{len(rows)-len(nuevas)} ya importadas (omitidas)")
+    importados = _get_imported_timestamps()
+    nuevas = []
+    for row in rows:
+        resp = _parsear_respuesta(headers, row, cat_map, cli_map)
+        if not resp["timestamp"]:
+            continue
+        if resp["timestamp"] in importados:
+            continue
+        nuevas.append(resp)
 
     if not nuevas:
-        st.info("Todo está al día — sin pedidos pendientes de importar.")
+        st.success("✅ No hay pedidos nuevos. Todo está importado.")
         return
 
+    st.caption(f"**{len(nuevas)}** pedido(s) nuevo(s) · "
+               f"{len(importados)} ya importado(s)")
     st.divider()
-    # ── Tarjeta por respuesta ─────────────────────────────────────────────────
-    for idx, row in enumerate(nuevas):
-        resp = _parsear_respuesta(headers, row, cat_map, cli_map)
-        ts   = resp["timestamp"]
-        # Key estable y única por respuesta (sanitizada del timestamp + idx)
-        _uid = "".join(c for c in str(ts) if c.isalnum()) + f"_{idx}"
 
-        # Header de la tarjeta
-        cli_ok = resp["cliente"] is not None
-        email_disp = resp["email"] or "sin email"
-        nombre_disp = (resp["cliente"]["nombre"] if cli_ok
-                       else resp["nombre_cli"] or "Desconocido")
-        icono = "✅" if cli_ok else "⚠️"
+    # ── Fecha de entrega (común a todos) ──────────────────────────────────────
+    fecha_ent = st.date_input("📅 Fecha de entrega para los pedidos",
+                              value=date.today(), key="hog_fecha_ent")
+    st.divider()
 
-        with st.expander(
-            f"{icono} {nombre_disp} · {email_disp} · "
-            f"{len(resp['lineas'])} producto(s)",
-            expanded=False   # cerrado por velocidad — abrí el que querés importar
-        ):
-            # Info del cliente
-            if cli_ok:
-                st.caption(f"👤 Cliente registrado: **{nombre_disp}** · "
-                           f"📍 {resp['direccion']} · 💳 {resp['pago']}")
-            else:
-                st.warning(f"Email '{resp['email'] or '(vacío)'}' no encontrado "
-                           f"en la base de clientes. Asigná manualmente:")
-                # Mostrar TODOS los clientes (no filtrar por tipo, que puede variar)
-                nombres_cli = ["— seleccionar —"] + \
-                              sorted(c["nombre"] for c in clientes if c.get("nombre"))
-                sel = st.selectbox("Cliente", nombres_cli,
-                                   key=f"hog_cli_{_uid}")
-                if sel != "— seleccionar —":
-                    resp["cliente"] = next(
-                        (c for c in clientes if c["nombre"] == sel), None)
-                    if resp["cliente"]:
-                        st.caption(f"✅ Asignado a: {sel}. Ahora podés importar.")
-            # Persistir asignación manual entre reruns (key estable por timestamp)
-            _asig_key = f"hog_asignado_{ts}"
-            if resp["cliente"] is not None:
-                st.session_state[_asig_key] = resp["cliente"]["nombre"]
-            elif _asig_key in st.session_state:
-                # Recuperar asignación previa si el email no matchea
-                resp["cliente"] = next(
-                    (c for c in clientes
-                     if c["nombre"] == st.session_state[_asig_key]), None)
+    # ── Render de cada pedido ─────────────────────────────────────────────────
+    seleccionados = []   # lista de (resp, cliente_final, items_extra)
+    for resp in nuevas:
+        ts  = resp["timestamp"]
+        uid = "".join(ch for ch in ts if ch.isalnum())
 
-            # Tabla de productos
-            if resp["lineas"]:
-                import pandas as pd
-                filas_df = []
-                for l in resp["lineas"]:
-                    prod = cat_info.get(l["prod_cat"], {})
-                    precio_c, fuente = cli_precio(
-                        resp["cliente"] or {}, l["prod_cat"])
-                    if precio_c <= 0:
-                        precio_c = float(prod.get("precio") or 0)
-                    filas_df.append({
-                        "Formulario":  l["nombre_form"],
-                        "→ Catálogo":  l["prod_cat"],
-                        "Match":       l["match"],
-                        "Cant":        l["cantidad"],
-                        "Precio Q":    precio_c,
-                        "Total Q":     round(precio_c * l["cantidad"], 2),
-                    })
-                df = pd.DataFrame(filas_df)
-                total_est = df["Total Q"].sum()
-                st.dataframe(df, hide_index=True, use_container_width=True)
-                st.markdown(
-                    f"<div style='text-align:right;font-size:.85rem;"
-                    f"font-weight:bold;color:#2D7A2D'>"
-                    f"Total estimado: Q{total_est:,.2f}</div>",
-                    unsafe_allow_html=True)
+        # Estado del cliente
+        cli_auto = resp["cliente"]
+        # Asignación manual persistida
+        asign_key = f"hog_cli_asign_{uid}"
+        cli_final = cli_auto
+        if cli_final is None and asign_key in st.session_state:
+            nom_asign = st.session_state[asign_key]
+            cli_final = next((c for c in clientes
+                              if c["nombre"] == nom_asign), None)
 
-            # Productos Extra (campo libre)
-            if resp.get("prod_extra"):
-                st.warning(
-                    f"📝 **Productos Extra** (no importados automáticamente):\n"
-                    + "\n".join(f"  · {t}" for t in resp["prod_extra"]))
+        # Título de la tarjeta
+        nom_cli_disp = (cli_final["nombre"] if cli_final
+                        else resp["nombre_cli"] or "—")
+        icono = "✅" if cli_final else "⚠️"
+        n_match = len(resp["lineas"])
+        n_smatch = len(resp["sin_match"])
+        n_extra = len(resp["prod_extra"])
 
-            # Sin match
-            if resp["sin_match"]:
-                with st.expander(
-                    f"⚠️ {len(resp['sin_match'])} producto(s) sin match "
-                    f"en el catálogo", expanded=False
-                ):
+        # ── Checkbox de selección (fuera del expander, estable) ──────────────
+        col_chk, col_exp = st.columns([1, 11])
+        with col_chk:
+            sel = st.checkbox("", key=f"hog_sel_{uid}",
+                              label_visibility="collapsed")
+        with col_exp:
+            with st.expander(
+                f"{icono} {nom_cli_disp} · {resp['email'] or 'sin email'} · "
+                f"{n_match} producto(s)"
+                + (f" · ⚠️{n_smatch} sin match" if n_smatch else "")
+                + (f" · 📝{n_extra} extra" if n_extra else ""),
+                expanded=False):
+
+                # ── Cliente ──────────────────────────────────────────────────
+                if cli_auto:
+                    st.success(f"👤 Cliente: **{cli_auto['nombre']}** "
+                               f"(identificado por email)")
+                else:
+                    st.warning(
+                        f"⚠️ **Cliente no encontrado** para el email "
+                        f"`{resp['email'] or '(sin email)'}` "
+                        f"(nombre en formulario: {resp['nombre_cli'] or '—'}).")
+                    # Asignar manual o crear
+                    opciones = ["— elegir cliente —"] + nombres_clientes
+                    idx_def = 0
+                    if asign_key in st.session_state:
+                        nom_prev = st.session_state[asign_key]
+                        if nom_prev in nombres_clientes:
+                            idx_def = nombres_clientes.index(nom_prev) + 1
+                    sel_cli = st.selectbox(
+                        "Asignar cliente (por si cambió su email):",
+                        opciones, index=idx_def, key=f"hog_selcli_{uid}")
+                    if sel_cli != "— elegir cliente —":
+                        st.session_state[asign_key] = sel_cli
+                        cli_final = next((c for c in clientes
+                                          if c["nombre"] == sel_cli), None)
+                        if cli_final:
+                            st.success(f"✅ Asignado a **{sel_cli}**.")
+                    else:
+                        st.info("Si el cliente no existe, agregalo en el módulo "
+                                "**Clientes** y volvé a leer el formulario.")
+
+                # ── Productos con match ──────────────────────────────────────
+                if resp["lineas"]:
+                    st.markdown("**Productos del pedido:**")
+                    import pandas as pd
+                    filas = []
+                    for l in resp["lineas"]:
+                        prod = cat_info.get(l["prod_cat"], {})
+                        precio, _ = cli_precio(cli_final or {}, l["prod_cat"])
+                        if precio <= 0:
+                            precio = float(prod.get("precio") or 0)
+                        filas.append({
+                            "Producto": l["prod_cat"],
+                            "Cantidad": l["cantidad"],
+                            "Unidad": prod.get("unidad", ""),
+                            "Precio": f"Q{precio:.2f}",
+                        })
+                    st.dataframe(pd.DataFrame(filas), hide_index=True,
+                                 use_container_width=True)
+
+                # ── Alerta productos sin match ───────────────────────────────
+                if resp["sin_match"]:
+                    st.error("⚠️ **Productos no encontrados en el catálogo** "
+                             "(no se importan hasta agregarlos):")
                     for l in resp["sin_match"]:
-                        st.write(f"  · {l['nombre_form']} "
-                                 f"× {l['cantidad']} {l['unidad_form']}")
-                    st.caption("Estos NO se importan. Si deben estar, "
-                               "agregá el producto al catálogo con el "
-                               "nombre exacto del formulario.")
+                        st.write(f"   • {l['nombre_form']} "
+                                 f"(×{l['cantidad']} {l['unidad_form']})")
+                    st.caption("Agregá estos productos en **Productos** con el "
+                               "nombre exacto del formulario para que hagan match.")
 
-            # Diagnóstico del estado del pedido (por qué el botón está o no activo)
-            _tiene_cli = resp["cliente"] is not None
-            _tiene_lin = bool(resp["lineas"])
-            _puede = _tiene_cli and _tiene_lin
-            if not _puede:
-                _faltan = []
-                if not _tiene_cli:
-                    _faltan.append("**cliente** (asigná uno arriba)")
-                if not _tiene_lin:
-                    _faltan.append("**productos con match** "
-                                   f"({len(resp['sin_match'])} sin match)")
-                st.error("No se puede importar — falta: " + " y ".join(_faltan))
-            else:
-                st.caption(f"✓ Listo para importar: cliente "
-                           f"**{resp['cliente']['nombre']}** · "
-                           f"{len(resp['lineas'])} línea(s)")
+                # ── Productos extra (texto libre) ────────────────────────────
+                extra_key = f"hog_extra_items_{uid}"
+                if extra_key not in st.session_state:
+                    st.session_state[extra_key] = []
 
-        # ── Botones FUERA del expander (acá los clics SÍ se registran) ──
-        b1, b2 = st.columns(2)
-        if b1.button("✅ Importar pedido", type="primary",
-                     key=f"hog_imp_{_uid}"):
-            if not _tiene_cli:
-                st.session_state["hog_msg"] = ("error",
-                    "❌ Falta asignar el CLIENTE antes de importar.")
-            elif not _tiene_lin:
-                st.session_state["hog_msg"] = ("error",
-                    "❌ No hay productos con match para importar.")
-            else:
-                # Guardar la intención de importar; se procesa al inicio del tab
-                st.session_state["hog_importar"] = {
-                    "resp": resp, "fecha": fecha_ent,
-                }
-            st.rerun()
+                if resp["prod_extra"]:
+                    st.markdown("---")
+                    st.markdown("**📝 Pedido en texto libre del cliente:**")
+                    for txt in resp["prod_extra"]:
+                        st.info(f"\"{txt}\"")
+                    st.caption("Interpretá el texto y agregá los productos "
+                               "del catálogo que correspondan:")
 
-        if b2.button("⏭️ Omitir", key=f"hog_skip_{_uid}",
-                     help="Marca como procesada sin crear pedido"):
-            _registrar_importado(ts, resp["nombre_cli"] or "omitido", 0)
-            st.rerun()
+                    ce1, ce2, ce3 = st.columns([3, 1, 1])
+                    with ce1:
+                        prod_extra_sel = st.selectbox(
+                            "Producto del catálogo", ["—"] + nombres_catalogo,
+                            key=f"hog_extrasel_{uid}",
+                            label_visibility="collapsed")
+                    with ce2:
+                        cant_extra = st.number_input(
+                            "Cant.", min_value=0.0, step=1.0, value=1.0,
+                            key=f"hog_extracant_{uid}",
+                            label_visibility="collapsed")
+                    with ce3:
+                        if st.button("➕ Agregar", key=f"hog_extraadd_{uid}",
+                                     use_container_width=True):
+                            if prod_extra_sel != "—" and cant_extra > 0:
+                                st.session_state[extra_key].append(
+                                    {"prod_cat": prod_extra_sel,
+                                     "cantidad": cant_extra})
+                                st.rerun()
 
+                    # Mostrar los productos extra ya agregados
+                    if st.session_state[extra_key]:
+                        st.markdown("**Agregados de este texto libre:**")
+                        for j, ex in enumerate(st.session_state[extra_key]):
+                            cx1, cx2 = st.columns([6, 1])
+                            with cx1:
+                                st.write(f"   • {ex['prod_cat']} ×{ex['cantidad']:g}")
+                            with cx2:
+                                if st.button("🗑", key=f"hog_extradel_{uid}_{j}"):
+                                    st.session_state[extra_key].pop(j)
+                                    st.rerun()
+
+        # Si está seleccionado, agregarlo a la lista de importación
+        if sel:
+            items_extra = st.session_state.get(extra_key, [])
+            seleccionados.append((resp, cli_final, items_extra))
+
+    # ── Botón de importar (ÚNICO, fuera de las tarjetas) ──────────────────────
     st.divider()
-    st.caption(f"Sheet del formulario: `{FORM_SHEET_ID}`")
+    n_sel = len(seleccionados)
+    # Validar que los seleccionados tengan cliente
+    listos = [(r, c, e) for (r, c, e) in seleccionados if c is not None]
+    sin_cli = n_sel - len(listos)
+
+    if n_sel == 0:
+        st.info("Marcá los pedidos que querés importar con su casilla ☑️.")
+    else:
+        msg = f"**{n_sel}** pedido(s) seleccionado(s)"
+        if sin_cli:
+            msg += f" · ⚠️ {sin_cli} sin cliente asignado (no se importarán)"
+        st.markdown(msg)
+        if listos and st.button(f"📥 Importar {len(listos)} pedido(s)",
+                                type="primary", key="hog_importar_btn",
+                                use_container_width=True):
+            st.session_state["hog_do_import"] = {
+                "pedidos": [
+                    {"resp": r, "cliente": c, "extra": e, "fecha": fecha_ent}
+                    for (r, c, e) in listos
+                ]
+            }
+            st.rerun()
+
+
+def _ejecutar_importacion(intento: dict, cat_info: dict, cli_precio_fn):
+    """Importa todos los pedidos seleccionados y muestra el resultado."""
+    from order_helper import guardar_pedidos_batch
+    from excel_helper import leer_pedidos
+
+    cola = []
+    resumen = []
+    for ped in intento["pedidos"]:
+        resp = ped["resp"]
+        cli  = ped["cliente"]
+        extra = ped["extra"]
+        fecha = ped["fecha"]
+        nombre_cli = cli["nombre"]
+
+        items = []
+        # Productos con match
+        for l in resp["lineas"]:
+            prod = cat_info.get(l["prod_cat"], {})
+            precio, _ = cli_precio_fn(cli, l["prod_cat"])
+            if precio <= 0:
+                precio = float(prod.get("precio") or 0)
+            items.append({
+                "nombre":   l["prod_cat"],
+                "unidad":   prod.get("unidad") or "",
+                "cantidad": float(l["cantidad"] or 0),
+                "precio":   precio,
+                "costo":    float(prod.get("costo") or 0),
+            })
+        # Productos extra (del texto libre)
+        for ex in extra:
+            prod = cat_info.get(ex["prod_cat"], {})
+            precio, _ = cli_precio_fn(cli, ex["prod_cat"])
+            if precio <= 0:
+                precio = float(prod.get("precio") or 0)
+            items.append({
+                "nombre":   ex["prod_cat"],
+                "unidad":   prod.get("unidad") or "",
+                "cantidad": float(ex["cantidad"] or 0),
+                "precio":   precio,
+                "costo":    float(prod.get("costo") or 0),
+            })
+
+        if items:
+            cola.append({"cliente_nombre": nombre_cli, "fecha": fecha,
+                         "items": items, "_ts": resp["timestamp"]})
+            resumen.append((nombre_cli, len(items), resp["timestamp"]))
+
+    if not cola:
+        st.warning("No había items para importar.")
+        return
+
+    try:
+        res = guardar_pedidos_batch(
+            [{"cliente_nombre": c["cliente_nombre"], "fecha": c["fecha"],
+              "items": c["items"]} for c in cola])
+    except Exception as e:
+        st.error(f"❌ Error al guardar: {type(e).__name__}: {e}")
+        return
+
+    filas = res.get("filas", 0) if isinstance(res, dict) else 0
+    if filas > 0:
+        # Registrar todos como importados
+        for nombre_cli, n_items, ts in resumen:
+            _registrar_importado(ts, nombre_cli, n_items)
+        # Verificar
+        leer_pedidos.clear()
+        st.success(f"✅ **{len(cola)} pedido(s) importado(s)** "
+                   f"({filas} línea(s) en total).")
+        for nombre_cli, n_items, _ in resumen:
+            st.write(f"   • {nombre_cli}: {n_items} línea(s)")
+        st.cache_data.clear()
+    else:
+        st.warning(f"No se escribió ninguna fila. Respuesta: {res}")
+
+
+def _limpiar_importados():
+    """Vacía la hoja FormImports para reimportar."""
+    _ensure_formimports()
+    from gsheets import ws
+    w = ws("formimports")
+    w.clear()
+    w.update("A1", [["timestamp", "fecha_import", "cliente", "n_lineas"]],
+             value_input_option="USER_ENTERED")

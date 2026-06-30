@@ -7,7 +7,6 @@ from datetime import date, datetime, timedelta
 from gsheets import (ws as _ws, get_all_rows, append_rows,
                      update_cells, update_cell, delete_rows)
 from config import HOJA_PEDIDOS, HOJA_CLIENTES, HOJA_PRODUCTOS, HOJA_PRODUCTOS_ANTIGUA
-from utils import _sf, _si, _parse_fecha   # ← fuente única de verdad
 
 # ── Constantes ─────────────────────────────────────────────────────────────────
 DIAS_ES  = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
@@ -26,6 +25,38 @@ _PARA_COTIZAR_COL = {False: 22, True: 18}
 
 # Zonas para metas
 ZONAS_CONFIG = ["GT + Santiago", "Río", "Antigua + Chimal"]
+
+def _sf(v) -> float:
+    """Safe float — maneja vacíos, comas decimales y símbolos de moneda."""
+    if v is None or v == "": return 0.0
+    if isinstance(v, (int, float)): return float(v)
+    s = str(v).strip().replace("Q","").replace("$","").replace(" ","")
+    # Manejar formato europeo/centroamericano: 1.234,56 → 1234.56
+    if "," in s and "." in s:
+        # Si el punto viene antes que la coma: 1.234,56
+        if s.index(".") < s.index(","):
+            s = s.replace(".","").replace(",",".")
+        else:
+            s = s.replace(",","")
+    elif "," in s:
+        s = s.replace(",",".")
+    try: return float(s)
+    except: return 0.0
+
+def _si(v) -> int:
+    """Safe int."""
+    try: return int(v or 0)
+    except: return 0
+
+def _parse_fecha(v) -> date | None:
+    """Parsea fecha desde string (Sheets devuelve strings)."""
+    if not v: return None
+    if isinstance(v, date): return v
+    s = str(v).strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y"):
+        try: return datetime.strptime(s, fmt).date()
+        except: pass
+    return None
 
 
 # ── PEDIDOS ────────────────────────────────────────────────────────────────────
