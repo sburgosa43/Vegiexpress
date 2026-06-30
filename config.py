@@ -102,7 +102,7 @@ def calcular_liquido(cliente_nombre: str, total: float) -> tuple:
 # ── Reglas de pago por cliente ────────────────────────────────────────────────
 # lag: semanas entre entrega y pago
 REGLAS_PAGO = {
-    "rodrigo":   {"lag": 3, "isr": True,  "desc": 0},
+    "aldyk":     {"lag": 3, "isr": True,  "desc": 0},
     "4 pinos":   {"lag": 1, "isr": False, "desc": 0},
     "nanajuana": {"lag": 1, "isr": True,  "desc": 0},
     "tijax":     {"lag": 1, "isr": True,  "desc": 0},

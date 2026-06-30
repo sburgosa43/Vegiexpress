@@ -132,6 +132,32 @@ def mostrar():
     ventana = _ventana_13(hoy)
     sem_act, año_act = ventana[4]
 
+    # ── Diagnóstico directo: pedidos de Aldyk y 4 Pinos (datos crudos) ────────
+    with st.expander("🔬 Diagnóstico Aldyk / 4 Pinos (datos crudos)", expanded=True):
+        encontrados = []
+        for p in todos:
+            cli_l = p["cliente"].lower()
+            if "aldyk" in cli_l or "pino" in cli_l or "aldik" in cli_l:
+                encontrados.append({
+                    "Cliente": repr(p["cliente"]),
+                    "Status": p.get("status", "?"),
+                    "Fecha": str(p.get("fecha", "?")),
+                    "Semana": p.get("semana", "?"),
+                    "Año": p.get("año", "?"),
+                    "Total": p.get("total", "?"),
+                    "Regla lag": _reglas(p["cliente"])["lag"],
+                })
+        if encontrados:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(encontrados), hide_index=True,
+                         use_container_width=True)
+            st.caption("Si 'Regla lag' = 0, el nombre no matchea la regla. "
+                       "Si Status no es válido o Semana está vacía, ese es el problema.")
+        else:
+            st.warning("No se encontró NINGÚN pedido con 'aldyk' o 'pino' en el "
+                       "nombre. El nombre en la base debe ser diferente. "
+                       "Revisá cómo está escrito exactamente el cliente.")
+
     st.caption(f"Ingresos líquidos (después de ISR/descuentos) por **semana de "
                f"pago**, aplicando el rezago de cobro de cada cliente. "
                f"Semana actual: **{sem_act}/{año_act}**. "
