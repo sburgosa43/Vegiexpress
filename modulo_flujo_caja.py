@@ -69,8 +69,12 @@ def _construir_tabla_pivote(todos: list, clientes: list, ventana: list):
 
     ventana_set = set(ventana)
 
-    # Acumular líquido por (cliente, sem_pago, año_pago)
-    acumulado = {}   # {(cli, sem_p, año_p): liquido}
+    # Paso 1: acumular el TOTAL BRUTO por (cliente, sem_pago, año_pago).
+    # Facturamos CONSOLIDADO por semana, así que primero sumamos todos los
+    # pedidos del cliente en esa semana de pago, y DESPUÉS aplicamos ISR/desc
+    # sobre el total consolidado (no pedido por pedido). Esto es clave: el
+    # umbral de ISR (Q2,800) se evalúa sobre la factura semanal completa.
+    bruto = {}   # {(cli, sem_p, año_p): total_bruto}
     for p in todos:
         if p["status"] == "Cancelado":
             continue
@@ -85,9 +89,15 @@ def _construir_tabla_pivote(todos: list, clientes: list, ventana: list):
         if (sem_p, año_p) not in ventana_set:
             continue
         total = float(p["total"] or 0)
-        liq = _liquido(total, reglas)
         key = (cli, sem_p, año_p)
-        acumulado[key] = acumulado.get(key, 0.0) + liq
+        bruto[key] = bruto.get(key, 0.0) + total
+
+    # Paso 2: aplicar ISR/descuento sobre el total consolidado de cada semana.
+    acumulado = {}   # {(cli, sem_p, año_p): liquido}
+    for key, total_semana in bruto.items():
+        cli = key[0]
+        reglas = _reglas(cli)
+        acumulado[key] = _liquido(total_semana, reglas)
 
     # Agrupar por cliente
     clientes_con_datos = sorted({k[0] for k in acumulado.keys()})
@@ -131,32 +141,6 @@ def mostrar():
     hoy     = date.today()
     ventana = _ventana_13(hoy)
     sem_act, año_act = ventana[4]
-
-    # ── Diagnóstico directo: pedidos de Aldyk y 4 Pinos (datos crudos) ────────
-    with st.expander("🔬 Diagnóstico Aldyk / 4 Pinos (datos crudos)", expanded=True):
-        encontrados = []
-        for p in todos:
-            cli_l = p["cliente"].lower()
-            if "aldyk" in cli_l or "pino" in cli_l or "aldik" in cli_l:
-                encontrados.append({
-                    "Cliente": repr(p["cliente"]),
-                    "Status": p.get("status", "?"),
-                    "Fecha": str(p.get("fecha", "?")),
-                    "Semana": p.get("semana", "?"),
-                    "Año": p.get("año", "?"),
-                    "Total": p.get("total", "?"),
-                    "Regla lag": _reglas(p["cliente"])["lag"],
-                })
-        if encontrados:
-            import pandas as pd
-            st.dataframe(pd.DataFrame(encontrados), hide_index=True,
-                         use_container_width=True)
-            st.caption("Si 'Regla lag' = 0, el nombre no matchea la regla. "
-                       "Si Status no es válido o Semana está vacía, ese es el problema.")
-        else:
-            st.warning("No se encontró NINGÚN pedido con 'aldyk' o 'pino' en el "
-                       "nombre. El nombre en la base debe ser diferente. "
-                       "Revisá cómo está escrito exactamente el cliente.")
 
     st.caption(f"Ingresos líquidos (después de ISR/descuentos) por **semana de "
                f"pago**, aplicando el rezago de cobro de cada cliente. "
