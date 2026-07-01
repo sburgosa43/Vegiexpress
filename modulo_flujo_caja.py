@@ -12,17 +12,84 @@ from datetime import date, timedelta
 from excel_helper import leer_pedidos
 from data_helper  import cargar_clientes
 
-# Reglas vienen de config.py
 ZONA_GT_RIO  = ["L01", "L05", "L06"]
 ZONA_VEGGI   = ["L03", "L04"]
+
+# ── Reglas de pago editables (viven en la hoja ReglasPago) ────────────────────
+_REGLAS_HEADER = ["cliente", "lag", "isr", "desc"]
+
+
+def _ensure_reglas_sheet():
+    """Crea la hoja ReglasPago si no existe y la migra desde config la 1a vez."""
+    from gsheets import ensure_ws, get_all_rows, append_rows
+    try:
+        ensure_ws("reglaspago", _REGLAS_HEADER)
+    except Exception as e:
+        if "already exists" not in str(e).lower():
+            raise
+    # Si está vacía, migrar las reglas de config.py
+    try:
+        filas = get_all_rows("reglaspago")
+    except Exception:
+        filas = []
+    if not filas:
+        seed = []
+        for cliente, r in REGLAS.items():
+            seed.append([cliente, r["lag"],
+                         "Sí" if r["isr"] else "No", r["desc"]])
+        if seed:
+            append_rows("reglaspago", seed)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _cargar_reglas() -> dict:
+    """Lee las reglas de pago desde la hoja. Retorna {cliente_lower: {...}}."""
+    _ensure_reglas_sheet()
+    from gsheets import get_all_rows
+    reglas = {}
+    for r in get_all_rows("reglaspago"):
+        if not r or not r[0]:
+            continue
+        while len(r) < 4:
+            r.append("")
+        cliente = str(r[0]).strip().lower()
+        try:    lag = int(float(r[1])) if r[1] != "" else 0
+        except: lag = 0
+        isr = str(r[2]).strip().lower() in ("sí", "si", "yes", "true", "1")
+        try:    desc = float(r[3]) if r[3] != "" else 0
+        except: desc = 0
+        reglas[cliente] = {"lag": lag, "isr": isr, "desc": desc}
+    return reglas
+
+
+def _guardar_reglas(df):
+    """Sobrescribe la hoja ReglasPago con el DataFrame editado."""
+    from gsheets import ws
+    _ensure_reglas_sheet()
+    w = ws("reglaspago")
+    w.clear()
+    filas = [_REGLAS_HEADER]
+    for _, row in df.iterrows():
+        cli = str(row.get("Cliente", "")).strip()
+        if not cli:
+            continue
+        lag = int(row.get("Rezago (sem)", 0) or 0)
+        isr = "Sí" if str(row.get("Agente retenedor (ISR)", "")).strip().lower() \
+              in ("sí", "si", "yes", "true", "1") else "No"
+        desc = float(row.get("Descuento %", 0) or 0)
+        filas.append([cli, lag, isr, desc])
+    w.update("A1", filas, value_input_option="USER_ENTERED")
+    _cargar_reglas.clear()
 
 
 
 
 
 def _reglas(cliente_nombre: str) -> dict:
+    """Busca la regla de pago del cliente (desde la hoja editable ReglasPago)."""
     k = cliente_nombre.lower().strip()
-    for key, r in REGLAS.items():
+    reglas_map = _cargar_reglas()
+    for key, r in reglas_map.items():
         if key in k:
             return r
     return {"lag": 0, "isr": True, "desc": 0}
@@ -127,13 +194,7 @@ def _nombre_area(zona: str) -> str:
     return "Otros"
 
 
-def mostrar():
-    st.markdown("## 💰 Flujo de Caja Semanal")
-    if st.button("🏠 Inicio", key="btn_home_fc", type="secondary"):
-        st.session_state["_nav_target"] = "🏠 Inicio"
-        st.rerun()
-    st.divider()
-
+def _tab_flujo():
     with st.spinner("Calculando flujo de caja..."):
         todos    = leer_pedidos()
         clientes = cargar_clientes()
@@ -208,29 +269,6 @@ def mostrar():
     st.caption("La columna con * es la semana actual. "
                "Los valores son el líquido a recibir cada semana de pago.")
 
-    # Diagnóstico: rezago de cobro aplicado a cada cliente
-    with st.expander("🔍 Ver rezago de cobro por cliente"):
-        st.caption("Verificá que cada cliente tenga el rezago correcto. Si un "
-                   "cliente muestra lag 0 pero debería cobrar después, hay que "
-                   "agregar su nombre en las reglas de pago (config).")
-        diag = []
-        for f in filas_f:
-            cli = f["Cliente"]
-            reg = _reglas(cli)
-            # Detectar qué clave de regla hizo match (para depurar nombres)
-            k = cli.lower().strip()
-            match = next((key for key in REGLAS if key in k), "— ninguna (lag 0) —")
-            diag.append({
-                "Cliente (nombre exacto)": cli,
-                "Regla que matchea": match,
-                "Rezago (sem)": reg["lag"],
-                "ISR": "Sí" if reg["isr"] else "No",
-                "Desc %": reg["desc"],
-            })
-        diag.sort(key=lambda x: x["Cliente (nombre exacto)"])
-        st.dataframe(pd.DataFrame(diag), hide_index=True,
-                     use_container_width=True)
-
     # ── Resumen: total por área ───────────────────────────────────────────────
     st.divider()
     st.markdown("### 📊 Total por área (13 semanas)")
@@ -243,3 +281,113 @@ def mostrar():
     for i, (a, tot) in enumerate(sorted(por_area.items())):
         cols[i].metric(a, f"Q{tot:,.0f}")
     st.metric("**TOTAL GENERAL**", f"Q{sum(por_area.values()):,.0f}")
+
+    # ── Resumen mes móvil: área × 4 semanas (N, N+1, N+2, N+3) ────────────────
+    st.divider()
+    st.markdown("### 📅 Resumen mes móvil por área (4 semanas)")
+    # Las 4 semanas del mes móvil: actual y 3 siguientes
+    # ventana[4] es la semana actual; ventana[4:8] son N, N+1, N+2, N+3
+    mes_movil = ventana[4:8]
+    col_lbl_mm = {(s, a): f"S{s}" for (s, a) in mes_movil}
+
+    # Acumular por área y semana
+    areas_orden = sorted({f["Área"] for f in filas_f})
+    registros_mm = []
+    for area in areas_orden:
+        reg = {"Área": area}
+        total_area = 0.0
+        for (s, a) in mes_movil:
+            v = sum(f.get((s, a), 0.0) for f in filas_f if f["Área"] == area)
+            reg[col_lbl_mm[(s, a)]] = v
+            total_area += v
+        reg["TOTAL"] = total_area
+        registros_mm.append(reg)
+
+    df_mm = pd.DataFrame(registros_mm)
+    # Fila de total por semana
+    fila_tot_mm = {"Área": "TOTAL"}
+    for (s, a) in mes_movil:
+        lbl = col_lbl_mm[(s, a)]
+        fila_tot_mm[lbl] = df_mm[lbl].sum() if lbl in df_mm else 0.0
+    fila_tot_mm["TOTAL"] = df_mm["TOTAL"].sum() if "TOTAL" in df_mm else 0.0
+    df_mm = pd.concat([df_mm, pd.DataFrame([fila_tot_mm])], ignore_index=True)
+
+    # Formato moneda
+    cols_mm = [col_lbl_mm[(s, a)] for (s, a) in mes_movil] + ["TOTAL"]
+    df_mm_fmt = df_mm.copy()
+    for c in cols_mm:
+        df_mm_fmt[c] = df_mm_fmt[c].apply(
+            lambda v: f"Q{v:,.0f}" if v and v != 0 else "")
+    st.dataframe(df_mm_fmt, hide_index=True, use_container_width=True)
+    sem_ini = mes_movil[0][0]
+    sem_fin = mes_movil[-1][0]
+    st.caption(f"Ingresos proyectados de la semana {sem_ini} a la {sem_fin} "
+               f"(mes móvil), por área. Total por área (fila) y por semana (columna).")
+
+
+def _tab_reglas():
+    """Mantenimiento de las reglas de pago por cliente (editable)."""
+    st.markdown("### ⚙️ Reglas de pago por cliente")
+    st.caption("Editá el rezago de cobro, si el cliente retiene ISR, y el "
+               "descuento de cada uno. Estos valores alimentan el cálculo del "
+               "flujo de caja. Guardá para aplicar los cambios.")
+
+    reglas_map = _cargar_reglas()
+    rows = []
+    for cli, r in sorted(reglas_map.items()):
+        rows.append({
+            "Cliente": cli,
+            "Rezago (sem)": r["lag"],
+            "Agente retenedor (ISR)": "Sí" if r["isr"] else "No",
+            "Descuento %": r["desc"],
+        })
+    df = pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=["Cliente", "Rezago (sem)", "Agente retenedor (ISR)", "Descuento %"])
+
+    edited = st.data_editor(
+        df,
+        hide_index=True,
+        use_container_width=True,
+        num_rows="dynamic",   # permite agregar y eliminar filas
+        column_config={
+            "Cliente": st.column_config.TextColumn(
+                "Cliente", help="Nombre (o parte) del cliente como aparece en pedidos"),
+            "Rezago (sem)": st.column_config.NumberColumn(
+                "Rezago (sem)", min_value=0, max_value=12, step=1,
+                help="Semanas de rezago entre entrega y cobro"),
+            "Agente retenedor (ISR)": st.column_config.SelectboxColumn(
+                "Agente retenedor (ISR)", options=["Sí", "No"],
+                help="Sí = retiene ISR en facturas ≥ Q2,800 (ese ISR no entra al flujo)"),
+            "Descuento %": st.column_config.NumberColumn(
+                "Descuento %", min_value=0, max_value=100, step=1,
+                help="Descuento fijo que aplica el cliente (ej. comisión)"),
+        },
+        key="reglas_editor",
+    )
+
+    if st.button("💾 Guardar reglas", type="primary", key="guardar_reglas_btn"):
+        try:
+            _guardar_reglas(edited)
+            st.success("✅ Reglas guardadas. El flujo de caja ya usa los nuevos "
+                       "valores.")
+            st.cache_data.clear()
+        except Exception as e:
+            st.error(f"Error al guardar: {type(e).__name__}: {e}")
+
+    st.info("ℹ️ El umbral de ISR es Q2,800 por factura consolidada (fijo). "
+            "Clientes que NO retienen (Sí→No en ISR) reciben el total sin "
+            "descuento de ISR, sin importar el monto.")
+
+
+def mostrar():
+    st.markdown("## 💰 Flujo de Caja Semanal")
+    if st.button("🏠 Inicio", key="btn_home_fc", type="secondary"):
+        st.session_state["_nav_target"] = "🏠 Inicio"
+        st.rerun()
+    st.divider()
+
+    tab_flujo, tab_reglas = st.tabs(["📊 Flujo de Caja", "⚙️ Reglas de Pago"])
+    with tab_flujo:
+        _tab_flujo()
+    with tab_reglas:
+        _tab_reglas()

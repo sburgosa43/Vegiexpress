@@ -28,6 +28,7 @@ HOJAS = {
     "produccioncultivos": "ProduccionCultivos",
     "produccionaplic":    "ProduccionAplicaciones",
     "produccionfert":     "ProduccionFertilizantes",
+    "reglaspago":         "ReglasPago",
 }
 
 SCOPES = [
