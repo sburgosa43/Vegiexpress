@@ -331,7 +331,7 @@ def nombre_archivo_factura(cliente_nombre: str, mes: int, año: int) -> str:
     n = unicodedata.normalize("NFKD", cliente_nombre or "cliente")
     n = n.encode("ascii", "ignore").decode("ascii")
     n = re.sub(r"[^a-zA-Z0-9]", "", n) or "cliente"
-    return f"{n}_{MESES_ES[mes]}{año}.pdf"
+    return f"{n}_{MESES_ES[mes-1]}{año}.pdf"
 
 
 def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
@@ -354,7 +354,7 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
         buffer, pagesize=A4,
         leftMargin=15*mm, rightMargin=15*mm,
         topMargin=12*mm, bottomMargin=22*mm,
-        title=f"Facturacion - {cliente.get('nombre','')} - {MESES_ES[mes]} {año}",
+        title=f"Facturacion - {cliente.get('nombre','')} - {MESES_ES[mes-1]} {año}",
     )
 
     story = []
@@ -375,7 +375,7 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
     header_data = [[
         logo,
         [_p("RESUMEN DE FACTURACIÓN", titulo_style),
-         _p(f"{MESES_ES[mes].upper()} {año}", sub_style)],
+         _p(f"{MESES_ES[mes-1].upper()} {año}", sub_style)],
     ]]
     ht = Table(header_data, colWidths=[58*mm, CW - 58*mm])
     ht.setStyle(TableStyle([
@@ -395,7 +395,7 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
 
     info_rows = [
         [_p("CLIENTE",                           S2["sec_lbl"]),
-         _p(f"PERÍODO: {MESES_ES[mes]} {año}",  S2["sec_lbl"])],
+         _p(f"PERÍODO: {MESES_ES[mes-1]} {año}",  S2["sec_lbl"])],
         [_p(cli_nom,                             S2["cli_nom"]),
          _p(f"{len(por_semana)} semana(s) de entrega",
             ParagraphStyle("ps", fontSize=11, fontName="Helvetica-Bold",
@@ -643,8 +643,8 @@ def generar_cotizacion(lineas: list, desde: "date", hasta: "date",
     story.append(Spacer(1, 2*mm))
     story.append(_p(
         _s(f"A continuación le compartimos nuestro listado de productos y precios "
-           f"con vigencia del {desde.day} de {MESES_ES[desde.month]} de {desde.year} "
-           f"al {hasta.day} de {MESES_ES[hasta.month]} de {hasta.year}. "
+           f"con vigencia del {desde.day} de {MESES_ES[desde.month-1]} de {desde.year} "
+           f"al {hasta.day} de {MESES_ES[hasta.month-1]} de {hasta.year}. "
            f"Quedamos atentos a sus comentarios o dudas."),
         intro_style))
     story.append(Spacer(1, 5*mm))

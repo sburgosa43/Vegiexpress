@@ -274,7 +274,7 @@ def mostrar():
         st.markdown("&nbsp;")
         st.markdown(
             f"<div style='padding-top:28px;font-size:.85rem;color:#555'>"
-            f"Período: <b>{MESES_ES[mes_sel]} {año_sel}</b></div>",
+            f"Período: <b>{MESES_ES[mes_sel-1]} {año_sel}</b></div>",
             unsafe_allow_html=True)
 
     st.divider()
@@ -286,7 +286,7 @@ def mostrar():
         datos = {k: v for k, v in datos.items() if k == cli_filtro}
 
     if not datos:
-        st.info(f"No hay pedidos para {MESES_ES[mes_sel]} {año_sel}.")
+        st.info(f"No hay pedidos para {MESES_ES[mes_sel-1]} {año_sel}.")
         return
 
     # ── Resumen global del mes ────────────────────────────────────────────────
