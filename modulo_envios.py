@@ -482,28 +482,15 @@ def _tab_impresion_masiva(todos: list, cli_list: list, sem_def: int, año_def: i
                 f"{fecha_ent.strftime('%d/%m/%Y') if fecha_ent else f'Sem {semana}'}"
             )
 
-            # Botón imprimir (PDF.js)
-            html_print = f"""
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-            <script>
-            pdfjsLib.GlobalWorkerOptions.workerSrc=
-              'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-            function imp_{nom_safe}(){{
-              var raw=atob('{pdf_b64}');
-              var arr=new Uint8Array(raw.length);
-              for(var i=0;i<raw.length;i++) arr[i]=raw.charCodeAt(i);
-              var blob=new Blob([arr],{{type:'application/pdf'}});
-              var url=URL.createObjectURL(blob);
-              var w=window.open(url,'_blank');
-              w.onload=function(){{w.print();}};
-            }}
-            </script>
-            <button onclick="imp_{nom_safe}()" style="
-              background:#2D7A2D;color:white;border:none;border-radius:6px;
-              padding:6px 10px;font-size:12px;cursor:pointer;width:100%;
-              font-family:sans-serif">🖨️ Imprimir</button>"""
+            # Botón imprimir — usa el helper unificado (data URL, sin blob:
+            # que en Chrome imprime hojas en blanco)
+            from pdf_helper import boton_imprimir_html as _btn_imp_masivo
             with col_print:
-                components.html(html_print, height=40)
+                components.html(
+                    _btn_imp_masivo(pdf_bytes,
+                                    f"masivo_{nom_safe}_{semana}_{año}",
+                                    "🖨️ Imprimir"),
+                    height=44)
 
             col_dl.download_button(
                 "📥 PDF",
