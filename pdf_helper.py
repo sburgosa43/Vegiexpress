@@ -31,7 +31,7 @@ _MESES_ES = {1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo",
              6: "junio", 7: "julio", 8: "agosto", 9: "septiembre",
              10: "octubre", 11: "noviembre", 12: "diciembre"}
 VERDE_LIM = colors.HexColor('#8DC63F')
-GRIS_CARB = colors.HexColor('#4A4A4A')
+GRIS_CARB = colors.black   # antes #4A4A4A — negro puro para que la impresión en B/N no salga tenue/invisible
 GRIS_CLR  = colors.HexColor('#F5F5F5')
 GRIS_TAB  = colors.HexColor('#F0F8F0')
 BLANCO    = colors.white
@@ -678,7 +678,7 @@ def generar_cotizacion(lineas: list, desde: "date", hasta: "date",
 
     # Nota y firma
     nota_style = ParagraphStyle("nota", fontSize=8, fontName="Helvetica-Oblique",
-                                 textColor=colors.HexColor("#888888"), leading=11)
+                                 textColor=colors.black, leading=11)
     firma_style = ParagraphStyle("firma", fontSize=9, fontName="Helvetica",
                                   textColor=GRIS_CARB, leading=13)
 
@@ -1446,20 +1446,22 @@ def boton_imprimir_html(pdf_bytes: bytes, fn_id: str,
     b64 = base64.b64encode(pdf_bytes).decode()
     fn  = "imp_" + str(fn_id).replace("-", "_").replace(".", "_").replace(" ", "_")
 
-    # OPCIÓN A: abrir el PDF en pestaña nueva con el visor NATIVO del navegador
-    # (igual que Adobe). Ahí el usuario imprime con Ctrl+P respetando márgenes y
-    # tamaño real. Imprimir desde un iframe embebido reescala el PDF y pierde los
-    # márgenes; el visor nativo no. Por eso abrimos en pestaña en vez de iframe.
+    # Abrir el PDF en pestaña nueva usando data: URL (no blob:). Chrome tiene un
+    # bug conocido: los PDFs abiertos desde blob: se ven en pantalla pero al
+    # imprimir salen hojas EN BLANCO. Con data: URL el contenido va embebido y
+    # Chrome lo imprime correctamente. El usuario imprime con Ctrl+P a 100%.
     tmpl = (
         "<script>"
         "function __FNID__(){"
-        "var b64='B64';"
-        "var raw=atob(b64);"
-        "var arr=new Uint8Array(raw.length);"
-        "for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);"
-        "var blob=new Blob([arr],{type:'application/pdf'});"
-        "var url=URL.createObjectURL(blob);"
-        "window.open(url,'_blank');"
+        "var w=window.open('','_blank');"
+        "if(!w){alert('Permite las ventanas emergentes para imprimir');return;}"
+        "w.document.write("
+        "'<html><head><title>Imprimir</title>"
+        "<style>html,body{margin:0;height:100%}"
+        "embed{width:100%;height:100%}</style></head>"
+        "<body><embed type=\"application/pdf\" "
+        "src=\"data:application/pdf;base64,B64\"></body></html>');"
+        "w.document.close();"
         "}"
         "</script>"
         "<button onclick='__FNID__()' style='"
