@@ -96,10 +96,15 @@ def guardar_pedidos_batch(cola: list) -> dict:
         fecha    = pedido["fecha"]
         items    = pedido["items"]
 
-        cod   = _codigo_cliente(nombre)
-        mes   = fecha.month
-        sem   = fecha.isocalendar()[1]
-        unico = f"{cod}{fecha.day:02d}{mes:02d}{sem:02d}{fecha.year}"
+        # Si viene un "unico" explícito (ej. al agregar líneas a un pedido YA
+        # existente), respetarlo para que la línea se agrupe con ese pedido.
+        # Solo generamos uno nuevo cuando NO se pasa (pedido nuevo de cero).
+        unico = pedido.get("unico")
+        if not unico:
+            cod   = _codigo_cliente(nombre)
+            mes   = fecha.month
+            sem   = fecha.isocalendar()[1]
+            unico = f"{cod}{fecha.day:02d}{mes:02d}{sem:02d}{fecha.year}"
 
         for item in items:
             if not item.get("nombre") or _sf(item.get("cantidad")) <= 0:
