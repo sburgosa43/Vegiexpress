@@ -545,6 +545,45 @@ def editar_producto(row_num: int, data: dict, es_antigua: bool = False) -> None:
         pass
 
 
+def editar_productos_batch(ediciones: list, es_antigua: bool = False) -> int:
+    """Edita VARIOS productos en UN SOLO request a Sheets (evita el bug de
+    'guardar 2-3 veces' por escrituras fila-por-fila con reruns intermedios).
+
+    ediciones: [{"row_num": int, "data": {campo: valor, ...}}, ...]
+    Retorna la cantidad de productos actualizados.
+    """
+    if not ediciones:
+        return 0
+    k    = _K_ANT if es_antigua else _K_PROD
+    cols = _PROD_COLS[es_antigua]
+    upd  = []
+    costos_log = {}
+    for ed in ediciones:
+        rn   = ed["row_num"]
+        data = ed["data"]
+        for col_letter, campo in cols.items():
+            if campo in data:
+                val = (int(data[campo] or 1) if campo == "unidad_despacho"
+                       else data[campo])
+                upd.append({"range": f"{col_letter}{rn}", "values": [[val]]})
+        if "costo" in data and data.get("nombre"):
+            costos_log[data["nombre"]] = _sf(data["costo"])
+
+    if upd:
+        update_cells(k, upd)   # UN solo request para todos los productos
+    if costos_log:
+        _log_costo_actualizado(costos_log)
+
+    # Invalidación de caché
+    leer_productos_con_fila.clear()
+    try:
+        from data_helper import refrescar_datos
+        refrescar_datos(pedidos=False, productos=True, clientes=False, precios=True)
+    except Exception:
+        pass
+    return len(ediciones)
+
+
 def eliminar_producto(row_num: int, es_antigua: bool = False) -> None:
     k = _K_ANT if es_antigua else _K_PROD
     delete_rows(k, [row_num])

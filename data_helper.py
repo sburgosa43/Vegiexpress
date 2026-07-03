@@ -249,3 +249,46 @@ def leer_precios_capa(hoja_key: str, lista: str) -> list[dict]:
     except Exception:
         pass
     return result
+
+
+# ── Invalidación central de caché ─────────────────────────────────────────────
+def refrescar_datos(pedidos=True, productos=True, clientes=False, precios=True):
+    """Invalida las cachés de lectura tras una escritura, para que los cambios
+    se reflejen de inmediato SIN necesidad de reboot ni limpiar caché a mano.
+
+    Llamar SIEMPRE después de guardar/editar pedidos, precios o productos.
+    Los flags permiten limpiar solo lo necesario (más rápido), pero por
+    defecto refresca lo más común (pedidos, productos y precios).
+    """
+    errores = []
+
+    if pedidos:
+        try:
+            from excel_helper import leer_pedidos
+            leer_pedidos.clear()
+        except Exception as e:
+            errores.append(f"pedidos: {e}")
+
+    if productos:
+        try:
+            from excel_helper import leer_productos_con_fila, costo_ultima_actualizacion
+            leer_productos_con_fila.clear()
+            costo_ultima_actualizacion.clear()
+            cargar_productos.clear()
+        except Exception as e:
+            errores.append(f"productos: {e}")
+
+    if clientes:
+        try:
+            cargar_clientes.clear()
+        except Exception as e:
+            errores.append(f"clientes: {e}")
+
+    if precios:
+        try:
+            _leer_tabla_precios.clear()
+            leer_precios_capa.clear()
+        except Exception as e:
+            errores.append(f"precios: {e}")
+
+    return errores

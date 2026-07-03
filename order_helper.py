@@ -12,7 +12,15 @@ TOTAL_COLS = 31
 
 
 def _clear_pedidos_cache():
+    """Invalida la caché tras escribir pedidos. Usa el refresco central para
+    que también se refresquen precios (evita el bug de precios inconsistentes
+    al editar/agregar líneas)."""
     leer_pedidos.clear()
+    try:
+        from data_helper import refrescar_datos
+        refrescar_datos(pedidos=True, productos=False, clientes=False, precios=True)
+    except Exception:
+        pass
 
 
 def _calcular(precio: float, costo: float, cant: float) -> dict:
