@@ -744,7 +744,7 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
+    t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
         "Correccion Masiva",
         "Migracion de Datos",
         "Estructura Sheets",
@@ -753,6 +753,7 @@ def mostrar():
         "Renombrar Clientes",
         "Proveedores",
         "Backup Drive",
+        "🔗 Reparar Pedidos",
     ])
     with t1: _tab_correccion()
     with t2: _tab_migracion()
@@ -762,3 +763,99 @@ def mostrar():
     with t6: _tab_renombrar()
     with t7: _tab_proveedores()
     with t8: _tab_backup()
+    with t9: _tab_reparar_pedidos()
+
+
+def _tab_reparar_pedidos():
+    """Detecta y une pedidos del mismo cliente y fecha que quedaron separados
+    (con códigos únicos distintos) por el bug de agregar líneas."""
+    import streamlit as st
+    from excel_helper import leer_pedidos
+    from collections import defaultdict
+
+    st.markdown("### 🔗 Reparar pedidos divididos")
+    st.caption("Detecta pedidos del mismo cliente y misma fecha de entrega que "
+               "quedaron separados en dos (por el bug de agregar productos). "
+               "Al unirlos, todas las líneas quedan bajo un solo pedido.")
+
+    if st.button("🔍 Buscar pedidos divididos", key="btn_buscar_div"):
+        st.session_state["_buscar_div"] = True
+
+    if not st.session_state.get("_buscar_div"):
+        return
+
+    pedidos = leer_pedidos()
+    # Agrupar por (cliente, fecha) → set de unicos
+    por_cli_fecha = defaultdict(lambda: defaultdict(list))
+    for p in pedidos:
+        if p["status"] == "Cancelado":
+            continue
+        cli = p["cliente"].strip().lower()
+        fec = p["fecha"]
+        if not cli or not fec:
+            continue
+        por_cli_fecha[(cli, fec)][p["unico"]].append(p)
+
+    # Encontrar los que tienen MÁS de un unico (divididos)
+    divididos = []
+    for (cli, fec), unicos in por_cli_fecha.items():
+        if len(unicos) > 1:
+            nombre_real = unicos[list(unicos.keys())[0]][0]["cliente"]
+            divididos.append({
+                "cliente": nombre_real,
+                "fecha": fec,
+                "unicos": unicos,
+            })
+
+    if not divididos:
+        st.success("✅ No se encontraron pedidos divididos. Todo está correcto.")
+        return
+
+    st.warning(f"Se encontraron **{len(divididos)}** pedido(s) dividido(s):")
+
+    for idx, d in enumerate(divididos):
+        fecha_str = d["fecha"].strftime("%d/%m/%Y") if d["fecha"] else "—"
+        with st.expander(f"⚠️ {d['cliente']} · {fecha_str} · "
+                         f"{len(d['unicos'])} pedidos separados", expanded=True):
+            # Mostrar las líneas de cada unico
+            unicos_list = list(d["unicos"].items())
+            # El unico "principal" será el primero (normalmente el original)
+            unico_destino = unicos_list[0][0]
+
+            for u, lineas in unicos_list:
+                marca = "🎯 (destino)" if u == unico_destino else "→ se unirá"
+                st.markdown(f"**Código `{u}`** {marca}")
+                for l in lineas:
+                    st.write(f"   • {l['producto']} ×{l['cantidad']:g} "
+                             f"@ Q{l['precio']:.2f}")
+
+            # Selector de cuál código conservar
+            opciones_codigo = [u for u, _ in unicos_list]
+            destino = st.selectbox(
+                "¿Bajo qué código unir todas las líneas?",
+                opciones_codigo, index=0,
+                key=f"destino_{idx}",
+                help="Normalmente el primero (el pedido original)")
+
+            if st.button(f"🔗 Unir en un solo pedido",
+                         key=f"unir_{idx}", type="primary"):
+                _unir_pedidos(d["unicos"], destino)
+                st.success(f"✅ Pedidos de {d['cliente']} unidos bajo el código "
+                           f"`{destino}`. Recargá para ver el cambio.")
+                leer_pedidos.clear()
+                st.cache_data.clear()
+
+
+def _unir_pedidos(unicos: dict, destino: str):
+    """Reescribe el código único (columna AB) de todas las líneas al destino."""
+    from gsheets import update_cells
+    updates = []
+    for u, lineas in unicos.items():
+        if u == destino:
+            continue
+        for l in lineas:
+            rn = l["row_num"]
+            # Columna AB (índice 27, 0-based) = código único
+            updates.append({"range": f"AB{rn}", "values": [[destino]]})
+    if updates:
+        update_cells("pedidos", updates)
