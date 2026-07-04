@@ -69,6 +69,26 @@ def _form_cliente(prefill: dict = None, key_prefix: str = "new") -> dict | None:
                                        min_value=0, value=int(pf.get("credito",0)), step=1)
             lugar_sel = st.selectbox("Código Lugar", LUGAR_KEYS, index=lugar_idx)
 
+        st.markdown("**💼 Tratamiento comercial**")
+        tc1, tc2, tc3 = st.columns(3)
+        with tc1:
+            lag_pago = st.number_input(
+                "Rezago de cobro (semanas)", min_value=0, max_value=12, step=1,
+                value=int(pf.get("lag_pago") or 0),
+                help="Semanas entre entrega y cobro")
+        with tc2:
+            isr_default = pf.get("retiene_isr")
+            isr_idx = 0 if (isr_default is True or str(isr_default).lower() in
+                            ("sí","si","true","1")) else 1
+            retiene_isr = st.selectbox(
+                "¿Retiene ISR?", ["Sí", "No"], index=isr_idx,
+                help="Sí = retiene ISR en facturas ≥ Q2,800")
+        with tc3:
+            descuento_pct = st.number_input(
+                "Descuento (%)", min_value=0.0, max_value=100.0, step=1.0,
+                value=float(pf.get("descuento_pct") or 0),
+                help="Descuento fijo del cliente")
+
         submitted = st.form_submit_button("💾 Guardar", type="primary")
         if submitted:
             if not nombre.strip():
@@ -85,6 +105,9 @@ def _form_cliente(prefill: dict = None, key_prefix: str = "new") -> dict | None:
                 "estatus":      estatus,
                 "credito":      credito,
                 "codigo_lugar": LUGARES[lugar_sel],
+                "lag_pago":      lag_pago,
+                "retiene_isr":   retiene_isr,
+                "descuento_pct": descuento_pct,
             }
     return None
 

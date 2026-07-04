@@ -397,19 +397,26 @@ def _siguiente_codigo_cliente() -> str:
 
 def agregar_cliente(data: dict) -> str:
     codigo = _siguiente_codigo_cliente()
+    # Normalizar retiene_isr a "Sí"/"No"
+    _isr = data.get("retiene_isr", "Sí")
+    _isr = "Sí" if (_isr is True or str(_isr).lower() in ("sí","si","yes","true","1")) else "No"
     row = [
-        data.get("nombre",      ""),
-        data.get("direccion",   ""),
-        data.get("ubicacion",   ""),
-        data.get("telefono",    ""),
-        data.get("nit",         "0"),
-        data.get("tipo",        "Restaurante"),
-        data.get("estatus",     "Pendiente"),
-        data.get("empresa",     data.get("nombre", "")),
-        int(data.get("credito", 0)),
-        codigo,
-        data.get("codigo_lugar","L05"),
-        data.get("grupo",        ""),     # col L
+        data.get("nombre",      ""),      # A
+        data.get("direccion",   ""),      # B
+        data.get("ubicacion",   ""),      # C
+        data.get("telefono",    ""),      # D
+        data.get("nit",         "0"),     # E
+        data.get("tipo",        "Restaurante"),  # F
+        data.get("estatus",     "Pendiente"),    # G
+        data.get("empresa",     data.get("nombre", "")),  # H
+        int(data.get("credito", 0)),      # I
+        codigo,                            # J
+        data.get("codigo_lugar","L05"),   # K
+        data.get("grupo",        ""),      # L
+        data.get("email",        ""),      # M
+        int(data.get("lag_pago", 0) or 0),        # N
+        _isr,                                       # O
+        float(data.get("descuento_pct", 0) or 0),  # P
     ]
     append_rows(_K_CLI, [row])
     try:
@@ -426,20 +433,31 @@ def editar_cliente(row_num: int, data: dict) -> None:
         "D": "telefono",  "E": "nit",       "F": "tipo",
         "G": "estatus",   "H": "empresa",   "I": "credito",
         "K": "codigo_lugar",
+        # Tratamiento comercial centralizado (Fase B)
+        "N": "lag_pago",  "O": "retiene_isr", "P": "descuento_pct",
     }
     upd = []
     for col, campo in mapeo.items():
         if campo in data:
-            val = int(data[campo]) if campo == "credito" else data[campo]
+            if campo == "credito":
+                val = int(data[campo])
+            elif campo == "lag_pago":
+                val = int(data[campo] or 0)
+            elif campo == "descuento_pct":
+                val = float(data[campo] or 0)
+            elif campo == "retiene_isr":
+                # Normalizar a "Sí"/"No"
+                v = data[campo]
+                val = "Sí" if (v is True or str(v).lower() in ("sí","si","yes","true","1")) else "No"
+            else:
+                val = data[campo]
             upd.append({"range": f"{col}{row_num}", "values": [[val]]})
     if upd:
         update_cells(_K_CLI, upd)
-    # Limpieza dirigida: solo caches de productos (no todo el cache global)
-    leer_productos_con_fila.clear()
+    # Invalidación correcta: clientes (no productos)
     try:
-        from data_helper import cargar_productos, get_proveedores
-        cargar_productos.clear()
-        get_proveedores.clear()
+        from data_helper import cargar_clientes
+        cargar_clientes.clear()
     except Exception:
         pass
 
