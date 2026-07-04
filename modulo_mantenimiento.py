@@ -337,6 +337,38 @@ def _tab_migracion():
     from gsheets import get_all_rows, update_cells
     from excel_helper import leer_pedidos
 
+    # ── Centralización del tratamiento comercial (Fase A) ─────────────────────
+    st.markdown("### 🎯 Centralizar tratamiento de clientes (Fase A)")
+    st.caption("Agrega columnas de tratamiento (lag de pago, retiene ISR, "
+               "descuento %) a la hoja Clientes y migra los valores actuales "
+               "desde la configuración. Es seguro: NO pisa valores que ya "
+               "hayas ajustado a mano (salvo que fuerces).")
+
+    col_m1, col_m2 = st.columns([2, 1])
+    with col_m1:
+        forzar = st.checkbox("Forzar (re-escribir incluso celdas ya llenas)",
+                             key="mig_trato_forzar",
+                             help="Úsalo solo si querés reiniciar todo al valor "
+                                  "migrado. Perdés los ajustes manuales.")
+    with col_m2:
+        if st.button("🎯 Migrar tratamiento", key="mig_trato_btn",
+                     type="primary"):
+            from data_helper import migrar_trato_clientes
+            with st.spinner("Migrando tratamiento de clientes..."):
+                try:
+                    res = migrar_trato_clientes(forzar=forzar)
+                    st.success(
+                        f"✅ Migración completa: {res['clientes']} clientes · "
+                        f"{res['poblados']} poblados · "
+                        f"{res['ya_tenian']} ya tenían valores.")
+                    st.info("Revisá la hoja Clientes: ahora cada cliente tiene "
+                            "su lag_pago (N), retiene_isr (O) y descuento_pct "
+                            "(P). Ajustá los que necesiten trato distinto.")
+                except Exception as e:
+                    st.error(f"Error en la migración: {type(e).__name__}: {e}")
+
+    st.divider()
+
     # Verificar columna semana
     st.markdown("**Verificar y completar columna Semana/Año en Pedidos**")
     if st.button("Analizar pedidos sin semana", key="mig_sem"):

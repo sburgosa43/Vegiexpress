@@ -16,8 +16,14 @@ def cargar_clientes() -> list[dict]:
     rows = get_all_rows(_K_CLI)
     clientes = []
     for i, row in enumerate(rows, start=2):
-        while len(row) < 13: row.append("")
+        while len(row) < 16: row.append("")
         if not row[0]: continue
+        # Tratamiento comercial (columnas N/O/P) — Fase A de centralización.
+        # Si están vacías (aún no migrado), quedan como None y los módulos usan
+        # su fuente vieja como fallback.
+        _lag_raw  = str(row[13]).strip()
+        _isr_raw  = str(row[14]).strip()
+        _desc_raw = str(row[15]).strip()
         clientes.append({
             "row_num":      i,
             "nombre":       str(row[0]  or ""),
@@ -35,6 +41,10 @@ def cargar_clientes() -> list[dict]:
             "es_antigua":   str(row[10] or "L05").strip() in ("L03", "L04"),
             "grupo":        str(row[11] or "").strip(),
             "email":        str(row[12] or "").strip().lower(),
+            # Tratamiento comercial centralizado (None si aún no migrado)
+            "lag_pago":     (int(float(_lag_raw)) if _lag_raw not in ("", "None") else None),
+            "retiene_isr":  (_isr_raw.lower() in ("sí","si","yes","true","1") if _isr_raw not in ("", "None") else None),
+            "descuento_pct":(float(_desc_raw) if _desc_raw not in ("", "None") else None),
         })
     return clientes
 
@@ -292,3 +302,126 @@ def refrescar_datos(pedidos=True, productos=True, clientes=False, precios=True):
             errores.append(f"precios: {e}")
 
     return errores
+
+
+# ── FASE A: Centralización del tratamiento comercial en la ficha del cliente ──
+# Amplía la hoja Clientes con columnas de tratamiento (lag, ISR, descuento) y
+# migra los valores actuales desde config.py. Idempotente: si ya migró, no pisa
+# los ajustes que hayas hecho manualmente después.
+
+# Columnas nuevas (índices 0-based en la hoja Clientes):
+#   N (13) = lag_pago
+#   O (14) = retiene_isr   ("Sí"/"No")
+#   P (15) = descuento_pct
+_COL_LAG   = 13   # N
+_COL_ISR   = 14   # O
+_COL_DESC  = 15   # P
+_TRATO_HEADERS = {13: "lag_pago", 14: "retiene_isr", 15: "descuento_pct"}
+
+# Lags conocidos de la migración original (config.py + ReglasPago inicial).
+# Se migran una sola vez; después se editan desde la ficha del cliente.
+_LAGS_MIGRACION = {
+    "aldyk": 3, "4 pinos": 1, "nanajuana": 1, "tijax": 1,
+    "amis": 1, "hotelito": 0, "sundog": 0,
+}
+
+
+def _trato_migrado_para(nombre: str) -> dict:
+    """Calcula el tratamiento comercial inicial de un cliente desde las reglas
+    de config.py. Se usa solo en la migración."""
+    from config import ISR_EXENTOS, DESCUENTO_15
+    n = nombre.lower().strip()
+
+    # ISR: exento si está en la lista → "No" retiene; si no → "Sí"
+    retiene_isr = "No" if any(e in n for e in ISR_EXENTOS) else "Sí"
+
+    # Descuento: 15 si está en DESCUENTO_15, si no 0
+    descuento = 15 if any(dd in n for dd in DESCUENTO_15) else 0
+
+    # Lag: buscar en el mapa de migración; default 0
+    lag = 0
+    for key, v in _LAGS_MIGRACION.items():
+        if key in n:
+            lag = v
+            break
+
+    return {"lag_pago": lag, "retiene_isr": retiene_isr, "descuento_pct": descuento}
+
+
+def migrar_trato_clientes(forzar: bool = False) -> dict:
+    """Amplía la hoja Clientes con columnas de tratamiento y migra los valores.
+
+    - Agrega encabezados en N1/O1/P1 si faltan.
+    - Para cada cliente, si la celda de tratamiento está VACÍA, la puebla con el
+      valor migrado. Si ya tiene valor (porque lo ajustaste), NO lo pisa —salvo
+      forzar=True.
+
+    Retorna {"clientes": N, "poblados": M, "ya_tenian": K}.
+    """
+    from gsheets import get_all_rows, update_cells
+
+    rows = get_all_rows(_K_CLI)
+    if not rows:
+        return {"clientes": 0, "poblados": 0, "ya_tenian": 0, "error": "hoja vacía"}
+
+    # 1. Asegurar encabezados de las columnas nuevas (fila 1)
+    updates = []
+    # get_all_rows normalmente NO incluye la fila de encabezado; la escribimos directo
+    for col_idx, header in _TRATO_HEADERS.items():
+        col_letter = _idx_a_letra(col_idx)
+        updates.append({"range": f"{col_letter}1", "values": [[header]]})
+
+    # 2. Poblar cada cliente
+    poblados = 0
+    ya_tenian = 0
+    fila = 2  # los datos empiezan en la fila 2
+    for row in rows:
+        if not row or not row[0]:
+            fila += 1
+            continue
+        # Asegurar longitud
+        while len(row) <= _COL_DESC:
+            row.append("")
+
+        nombre = str(row[0])
+        trato = _trato_migrado_para(nombre)
+
+        # lag_pago (N)
+        if forzar or str(row[_COL_LAG]).strip() == "":
+            updates.append({"range": f"N{fila}",
+                            "values": [[trato["lag_pago"]]]})
+            _poblo = True
+        else:
+            _poblo = False
+        # retiene_isr (O)
+        if forzar or str(row[_COL_ISR]).strip() == "":
+            updates.append({"range": f"O{fila}",
+                            "values": [[trato["retiene_isr"]]]})
+            _poblo = True
+        # descuento_pct (P)
+        if forzar or str(row[_COL_DESC]).strip() == "":
+            updates.append({"range": f"P{fila}",
+                            "values": [[trato["descuento_pct"]]]})
+            _poblo = True
+
+        if _poblo:
+            poblados += 1
+        else:
+            ya_tenian += 1
+        fila += 1
+
+    if updates:
+        update_cells(_K_CLI, updates)   # con reintentos incorporados
+        cargar_clientes.clear()
+
+    return {"clientes": fila - 2, "poblados": poblados, "ya_tenian": ya_tenian}
+
+
+def _idx_a_letra(idx0: int) -> str:
+    """Convierte índice 0-based a letra de columna (0→A, 13→N)."""
+    n = idx0 + 1
+    s = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
