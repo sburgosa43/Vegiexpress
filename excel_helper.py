@@ -510,6 +510,7 @@ def leer_productos_con_fila(es_antigua: bool = False) -> list[dict]:
             "proveedor":      str(row[14] if not es_antigua else row[12] or ""),
             "pesos":          _sf(row[15] if not es_antigua else row[9]),
             "tipo_producto":  str(row[18] if not es_antigua else "" or ""),
+            "empacado":       str(row[23] if not es_antigua and len(row) > 23 else "").strip(),
             "tipo_producto2": str(row[20] if not es_antigua else row[10] or ""),
             "parent":         str(row[19] if not es_antigua else row[0] or ""),
             "para_cotizar":   str(row[21] if not es_antigua else

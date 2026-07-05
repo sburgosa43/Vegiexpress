@@ -86,13 +86,11 @@ def _guardar_reglas(df):
 
 
 def _reglas(cliente_nombre: str) -> dict:
-    """Busca la regla de pago del cliente (desde la hoja editable ReglasPago)."""
-    k = cliente_nombre.lower().strip()
-    reglas_map = _cargar_reglas()
-    for key, r in reglas_map.items():
-        if key in k:
-            return r
-    return {"lag": 0, "isr": True, "desc": 0}
+    """Fuente ÚNICA: el tratamiento comercial vive en la ficha del cliente
+    (Fase C de centralización). Con fallback automático a config para clientes
+    aún no migrados."""
+    from data_helper import tratamiento_cliente
+    return tratamiento_cliente(cliente_nombre)
 
 
 def _add_weeks(semana: int, año: int, n: int):

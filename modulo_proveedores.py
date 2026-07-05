@@ -325,6 +325,7 @@ def mostrar():
             "proveedor":     p.get("proveedor", "").strip(),
             "costo":         float(p.get("costo") or 0),
             "tipo_producto": str(p.get("tipo_producto", "") or "").strip(),
+            "empacado":      str(p.get("empacado", "") or "").strip(),
         } for p in catalog}
 
         cli_zona = {c["nombre"].lower(): c["codigo_lugar"] for c in cli_list}
@@ -399,11 +400,22 @@ def mostrar():
                 rows.append(row)
             base_dfs[prov] = pd.DataFrame(rows)
 
+        # DataFrame de Patojas (proceso) — misma estructura, tabla aparte
+        patojas_rows = []
+        for k, v in sorted(por_patojas.items()):
+            row = {"Producto": k[0], "Unidad": k[1]}
+            for an in todas_areas:
+                row[an] = round(v.get(an, 0), 2) if v.get(an, 0) else 0
+            row["Total"] = round(v["total"], 1)
+            patojas_rows.append(row)
+        patojas_df = pd.DataFrame(patojas_rows)
+
         st.session_state[base_key]                        = base_dfs
         st.session_state[f"prov_prodmap_v3_{semana}_{año}"] = prod_map
         st.session_state[f"prov_areas_v3_{semana}_{año}"]   = todas_areas
         st.session_state[f"prov_resumen_v3_{semana}_{año}"] = resumen_tp
         st.session_state[f"prov_alerta_v3_{semana}_{año}"]  = sin_detalle
+        st.session_state[f"prov_patojas_v3_{semana}_{año}"] = patojas_df
 
     # ── Recuperar del estado ──────────────────────────────────────────────────
     base_dfs    = st.session_state[base_key]
@@ -411,6 +423,7 @@ def mostrar():
     todas_areas = st.session_state.get(f"prov_areas_v3_{semana}_{año}", [])
     resumen_tp  = st.session_state.get(f"prov_resumen_v3_{semana}_{año}", {})
     sin_detalle = st.session_state.get(f"prov_alerta_v3_{semana}_{año}", [])
+    patojas_df  = st.session_state.get(f"prov_patojas_v3_{semana}_{año}", pd.DataFrame())
     reset_n     = st.session_state.get(reset_key, 0)
     provs       = list(base_dfs.keys())
 
@@ -466,8 +479,8 @@ def mostrar():
         pass
 
     # ══ TABS PRINCIPALES ══════════════════════════════════════════════════════
-    tab_apedir, tab_resumen, tab_area = st.tabs(
-        ["📦 A Pedir", "📊 Resumen por Tipo", "📍 Por Área"])
+    tab_apedir, tab_resumen, tab_area, tab_patojas = st.tabs(
+        ["📦 A Pedir", "📊 Resumen por Tipo", "📍 Por Área", "👷 Patojas"])
 
     with tab_area:
         _tab_por_area(semana, año, prod_map)
@@ -672,3 +685,54 @@ Imprimir: Ctrl+P (o Compartir → Imprimir en el teléfono)</p>
                                    key=f"dl_dis_{prov}_{semana}_{año}",
                                    help="Ingresá cantidades primero",
                                    use_container_width=True)
+
+
+    # ══ TAB PATOJAS (proceso: Patojas + Proceso + Sí) ═══════════════════════
+    with tab_patojas:
+        st.markdown(f"**👷 Patojas — Semana {semana}/{año}**")
+        st.caption("Productos de proceso (Patojas + Proceso + Empacado=Sí). "
+                   "Esta tabla es de referencia del trabajo de las Patojas y "
+                   "**NO suma** al total de compras a proveedores. El costo del "
+                   "insumo ya se cuenta en las compras; la mano de obra va en "
+                   "Gastos.")
+
+        if patojas_df is None or patojas_df.empty:
+            st.info("No hay productos de proceso (Patojas + Proceso + Sí) esta "
+                    "semana.")
+        else:
+            # Mostrar la tabla (cantidades por área + total), sin info financiera
+            st.dataframe(patojas_df, hide_index=True, use_container_width=True)
+
+            # Impresión — igual que las demás tablas, sin info financiera
+            items_patojas = []
+            for _, row in patojas_df.iterrows():
+                item = {
+                    "producto": row["Producto"],
+                    "unidad":   row["Unidad"],
+                    "cantidad": float(row["Total"]),
+                }
+                for _a in todas_areas:
+                    item[_a] = float(row[_a]) if _a in row.index else 0
+                items_patojas.append(item)
+
+            if items_patojas:
+                try:
+                    pdf_pat = generar_lista_compras_proveedor(
+                        "Patojas", items_patojas, semana, año)
+                    cpa1, cpa2 = st.columns(2)
+                    from pdf_helper import boton_imprimir_html as _btn_imp_pat
+                    import streamlit.components.v1 as _cpv2
+                    with cpa1:
+                        _cpv2.html(
+                            _btn_imp_pat(pdf_pat, f"patojas_{semana}_{año}",
+                                         "🖨️ Imprimir", "#2D7A2D"),
+                            height=44)
+                    with cpa2:
+                        st.download_button(
+                            "📥 PDF Patojas", data=pdf_pat,
+                            file_name=f"Patojas_S{semana}_{año}.pdf",
+                            mime="application/pdf",
+                            key=f"dl_patojas_{semana}_{año}",
+                            use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error al generar PDF: {e}")

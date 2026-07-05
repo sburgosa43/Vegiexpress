@@ -89,12 +89,25 @@ def descuento_factura(cliente_nombre: str) -> float:
 def calcular_liquido(cliente_nombre: str, total: float) -> tuple:
     """
     Retorna (liquido, isr, descuento) para un cliente y total de factura.
+
+    Fase C: usa el tratamiento centralizado de la ficha del cliente (lag/isr/
+    descuento). Import diferido para evitar dependencia circular con data_helper.
+    El umbral de ISR (Q2,800) se sigue evaluando aquí.
     """
-    desc_pct = descuento_factura(cliente_nombre)
+    try:
+        from data_helper import tratamiento_cliente
+        t = tratamiento_cliente(cliente_nombre)
+        desc_pct = t["desc"]
+        retiene  = t["isr"]
+    except Exception:
+        # Fallback a las listas viejas si algo falla
+        desc_pct = descuento_factura(cliente_nombre)
+        retiene  = not any(e in cliente_nombre.lower() for e in ISR_EXENTOS)
+
     if desc_pct > 0:
         desc_q = round(total * desc_pct / 100, 2)
         return round(total - desc_q, 2), 0.0, desc_q
-    if aplica_isr(cliente_nombre, total):
+    if retiene and total >= ISR_UMBRAL:
         isr = round(total / 1.12 * 0.05, 2)
         return round(total - isr, 2), isr, 0.0
     return round(total, 2), 0.0, 0.0

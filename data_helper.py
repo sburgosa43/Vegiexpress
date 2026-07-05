@@ -425,3 +425,46 @@ def _idx_a_letra(idx0: int) -> str:
         n, r = divmod(n - 1, 26)
         s = chr(65 + r) + s
     return s
+
+
+# ── FASE C: Fuente única del tratamiento comercial ────────────────────────────
+def tratamiento_cliente(nombre: str) -> dict:
+    """Fuente ÚNICA del tratamiento comercial de un cliente. Lee de la ficha
+    del cliente (columnas N/O/P migradas). Si el cliente aún no tiene datos
+    en la ficha (None), cae al fallback de config.py para no romper nada.
+
+    Retorna: {"lag": int, "isr": bool, "desc": float}
+    donde isr=True significa que el cliente RETIENE ISR (agente retenedor).
+    """
+    n = (nombre or "").strip().lower()
+
+    # 1. Buscar en la ficha del cliente
+    for c in cargar_clientes():
+        cn = c["nombre"].strip().lower()
+        # match por nombre contenido (igual criterio que las reglas viejas)
+        if cn == n or cn in n or n in cn:
+            lag  = c.get("lag_pago")
+            isr  = c.get("retiene_isr")
+            desc = c.get("descuento_pct")
+            # Si la ficha tiene los datos migrados, usarlos
+            if lag is not None and isr is not None:
+                return {
+                    "lag":  int(lag),
+                    "isr":  bool(isr),
+                    "desc": float(desc) if desc is not None else 0.0,
+                }
+            break  # encontró el cliente pero sin datos → fallback
+
+    # 2. Fallback a config.py (clientes aún no migrados)
+    try:
+        from config import ISR_EXENTOS, DESCUENTO_15, REGLAS_PAGO
+        lag = 0
+        for key, r in REGLAS_PAGO.items():
+            if key in n:
+                lag = r["lag"]
+                break
+        isr  = not any(e in n for e in ISR_EXENTOS)
+        desc = 15.0 if any(dd in n for dd in DESCUENTO_15) else 0.0
+        return {"lag": lag, "isr": isr, "desc": desc}
+    except Exception:
+        return {"lag": 0, "isr": True, "desc": 0.0}
