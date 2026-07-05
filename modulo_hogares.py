@@ -444,6 +444,130 @@ def _tab_formulario():
                            "como Editor.")
 
 
+def _analisis_top_hoteles():
+    """Análisis de productos más vendidos a HOTELES (clientes código L01).
+    Ayuda a decidir qué productos poner en el formulario de hoteles y con qué
+    cantidades típicas por ticket.
+    """
+    import pandas as pd
+    from collections import Counter
+    from excel_helper import leer_pedidos
+    from data_helper import cargar_clientes
+
+    st.markdown("#### 📊 Top productos vendidos a Hoteles")
+    st.caption("Análisis de ventas históricas a hoteles (clientes con código "
+               "L01). Usá esta información para decidir qué productos incluir en "
+               "el formulario y las cantidades típicas por ticket.")
+
+    with st.spinner("Analizando ventas a hoteles..."):
+        pedidos = leer_pedidos()
+        clientes = cargar_clientes()
+
+    # Identificar hoteles: clientes con código_lugar == L01
+    hoteles = {c["nombre"].strip().lower()
+               for c in clientes
+               if str(c.get("codigo_lugar", "")).strip().upper() == "L01"}
+
+    if not hoteles:
+        st.warning("No se encontraron clientes con código L01 (hoteles). "
+                   "Verificá que los hoteles tengan ese código en su ficha.")
+        return
+
+    st.info(f"🏨 {len(hoteles)} hotel(es) identificado(s) con código L01.")
+
+    # Filtrar pedidos de hoteles (no cancelados)
+    ped_hoteles = [p for p in pedidos
+                   if p["cliente"].strip().lower() in hoteles
+                   and p["status"] != "Cancelado"
+                   and float(p.get("cantidad") or 0) > 0]
+
+    if not ped_hoteles:
+        st.warning("No hay pedidos históricos de hoteles todavía.")
+        return
+
+    # Agregar por producto
+    #   semanas_set: en cuántas semanas distintas se vendió
+    #   cantidad_total: suma de unidades
+    #   tickets: número de pedidos (líneas) que lo incluyeron
+    #   cantidades: lista de cantidades por ticket (para moda/promedio)
+    analisis = {}
+    for p in ped_hoteles:
+        prod = p["producto"].strip()
+        if not prod:
+            continue
+        key = prod.lower()
+        if key not in analisis:
+            analisis[key] = {
+                "nombre": prod,
+                "unidad": p.get("unidad", ""),
+                "semanas": set(),
+                "cantidad_total": 0.0,
+                "tickets": 0,
+                "cantidades": [],
+                "hoteles": set(),
+            }
+        a = analisis[key]
+        a["semanas"].add((p["año"], p["semana"]))
+        a["cantidad_total"] += float(p["cantidad"])
+        a["tickets"] += 1
+        a["cantidades"].append(float(p["cantidad"]))
+        a["hoteles"].add(p["cliente"].strip().lower())
+
+    # Construir tabla
+    filas = []
+    for key, a in analisis.items():
+        cants = a["cantidades"]
+        # Cantidad típica: moda (la más frecuente); si empatan, la menor
+        moda = Counter(cants).most_common()
+        cant_tipica = moda[0][0] if moda else 0
+        promedio = sum(cants) / len(cants) if cants else 0
+        # Rango de cantidades (para definir opciones del formulario)
+        cant_min = min(cants) if cants else 0
+        cant_max = max(cants) if cants else 0
+        filas.append({
+            "Producto": a["nombre"],
+            "Unidad": a["unidad"],
+            "Semanas vendido": len(a["semanas"]),
+            "N° hoteles": len(a["hoteles"]),
+            "Tickets": a["tickets"],
+            "Cant. total": round(a["cantidad_total"], 1),
+            "Cant. típica": f"{cant_tipica:g}",
+            "Cant. promedio": round(promedio, 1),
+            "Rango": f"{cant_min:g}–{cant_max:g}",
+        })
+
+    # Ordenar por semanas vendido (recurrencia) y luego cantidad total
+    filas.sort(key=lambda x: (-x["Semanas vendido"], -x["Cant. total"]))
+
+    df = pd.DataFrame(filas)
+
+    # Resumen
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Productos distintos", len(filas))
+    c2.metric("Pedidos analizados", len(ped_hoteles))
+    total_semanas = len({(p["año"], p["semana"]) for p in ped_hoteles})
+    c3.metric("Semanas con ventas", total_semanas)
+
+    st.markdown("##### Productos ordenados por recurrencia (semanas vendido)")
+    st.caption("**Semanas vendido** = en cuántas semanas distintas se pidió "
+               "(recurrencia). **Cant. típica** = la cantidad más frecuente por "
+               "ticket (útil para las opciones del formulario). **Rango** = "
+               "mínimo–máximo pedido.")
+    st.dataframe(df, hide_index=True, use_container_width=True,
+                 height=min(700, 60 + len(df) * 35))
+
+    # Descargar como referencia
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "📥 Descargar análisis (CSV)", data=csv,
+        file_name="top_productos_hoteles.csv", mime="text/csv",
+        key="dl_top_hoteles")
+
+    st.caption("💡 Con la columna **Cant. típica** y **Rango** podés decidir si "
+               "en el formulario ponés un desplegable con las cantidades más "
+               "comunes, o un campo numérico libre.")
+
+
 def mostrar():
     st.markdown("## 🏠 Hogares")
     if st.button("Inicio", key="btn_home_hog", type="secondary"):
@@ -451,11 +575,14 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    tab_imp, tab_form = st.tabs(["📥 Importar Pedidos", "📋 Formulario"])
+    tab_imp, tab_form, tab_top = st.tabs(
+        ["📥 Importar Pedidos", "📋 Formulario", "📊 Top Hoteles"])
     with tab_imp:
         _tab_importar()
     with tab_form:
         _tab_formulario()
+    with tab_top:
+        _analisis_top_hoteles()
 
 def _tab_importar():
     """Importación de pedidos desde el formulario.
