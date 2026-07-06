@@ -22,7 +22,7 @@ CANALES = {
     "hoteles": {
         "nombre":       "Hoteles",
         "icono":        "🏨",
-        "form_sheet_id": "13qYFtdBCk_3aTAoQF4brLEK3s-496wHxt9bs8xh6dIY",
+        "form_sheet_id": "1zKFSLqQhhaBgLuN3JPgPigW9o-iIKrK51Er0-OWm0Jo",
         "hoja_import":  "formimports_hoteles",
     },
 }
