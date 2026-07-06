@@ -594,49 +594,172 @@ def _analisis_top_hoteles():
 
 
 def _tab_formulario_hoteles():
-    """Pestaña del formulario de Hoteles. El formulario ya está creado (copia
-    del de Hogares). Muestra el estado de la conexión y permite verificar que
-    la app puede leer las respuestas."""
-    cfg = CANALES["hoteles"]
-    form_id = cfg["form_sheet_id"]
-    form_url = f"https://docs.google.com/spreadsheets/d/{form_id}"
+    """Gestión del formulario Google Forms de Hoteles: seleccionar productos y
+    sincronizar el formulario con los precios actuales del catálogo general."""
+    import pandas as pd
+    from forms_helper import (get_form_id, _productos_hoteles,
+                               actualizar_formulario, leer_productos_en_form)
+
+    # Claves de session_state propias del canal hoteles
+    SEL_KEY  = "hot_form_seleccion"
+    INIT_KEY = "hot_form_init"
+    VER_KEY  = "hot_form_ver"
 
     st.markdown("#### 🏨 Formulario Google Forms — Hoteles")
-    st.caption("El formulario de hoteles es una copia del de Hogares. Acá "
-               "verificás que la app pueda leer sus respuestas.")
+    st.caption("Seleccioná los productos que querés incluir y sincronizá el "
+               "formulario con los precios actuales del catálogo general "
+               "(Listado Productos).")
 
-    st.info(f"📋 Sheet de respuestas configurado: `{form_id}`")
+    # ── Estado del formulario activo ──────────────────────────────────────────
+    form_id = get_form_id("hoteles")
+    if form_id:
+        form_url = f"https://docs.google.com/forms/d/{form_id}/viewform"
+        col_a, col_b, col_c = st.columns([3, 0.8, 0.8])
+        col_a.success(f"✅ Formulario activo — [Link para hoteles]({form_url})")
+        if col_b.button("📋 Link", key="hot_copy_link"):
+            st.write(f"`{form_url}`")
+        if col_c.button("🔀 Cambiar", key="hot_change_form",
+                        help="Configurar un formulario diferente"):
+            from forms_helper import _save_form_id
+            _save_form_id("", "hoteles")
+            st.session_state.pop(INIT_KEY, None)
+            st.rerun()
 
-    # Verificar conexión
-    if st.button("🔌 Verificar conexión con el formulario", key="hot_verif"):
-        with st.spinner("Conectando con el Sheet de respuestas de hoteles..."):
-            _leer_respuestas.clear()
-            headers, rows = _leer_respuestas("hoteles")
-        if headers:
-            st.success(f"✅ Conexión OK. El formulario tiene "
-                       f"**{len(headers)}** columnas y **{len(rows)}** "
-                       f"respuesta(s) hasta ahora.")
-            if rows:
-                st.caption("Primeras columnas detectadas:")
-                st.write(", ".join(headers[:8]) + ("..." if len(headers) > 8 else ""))
-            else:
-                st.info("El formulario aún no tiene respuestas. Cuando los "
-                        "hoteles empiecen a responder, aparecerán en la pestaña "
-                        "**📥 Importar** (seleccioná el canal Hoteles).")
-        # si falla, _leer_respuestas ya muestra el diagnóstico
+    # ── Selector de productos ─────────────────────────────────────────────────
+    todos = _productos_hoteles()
+    nombres_todos = [p["nombre"] for p in todos]
 
+    if not todos:
+        st.warning("No hay productos con precio en el catálogo general.")
+        return
+
+    # Inicializar selección
+    if INIT_KEY not in st.session_state:
+        if form_id:
+            try:
+                en_form_init = leer_productos_en_form(form_id)
+                st.session_state[SEL_KEY] = {
+                    n for n in en_form_init if n in set(nombres_todos)}
+            except Exception:
+                st.session_state[SEL_KEY] = set(nombres_todos)
+        else:
+            st.session_state[SEL_KEY] = set(nombres_todos)
+        st.session_state[INIT_KEY] = True
+    ver = st.session_state.get(VER_KEY, 0)
+
+    st.markdown("##### Productos a incluir en el formulario")
+    st.caption("💡 Usá la pestaña **📊 Top Hoteles** para decidir qué productos "
+               "conviene ofrecer según lo más vendido.")
+
+    if form_id:
+        if st.button("🔄 Recargar lista desde el formulario actual",
+                     key="hot_reload_form"):
+            try:
+                en_form = leer_productos_en_form(form_id)
+                st.session_state[SEL_KEY] = {
+                    n for n in en_form if n in set(nombres_todos)}
+                st.session_state[VER_KEY] = ver + 1
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error leyendo el formulario: {e}")
+
+    # Filtros de referencia
+    col_f1, col_f2 = st.columns(2)
+    seg_f = col_f1.selectbox("Segmento", ["Todos"] +
+                              sorted({p["segmento"] for p in todos}),
+                              key="hot_seg_filter")
+    txt_f = col_f2.text_input("Buscar", placeholder="nombre...",
+                               key="hot_txt_filter")
+
+    prods_vis = [p for p in todos
+                 if (seg_f == "Todos" or p["segmento"] == seg_f) and
+                    (not txt_f or txt_f.lower() in p["nombre"].lower())]
+
+    sel_actual = st.session_state[SEL_KEY]
+
+    ref_df = pd.DataFrame([{
+        "Estado":   "📋 En formulario" if p["nombre"] in sel_actual
+                    else "➕ No incluido",
+        "Segmento": p["segmento"],
+        "Producto": p["nombre"],
+        "Unidad":   p["unidad"],
+        "Q":        p["precio"],
+    } for p in prods_vis])
+
+    if not ref_df.empty:
+        st.dataframe(ref_df, hide_index=True, use_container_width=True,
+                     height=min(320, 60 + len(ref_df)*35))
+
+    st.caption(f"↑ Vista filtrada — {len(sel_actual)} de {len(todos)} "
+               f"productos seleccionados en total.")
+
+    # Editor de selección
+    with st.expander("✏️ Editar selección de productos", expanded=False):
+        sel_nueva = st.multiselect(
+            "Productos incluidos en el formulario",
+            options=nombres_todos,
+            default=[n for n in nombres_todos if n in sel_actual],
+            key=f"hot_multiselect_{ver}",
+            label_visibility="collapsed",
+        )
+        st.session_state[SEL_KEY] = set(sel_nueva)
+
+        bc1, bc2 = st.columns(2)
+        if bc1.button("☑ Marcar todos", key="hot_sel_all"):
+            st.session_state[SEL_KEY] = set(nombres_todos)
+            st.session_state[VER_KEY] = ver + 1
+            st.rerun()
+        if bc2.button("☐ Desmarcar todos", key="hot_des_all"):
+            st.session_state[SEL_KEY] = set()
+            st.session_state[VER_KEY] = ver + 1
+            st.rerun()
+
+    n_sel = len(st.session_state[SEL_KEY])
+    st.caption(f"{n_sel} de {len(todos)} productos seleccionados.")
+
+    # ── Sincronizar formulario ────────────────────────────────────────────────
     st.divider()
-    st.markdown("**Cómo funciona el canal de hoteles:**")
-    st.markdown(
-        "1. Los hoteles llenan el formulario (con los productos que definiste "
-        "usando la pestaña **📊 Top Hoteles**).\n"
-        "2. Las respuestas caen en el Sheet configurado arriba.\n"
-        "3. En la pestaña **📥 Importar** elegís el canal **🏨 Hoteles** y "
-        "traés los pedidos, igual que con Hogares.\n"
-        "4. Cada hotel toma sus precios automáticamente según su ficha.")
+    st.markdown("##### Actualizar formulario")
+    st.caption("La app actualiza tu formulario EXISTENTE con los productos "
+               "seleccionados y sus precios actuales del catálogo. "
+               "El link para los hoteles **no cambia**.")
 
-    st.caption("💡 Para armar o ajustar qué productos van en el formulario, usá "
-               "la pestaña **📊 Top Hoteles** que te muestra los más vendidos.")
+    if not form_id:
+        st.info("📋 Ingresá el ID del formulario de hoteles. Lo encontrás en la "
+                "URL: `docs.google.com/forms/d/`**[ID]**`/edit`  ·  "
+                "Compartilo con la cuenta de servicio como **Editor** antes de "
+                "actualizar.")
+    fid_input = st.text_input(
+        "ID del formulario de hoteles",
+        value=form_id or "",
+        placeholder="1FAIpQLSe...",
+        key="hot_form_id_input",
+        label_visibility="collapsed" if form_id else "visible",
+    )
+
+    prods_sel = [p for p in todos
+                 if p["nombre"] in st.session_state.get(SEL_KEY, set())]
+
+    if st.button("🔄 Actualizar formulario de hoteles con precios actuales",
+                 type="primary", key="hot_actualizar_form",
+                 disabled=not fid_input.strip() or not prods_sel):
+        with st.spinner(f"Actualizando {len(prods_sel)} productos..."):
+            try:
+                res = actualizar_formulario(fid_input.strip(), productos=prods_sel)
+                # Guardar el form_id del canal hoteles
+                from forms_helper import _save_form_id
+                _save_form_id(fid_input.strip(), "hoteles")
+                st.success(
+                    f"✅ {res['eliminados']} preguntas antiguas eliminadas · "
+                    f"{res['agregados']} productos agregados con precios actuales.")
+                st.markdown(
+                    f"**🔗 Link para hoteles:** "
+                    f"[{res['form_url']}]({res['form_url']})")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+                st.caption("Verificá que el formulario esté compartido con la "
+                           "cuenta de servicio como Editor.")
 
 
 def mostrar():

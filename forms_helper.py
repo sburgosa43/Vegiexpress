@@ -37,13 +37,18 @@ def _drive_svc():
 
 # ── Config: form_id persiste en GastosConfig ──────────────────────────────────
 _HOG_KEY = "HOG_FORM_ID"
+_HOT_KEY = "HOT_FORM_ID"
+
+def _key_canal(canal):
+    return _HOT_KEY if canal == "hoteles" else _HOG_KEY
 
 
-def get_form_id() -> str | None:
+def get_form_id(canal: str = "hogares") -> str | None:
+    _key = _key_canal(canal)
     try:
         from gsheets import get_all_rows
         for row in get_all_rows("gastosconfig"):
-            if row and str(row[0]).strip().upper() == _HOG_KEY:
+            if row and str(row[0]).strip().upper() == _key:
                 v = str(row[1]).strip() if len(row) > 1 else ""
                 return v or None
     except Exception:
@@ -51,15 +56,16 @@ def get_form_id() -> str | None:
     return None
 
 
-def _save_form_id(form_id: str) -> None:
+def _save_form_id(form_id: str, canal: str = "hogares") -> None:
+    _key = _key_canal(canal)
     try:
         from gsheets import ws as _ws, get_all_rows
         sheet = _ws("gastosconfig")
         for i, row in enumerate(get_all_rows("gastosconfig"), start=2):
-            if row and str(row[0]).strip().upper() == _HOG_KEY:
+            if row and str(row[0]).strip().upper() == _key:
                 sheet.update(f"B{i}", [[form_id]])
                 return
-        sheet.append_rows([[_HOG_KEY, form_id, "", ""]])
+        sheet.append_rows([[_key, form_id, "", ""]])
     except Exception:
         pass
 
@@ -78,6 +84,30 @@ def _productos_hogares() -> list[dict]:
         if not p.get("nombre") or not p.get("unidad"):
             continue
         precio = precios_h.get(p["nombre"].lower()) or float(p.get("precio") or 0)
+        if precio <= 0:
+            continue
+        result.append({
+            "nombre":   p["nombre"],
+            "unidad":   p["unidad"],
+            "segmento": p.get("segmento", "Otros"),
+            "precio":   precio,
+        })
+    return sorted(result, key=lambda x: (x["segmento"], x["nombre"]))
+
+
+def _productos_hoteles() -> list[dict]:
+    """Productos para el formulario de Hoteles. Usa el precio del catálogo
+    general (Listado Productos), que es el que manejan Hoteles/Río — no una
+    lista de precios especial."""
+    from excel_helper import leer_productos_con_fila
+
+    prods_gen = leer_productos_con_fila(es_antigua=False)
+    result = []
+    for p in prods_gen:
+        if not p.get("nombre") or not p.get("unidad"):
+            continue
+        # Precio base del catálogo general
+        precio = float(p.get("precio") or 0)
         if precio <= 0:
             continue
         result.append({
