@@ -341,6 +341,7 @@ def mostrar():
             return
 
         por_prov    = {}
+        por_patojas = {}   # Patojas + Proceso + Sí (proceso, NO suma a compras)
         resumen_tp  = {}   # {tipo_producto: {(prod,unidad): {area: qty, total: qty}}}
         sin_detalle = []
 
@@ -352,8 +353,33 @@ def mostrar():
             unidad = p.get("unidad", "")
             costo  = info.get("costo", 0.0)
             tipo_p = info.get("tipo_producto", "") or "Sin Tipo"
+            empac  = info.get("empacado", "")
             zona_c = cli_zona.get(p["cliente"].lower(), "")
             area   = _get_area(p["cliente"], zona_c)
+
+            # ── Condicional Patojas: proveedor=Patojas + tipo=Proceso + empacado=Sí
+            es_patojas = (
+                prov.strip().lower() == "patojas"
+                and tipo_p.strip().lower() == "proceso"
+                and empac.strip().lower() in ("sí", "si")
+            )
+
+            if es_patojas:
+                # Va a la tabla Patojas (proceso), NO suma a compras a proveedor
+                key = (prod, unidad, costo)
+                if key not in por_patojas:
+                    por_patojas[key] = {"total": 0.0}
+                por_patojas[key]["total"] += cant
+                por_patojas[key][area] = por_patojas[key].get(area, 0) + cant
+                # Igual entra al Resumen por Tipo
+                if tipo_p not in resumen_tp: resumen_tp[tipo_p] = {}
+                pkey = (prod, unidad)
+                if pkey not in resumen_tp[tipo_p]:
+                    resumen_tp[tipo_p][pkey] = {"total": 0.0}
+                resumen_tp[tipo_p][pkey]["total"] += cant
+                resumen_tp[tipo_p][pkey][area] = \
+                    resumen_tp[tipo_p][pkey].get(area, 0) + cant
+                continue   # NO sigue al bloque de por_prov
 
             if prov == "⚠️ SIN PROVEEDOR":
                 sin_detalle.append({"producto": prod, "cliente": p["cliente"],
