@@ -1,13 +1,34 @@
 """
-modulo_hogares.py — Importación de pedidos desde Google Form Hogares.
-Flujo: leer respuestas → revisar → confirmar → crear pedidos.
+modulo_hogares.py — Pedidos Entrantes (multi-canal: Hogares y Hoteles).
+Importa pedidos desde Google Forms. Flujo: leer respuestas → revisar →
+confirmar → crear pedidos. Cada canal (ver CANALES) comparte la misma lógica
+y solo cambia su formulario de respuestas y su hoja de control de importados.
 """
 import streamlit as st
 import re, unicodedata, json
 from datetime import date, datetime
 
-# ID del Sheet de respuestas del formulario actual
-FORM_SHEET_ID  = "1yNaN5m_1-cAeQDizMJRbDgUlQ6yqVcFk5BYvKzTEdiM"
+# ── Configuración de canales de pedidos entrantes ─────────────────────────────
+# Cada canal comparte la MISMA lógica de importación; solo cambia su formulario
+# de respuestas y la hoja donde se registran los importados. Para agregar un
+# canal nuevo (ej. Restaurantes), basta con sumar una entrada aquí.
+CANALES = {
+    "hogares": {
+        "nombre":       "Hogares",
+        "icono":        "🏠",
+        "form_sheet_id": "1yNaN5m_1-cAeQDizMJRbDgUlQ6yqVcFk5BYvKzTEdiM",
+        "hoja_import":  "formimports",         # hoja de control de importados
+    },
+    "hoteles": {
+        "nombre":       "Hoteles",
+        "icono":        "🏨",
+        "form_sheet_id": "13qYFtdBCk_3aTAoQF4brLEK3s-496wHxt9bs8xh6dIY",
+        "hoja_import":  "formimports_hoteles",
+    },
+}
+
+# ID del Sheet de respuestas del formulario actual (legado — Hogares por defecto)
+FORM_SHEET_ID  = CANALES["hogares"]["form_sheet_id"]
 _HOG_SEL_KEY  = "hog_form_seleccion"   # clave de session_state
 _HOG_INIT_KEY = "hog_form_init"
 _HOG_VER_KEY  = "hog_form_ver"
@@ -46,10 +67,11 @@ def _parse_col_header(h: str) -> dict | None:
     return None
 
 
-def _abrir_form_sheet():
-    """Abre el Sheet de respuestas con la service account.
+def _abrir_form_sheet(canal: str = "hogares"):
+    """Abre el Sheet de respuestas del canal con la service account.
     Reutiliza el cliente gspread central (gsheets) para usar las mismas
     credenciales que el resto de la app."""
+    _form_id = CANALES.get(canal, CANALES["hogares"])["form_sheet_id"]
     # Reusar la conexión central — mismas credenciales que toda la app
     try:
         from gsheets import _gc as _gc_central
@@ -70,35 +92,39 @@ def _abrir_form_sheet():
                                "(ni GOOGLE_CREDENTIALS ni gcp_service_account)")
         creds = Credentials.from_service_account_info(info, scopes=SCOPES)
         gc = gspread.authorize(creds)
-    return gc.open_by_key(FORM_SHEET_ID).sheet1
+    return gc.open_by_key(_form_id).sheet1
 
 
-def _get_imported_timestamps() -> set:
-    """Timestamps ya importados (de la hoja FormImports)."""
+def _get_imported_timestamps(canal: str = "hogares") -> set:
+    """Timestamps ya importados (de la hoja de control del canal)."""
     try:
-        _ensure_formimports()
+        _ensure_formimports(canal)
         from gsheets import get_all_rows
-        return {str(r[0]).strip() for r in get_all_rows("formimports") if r}
+        hoja = CANALES.get(canal, CANALES["hogares"])["hoja_import"]
+        return {str(r[0]).strip() for r in get_all_rows(hoja) if r}
     except Exception:
         return set()
 
 
-def _ensure_formimports():
-    """Crea la hoja FormImports si no existe."""
+def _ensure_formimports(canal: str = "hogares"):
+    """Crea la hoja de control de importados del canal si no existe."""
     from gsheets import ensure_ws
+    hoja = CANALES.get(canal, CANALES["hogares"])["hoja_import"]
     try:
-        ensure_ws("formimports",
+        ensure_ws(hoja,
                   ["timestamp", "fecha_import", "cliente", "n_lineas"])
     except Exception as e:
         if "already exists" not in str(e).lower():
             raise
 
 
-def _registrar_importado(timestamp: str, cliente: str, n_lineas: int):
+def _registrar_importado(timestamp: str, cliente: str, n_lineas: int,
+                         canal: str = "hogares"):
     from gsheets import append_rows
-    _ensure_formimports()
+    _ensure_formimports(canal)
+    hoja = CANALES.get(canal, CANALES["hogares"])["hoja_import"]
     hoy = date.today().strftime("%d/%m/%Y")
-    append_rows("formimports", [[timestamp, hoy, cliente, n_lineas]])
+    append_rows(hoja, [[timestamp, hoy, cliente, n_lineas]])
 
 
 def _match_producto(nombre_form: str, cat_map: dict) -> tuple[str | None, str]:
@@ -118,11 +144,10 @@ def _match_producto(nombre_form: str, cat_map: dict) -> tuple[str | None, str]:
 
 # ── Leer y parsear respuestas ─────────────────────────────────────────────────
 @st.cache_data(ttl=60, show_spinner=False)
-def _leer_respuestas() -> tuple[list[str], list[list]]:
-    """Retorna (headers, rows) del sheet de respuestas. Cacheado 60s para
-    no saturar la cuota de lecturas de Google Sheets."""
+def _leer_respuestas(canal: str = "hogares") -> tuple[list[str], list[list]]:
+    """Retorna (headers, rows) del sheet de respuestas del canal."""
     try:
-        sheet = _abrir_form_sheet()
+        sheet = _abrir_form_sheet(canal)
         todas = sheet.get_all_values()
         if not todas:
             return [], []
@@ -568,23 +593,93 @@ def _analisis_top_hoteles():
                "comunes, o un campo numérico libre.")
 
 
+def _tab_formulario_hoteles():
+    """Pestaña del formulario de Hoteles. El formulario ya está creado (copia
+    del de Hogares). Muestra el estado de la conexión y permite verificar que
+    la app puede leer las respuestas."""
+    cfg = CANALES["hoteles"]
+    form_id = cfg["form_sheet_id"]
+    form_url = f"https://docs.google.com/spreadsheets/d/{form_id}"
+
+    st.markdown("#### 🏨 Formulario Google Forms — Hoteles")
+    st.caption("El formulario de hoteles es una copia del de Hogares. Acá "
+               "verificás que la app pueda leer sus respuestas.")
+
+    st.info(f"📋 Sheet de respuestas configurado: `{form_id}`")
+
+    # Verificar conexión
+    if st.button("🔌 Verificar conexión con el formulario", key="hot_verif"):
+        with st.spinner("Conectando con el Sheet de respuestas de hoteles..."):
+            _leer_respuestas.clear()
+            headers, rows = _leer_respuestas("hoteles")
+        if headers:
+            st.success(f"✅ Conexión OK. El formulario tiene "
+                       f"**{len(headers)}** columnas y **{len(rows)}** "
+                       f"respuesta(s) hasta ahora.")
+            if rows:
+                st.caption("Primeras columnas detectadas:")
+                st.write(", ".join(headers[:8]) + ("..." if len(headers) > 8 else ""))
+            else:
+                st.info("El formulario aún no tiene respuestas. Cuando los "
+                        "hoteles empiecen a responder, aparecerán en la pestaña "
+                        "**📥 Importar** (seleccioná el canal Hoteles).")
+        # si falla, _leer_respuestas ya muestra el diagnóstico
+
+    st.divider()
+    st.markdown("**Cómo funciona el canal de hoteles:**")
+    st.markdown(
+        "1. Los hoteles llenan el formulario (con los productos que definiste "
+        "usando la pestaña **📊 Top Hoteles**).\n"
+        "2. Las respuestas caen en el Sheet configurado arriba.\n"
+        "3. En la pestaña **📥 Importar** elegís el canal **🏨 Hoteles** y "
+        "traés los pedidos, igual que con Hogares.\n"
+        "4. Cada hotel toma sus precios automáticamente según su ficha.")
+
+    st.caption("💡 Para armar o ajustar qué productos van en el formulario, usá "
+               "la pestaña **📊 Top Hoteles** que te muestra los más vendidos.")
+
+
 def mostrar():
-    st.markdown("## 🏠 Hogares")
-    if st.button("Inicio", key="btn_home_hog", type="secondary"):
+    st.markdown("## 📥 Pedidos Entrantes")
+    if st.button("Inicio", key="btn_home_pe", type="secondary"):
         st.session_state["_nav_target"] = "🏠 Inicio"
         st.rerun()
     st.divider()
 
-    tab_imp, tab_form, tab_top = st.tabs(
-        ["📥 Importar Pedidos", "📋 Formulario", "📊 Top Hoteles"])
+    tab_imp, tab_form_hog, tab_form_hot, tab_top = st.tabs(
+        ["📥 Importar", "🏠 Formulario Hogares",
+         "🏨 Formulario Hoteles", "📊 Top Hoteles"])
+
     with tab_imp:
-        _tab_importar()
-    with tab_form:
-        _tab_formulario()
+        # Selector de canal con botones
+        st.markdown("#### ¿Qué pedidos querés importar?")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🏠 Importar Hogares", key="pe_canal_hogares",
+                         use_container_width=True,
+                         type="primary" if st.session_state.get("pe_canal", "hogares") == "hogares" else "secondary"):
+                st.session_state["pe_canal"] = "hogares"
+                st.rerun()
+        with c2:
+            if st.button("🏨 Importar Hoteles", key="pe_canal_hoteles",
+                         use_container_width=True,
+                         type="primary" if st.session_state.get("pe_canal") == "hoteles" else "secondary"):
+                st.session_state["pe_canal"] = "hoteles"
+                st.rerun()
+        st.divider()
+        canal = st.session_state.get("pe_canal", "hogares")
+        _tab_importar(canal)
+
+    with tab_form_hog:
+        _tab_formulario()   # formulario de Hogares (sistema Google Forms actual)
+
+    with tab_form_hot:
+        _tab_formulario_hoteles()
+
     with tab_top:
         _analisis_top_hoteles()
 
-def _tab_importar():
+def _tab_importar(canal: str = "hogares"):
     """Importación de pedidos desde el formulario.
 
     Flujo limpio:
@@ -614,7 +709,7 @@ def _tab_importar():
     # ── Procesar importación pendiente (al inicio, fuera de tarjetas) ──────────
     if "hog_do_import" in st.session_state:
         intento = st.session_state.pop("hog_do_import")
-        _ejecutar_importacion(intento, cat_info, cli_precio)
+        _ejecutar_importacion(intento, cat_info, cli_precio, canal)
 
     # ── Encabezado y botón de lectura ─────────────────────────────────────────
     st.markdown("### 📥 Importar pedidos del formulario")
@@ -626,7 +721,7 @@ def _tab_importar():
         if st.button("🧹 Limpiar registro de importados",
                      key="hog_limpiar_imp", use_container_width=True,
                      help="Hace que las respuestas vuelvan a aparecer como nuevas"):
-            _limpiar_importados()
+            _limpiar_importados(canal)
             st.success("Registro limpiado. Volvé a leer el formulario.")
             st.cache_data.clear()
 
@@ -640,11 +735,11 @@ def _tab_importar():
         return
 
     # ── Leer respuestas ───────────────────────────────────────────────────────
-    headers, rows = _leer_respuestas()
+    headers, rows = _leer_respuestas(canal)
     if not headers:
         return  # _leer_respuestas ya mostró el error
 
-    importados = _get_imported_timestamps()
+    importados = _get_imported_timestamps(canal)
     nuevas = []
     for row in rows:
         resp = _parsear_respuesta(headers, row, cat_map, cli_map)
@@ -838,7 +933,7 @@ def _tab_importar():
             st.rerun()
 
 
-def _ejecutar_importacion(intento: dict, cat_info: dict, cli_precio_fn):
+def _ejecutar_importacion(intento: dict, cat_info: dict, cli_precio_fn, canal: str = "hogares"):
     """Importa todos los pedidos seleccionados y muestra el resultado."""
     from order_helper import guardar_pedidos_batch
     from excel_helper import leer_pedidos
@@ -913,11 +1008,12 @@ def _ejecutar_importacion(intento: dict, cat_info: dict, cli_precio_fn):
         st.warning(f"No se escribió ninguna fila. Respuesta: {res}")
 
 
-def _limpiar_importados():
-    """Vacía la hoja FormImports para reimportar."""
-    _ensure_formimports()
+def _limpiar_importados(canal: str = "hogares"):
+    """Vacía la hoja de control de importados del canal para reimportar."""
+    _ensure_formimports(canal)
     from gsheets import ws
-    w = ws("formimports")
+    hoja = CANALES.get(canal, CANALES["hogares"])["hoja_import"]
+    w = ws(hoja)
     w.clear()
     w.update("A1", [["timestamp", "fecha_import", "cliente", "n_lineas"]],
              value_input_option="USER_ENTERED")

@@ -23,6 +23,7 @@ st.markdown("""
 # ── MENÚ Y RUTAS ──────────────────────────────────────────────────────────────
 PAGES = [
     ("🏠 Inicio",                               "modulo_inicio"),
+    ("📥 Pedidos Entrantes",                    "modulo_hogares"),
     ("🛒 Nuevo Pedido",                         "modulo_pedidos"),
     ("📋 Gestión Pedidos (Revisar y Editar)",   "modulo_gestion"),
     ("📦 Productos (Nuevos y Mantenimiento)",   "modulo_productos"),
@@ -32,10 +33,8 @@ PAGES = [
     ("💳 Gastos",                               "modulo_gastos"),
     ("📊 Dashboard",                            "modulo_dashboard"),
     ("🏡 Casa / Personal",                      "modulo_casa"),
-    ("🏠 Hogares",                              "modulo_hogares"),
     ("🗂️ Datos",                                "modulo_datos"),
     ("💰 Flujo de Caja",                        "modulo_flujo_caja"),
-    ("📥 Pedidos Entrantes",                    "modulo_pedidos_entrantes"),
     ("🔧 Mantenimiento",                        "modulo_mantenimiento"),
     ("👥 Clientes (Nuevos y Mantenimiento)",    "modulo_clientes"),
     ("🧮 Cotizador",                            "modulo_cotizador"),
