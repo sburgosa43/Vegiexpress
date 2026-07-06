@@ -281,6 +281,44 @@ def _tab_por_area(semana: int, año: int, prod_map: dict):
         cols_r[-1].metric("**TOTAL SEMANA**", f"Q{grand_total:,.0f}")
 
 
+def _recolectar_compras(sel_prov, base_dfs, prod_map, todas_areas):
+    """Recolecta las líneas con 'A Comprar' > 0 de los proveedores seleccionados
+    (compra neta — Patojas ya está separado y no aparece acá). Para cada línea
+    arma cantidad, costo unitario y la demanda por área (para el reparto)."""
+    compras = []
+    for prov in sel_prov:
+        if "SIN PROVEEDOR" in prov:
+            continue
+        df = base_dfs.get(prov)
+        if df is None or df.empty:
+            continue
+        for _, row in df.iterrows():
+            ok, pend, cant = _val_comprar(row.get("A Comprar", ""))
+            if not ok or cant <= 0:
+                continue   # solo líneas con cantidad numérica a comprar
+            prod = row.get("Producto", "")
+            costo = prod_map.get(str(prod).strip().lower(), {}).get("costo", 0.0)
+            # Demanda por área (para el reparto proporcional del costo)
+            areas = {}
+            for a in todas_areas:
+                if a in row.index:
+                    try:
+                        v = float(row[a] or 0)
+                    except Exception:
+                        v = 0
+                    if v > 0:
+                        areas[a] = v
+            compras.append({
+                "proveedor":  prov,
+                "producto":   prod,
+                "unidad":     row.get("Unidad", ""),
+                "cantidad":   cant,
+                "costo_unit": float(costo or 0),
+                "areas":      areas,
+            })
+    return compras
+
+
 def mostrar():
     st.markdown("## 📦 Pedidos a Proveedores")
     if st.button("🏠 Inicio", key="btn_home_prov", type="secondary"):
@@ -412,6 +450,14 @@ def mostrar():
                             todas_areas.append(a_name)
                         break
 
+        # Cargar borrador temporal de compras (si existe) para pre-llenar
+        # la columna "A Comprar" — permite retomar en otra sesión.
+        try:
+            from compras_helper import cargar_temporal
+            _borrador = cargar_temporal(semana, año)
+        except Exception:
+            _borrador = {}
+
         # DataFrames base (FIJOS) por proveedor
         base_dfs = {}
         for prov in sorted(por_prov.keys()):
@@ -421,7 +467,9 @@ def mostrar():
                 for an in todas_areas:
                     row[an] = round(v.get(an, 0), 2) if v.get(an, 0) else 0
                 row["Total"]      = round(v["total"], 1)
-                row["A Comprar"]  = ""
+                # Pre-llenar desde el borrador si estaba guardado
+                _ac = _borrador.get((prov, k[0]))
+                row["A Comprar"]  = (f"{_ac:g}" if _ac else "")
                 row["_costo"]     = k[2]
                 rows.append(row)
             base_dfs[prov] = pd.DataFrame(rows)
@@ -572,6 +620,58 @@ def mostrar():
             # Editores + totales en vivo, aislados en fragmento (rapido)
             _editores_fragment(sel_prov, base_dfs, prod_map, todas_areas,
                                 semana, año, reset_n)
+
+            # ── Guardado de compras (temporal y definitivo) ───────────────────
+            st.divider()
+            st.markdown("##### 💾 Control de compras")
+            st.caption("Guardá el borrador para no perderlo (podés seguir en "
+                       "otra sesión), y cuando la compra esté lista, guardala "
+                       "en definitivo para el histórico con costo por área.")
+
+            _armar_compras = _recolectar_compras(sel_prov, base_dfs, prod_map,
+                                                 todas_areas)
+
+            cg1, cg2 = st.columns(2)
+            with cg1:
+                if st.button("💾 Guardar temporal (borrador)",
+                             key="compras_temp_btn", use_container_width=True,
+                             help="Persiste lo ingresado en Sheets. No afecta "
+                                  "el histórico."):
+                    from compras_helper import guardar_temporal
+                    items_temp = [{
+                        "proveedor":  c["proveedor"],
+                        "producto":   c["producto"],
+                        "unidad":     c["unidad"],
+                        "a_comprar":  c["cantidad"],
+                        "costo_unit": c["costo_unit"],
+                    } for c in _armar_compras]
+                    with st.spinner("Guardando borrador..."):
+                        try:
+                            n = guardar_temporal(semana, año, items_temp)
+                            st.success(f"✅ Borrador guardado: {n} línea(s). "
+                                       "Podés cerrar y retomar después.")
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+            with cg2:
+                n_lineas = len(_armar_compras)
+                if st.button(f"✅ Guardar definitivo ({n_lineas} línea(s))",
+                             key="compras_def_btn", type="primary",
+                             use_container_width=True,
+                             disabled=n_lineas == 0,
+                             help="Registra la compra en el histórico con costo "
+                                  "repartido por área. Adicional a Gastos."):
+                    from compras_helper import (guardar_definitivo,
+                                                limpiar_temporal)
+                    with st.spinner("Registrando compra definitiva..."):
+                        try:
+                            res = guardar_definitivo(semana, año, _armar_compras)
+                            limpiar_temporal(semana, año)
+                            st.success(
+                                f"✅ Compra registrada: {res['filas']} fila(s) "
+                                f"por área · Total Q{res['total']:,.2f}. "
+                                "Borrador limpiado.")
+                        except Exception as e:
+                            st.error(f"Error: {e}")
 
             st.divider()
             if st.button("🗑 Limpiar todo", type="secondary",

@@ -30,6 +30,8 @@ HOJAS = {
     "produccionfert":     "ProduccionFertilizantes",
     "reglaspago":         "ReglasPago",
     "formimports_hoteles": "FormImports_Hoteles",
+    "compras_temp":       "ComprasTemporal",
+    "compras_hist":       "ComprasHistorico",
 }
 
 SCOPES = [
