@@ -223,10 +223,20 @@ def _parsear_respuesta(headers: list, row: list,
         val = str(row[i] if i < len(row) else "").strip()
         if not val or val in ("0", "—", ""):
             continue
+        # Extraer el número aunque venga con texto (ej. "7", "7.5", "10 lb",
+        # "7 unidades"). Útil para el campo numérico libre del formulario de
+        # hoteles, donde el cliente puede escribir texto extra.
         try:
             cant = float(val)
         except Exception:
-            continue
+            import re as _re
+            _mnum = _re.search(r"\d+(?:[.,]\d+)?", val.replace(",", "."))
+            if not _mnum:
+                continue
+            try:
+                cant = float(_mnum.group(0).replace(",", "."))
+            except Exception:
+                continue
         if cant <= 0:
             continue
 
@@ -745,7 +755,9 @@ def _tab_formulario_hoteles():
                  disabled=not fid_input.strip() or not prods_sel):
         with st.spinner(f"Actualizando {len(prods_sel)} productos..."):
             try:
-                res = actualizar_formulario(fid_input.strip(), productos=prods_sel)
+                res = actualizar_formulario(fid_input.strip(),
+                                            productos=prods_sel,
+                                            tipo_cantidad="numerico")
                 # Guardar el form_id del canal hoteles
                 from forms_helper import _save_form_id
                 _save_form_id(fid_input.strip(), "hoteles")

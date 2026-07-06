@@ -138,7 +138,8 @@ def leer_productos_en_form(form_id: str) -> set:
 # ── Actualizar formulario (con secciones por segmento y dropdowns 1-6) ────────
 def actualizar_formulario(form_id: str,
                           titulo:    str  = None,
-                          productos: list = None) -> dict:
+                          productos: list = None,
+                          tipo_cantidad: str = "dropdown") -> dict:
     """
     Limpia preguntas de producto + page breaks del formulario y agrega los actuales.
     Estructura:
@@ -217,16 +218,26 @@ def actualizar_formulario(form_id: str,
 
         for p in seg_prods[seg]:
             nombre_p = f"{p['nombre']} ({p['unidad']}) - Q.{p['precio']:.2f}"
+            if tipo_cantidad == "numerico":
+                # Campo de texto corto con validación numérica: el cliente
+                # escribe la cantidad que quiera (útil para hoteles).
+                pregunta = {
+                    "required": False,
+                    "textQuestion": {"paragraph": False},
+                }
+            else:
+                # Desplegable con opciones fijas (1-6) — Hogares
+                pregunta = {
+                    "required": False,
+                    "choiceQuestion": {
+                        "type":    "DROP_DOWN",
+                        "options": OPTS_CANT,
+                    }
+                }
             add_reqs.append({"createItem": {
                 "item": {
                     "title": nombre_p,
-                    "questionItem": {"question": {
-                        "required": False,
-                        "choiceQuestion": {
-                            "type":    "DROP_DOWN",
-                            "options": OPTS_CANT,
-                        }
-                    }}
+                    "questionItem": {"question": pregunta}
                 },
                 "location": {"index": pos}
             }})
