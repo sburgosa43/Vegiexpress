@@ -165,15 +165,25 @@ def actualizar_formulario(form_id: str,
     # ── Paso 2: detectar items a eliminar ─────────────────────────────────────
     _pat = _re.compile(r"^.+?\s*\(.+?\)\s*[-\u2013]\s*Q[.\s]*[\d.,]+")
     _SKIP_TITLES = {
-        "productos extra", "mi pedido está listo", "mi pedido esta listo",
-        "para finalizar",
+        "productos extra", "para finalizar",
     }
+    # Prefijos de títulos a eliminar (coincidencia por comienzo, no exacta):
+    # la pregunta de confirmación tiene un título largo que empieza así.
+    _SKIP_PREFIXES = (
+        "mi pedido está listo", "mi pedido esta listo",
+    )
+
+    def _es_confirmacion(titulo: str) -> bool:
+        t = titulo.lower().strip()
+        return (t in _SKIP_TITLES
+                or any(t.startswith(pref) for pref in _SKIP_PREFIXES))
+
     del_indices = sorted([
         i for i, item in enumerate(items)
         if ("questionItem" in item and _pat.match(item.get("title", "")))
         or "textItem"      in item
         or "pageBreakItem" in item
-        or item.get("title", "").lower().strip() in _SKIP_TITLES
+        or _es_confirmacion(item.get("title", ""))
     ], reverse=True)
 
     if del_indices:
