@@ -59,7 +59,7 @@ def cargar_productos(es_antigua: bool = False,
 
     prods = []
     for row in rows:
-        while len(row) < 23: row.append("")
+        while len(row) < 24: row.append("")
         nombre    = str(row[0] or "").strip()
         cotizar   = str(row[21] if not es_antigua else
                         (row[17] if len(row) > 17 else "") or "").strip().lower()
@@ -80,6 +80,7 @@ def cargar_productos(es_antigua: bool = False,
             "proveedor":      str(row[14] if not es_antigua else row[8] or "").strip(),
             "tipo_producto":  str(row[18] if not es_antigua else "" or "").strip(),
             "tipo_producto2": str(row[20] if not es_antigua else row[10] or "").strip(),
+            "empacado":       str(row[23] if not es_antigua else "").strip(),
         })
     return prods
 
