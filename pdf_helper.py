@@ -599,7 +599,7 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
 # ── COTIZACIÓN DE PRECIOS ─────────────────────────────────────────────────────
 def generar_cotizacion(lineas: list, desde: "date", hasta: "date",
                        cotizador: str = "", cotizador_tel: str = "",
-                       notas: str = "") -> bytes:
+                       notas: str = "", dirigida_a: str = "") -> bytes:
     """
     PDF de cotización de precios para prospección o actualización de precios.
     lineas: [{producto, unidad, precio_cotizar}]
@@ -626,9 +626,15 @@ def generar_cotizacion(lineas: list, desde: "date", hasta: "date",
     sub_style = ParagraphStyle("cs", fontSize=9, fontName="Helvetica-Oblique",
                                 textColor=VERDE_OSC, alignment=TA_RIGHT, leading=12)
 
-    ht = Table([[logo, [_p("COTIZACIÓN DE PRECIOS", tit_style),
-                        _p(f"Vigente del {desde.strftime('%d/%m/%Y')} "
-                           f"al {hasta.strftime('%d/%m/%Y')}", sub_style)]]],
+    _hdr_right = [_p("COTIZACIÓN DE PRECIOS", tit_style),
+                  _p(f"Vigente del {desde.strftime('%d/%m/%Y')} "
+                     f"al {hasta.strftime('%d/%m/%Y')}", sub_style)]
+    if dirigida_a.strip():
+        dir_style = ParagraphStyle("cd", fontSize=10, fontName="Helvetica-Bold",
+                                    textColor=GRIS_CARB, alignment=TA_RIGHT,
+                                    leading=13)
+        _hdr_right.append(_p(f"Dirigida a: {dirigida_a.strip()}", dir_style))
+    ht = Table([[logo, _hdr_right]],
                colWidths=[58*mm, CW-58*mm])
     ht.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE"),
                              ("BOTTOMPADDING",(0,0),(-1,-1),4)]))

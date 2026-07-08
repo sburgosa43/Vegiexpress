@@ -353,6 +353,11 @@ def _cotizacion():
         num_cot = cx2.text_input("No. Cotizacion",
                                   value=f"VX-{desde.strftime('%Y%m%d')}-001",
                                   key="cot_num")
+    else:
+        # Cotización simple: destinatario (aparece en el encabezado del PDF)
+        dirigida_a = cx2.text_input("Dirigida a:",
+                                     placeholder="Nombre del cliente / empresa",
+                                     key="cot_dirigida")
     st.divider()
 
     # ── Campos extra para cotizacion formal ───────────────────────────────────
@@ -680,7 +685,9 @@ def _cotizacion():
                     pdf_bytes = generar_cotizacion(lineas_pdf, desde, hasta,
                                            cotizador=cotizador_nombre,
                                            cotizador_tel=cotizador_tel,
-                                           notas=notas_cot)
+                                           notas=notas_cot,
+                                           dirigida_a=st.session_state.get(
+                                               "cot_dirigida", ""))
                     nombre = f"Cotizacion_VeggiExpress_{desde.strftime('%d%m%Y')}.pdf"
             st.download_button("📥 Descargar PDF", data=pdf_bytes,
                 file_name=nombre, mime="application/pdf",
