@@ -278,6 +278,56 @@ def _cotizacion():
                     horizontal=True, key="cot_tipo")
     is_formal = tipo.startswith("🏢")
 
+    # ── Selector de listado de precios ──────────────────────────────────────
+    # El listado elegido define el PRECIO DEFAULT de cada producto. Útil cuando
+    # el cliente potencial es de un área con precios ya definidos. Los precios
+    # siguen siendo editables por línea; si un producto no está en el listado
+    # elegido, cae al precio del Listado General.
+    from modulo_productos import ZONAS_LISTAS, GRUPOS_LISTAS
+    LISTADOS = (["Listado General"] +
+                [f"Zona {z}" for z in ZONAS_LISTAS] +
+                [f"Grupo {g}" for g in GRUPOS_LISTAS])
+
+    listado_sel = st.selectbox(
+        "📋 Listado de precios a cargar:", LISTADOS, key="cot_listado",
+        help="Define el precio inicial de cada producto. Podés ajustar "
+             "cualquier precio individualmente después.")
+
+    # Al CAMBIAR de listado, resetear los precios ya cargados en las filas
+    # para que tomen el default del listado nuevo.
+    _prev_listado = st.session_state.get("cot_listado_prev")
+    if _prev_listado is not None and _prev_listado != listado_sel:
+        for _k in list(st.session_state.keys()):
+            if isinstance(_k, str) and _k.startswith("cot_prec_"):
+                st.session_state.pop(_k, None)
+    st.session_state["cot_listado_prev"] = listado_sel
+
+    # Mapa de precios de la capa elegida (vacío si es el Listado General)
+    _precios_capa = {}
+    if listado_sel != "Listado General":
+        from data_helper import leer_precios_capa
+        if listado_sel.startswith("Zona "):
+            _hoja, _lista = "precioszona", listado_sel[5:]
+        else:
+            _hoja, _lista = "preciosgrupo", listado_sel[6:]
+        try:
+            _precios_capa = {e["producto"].strip().lower(): float(e["precio"])
+                             for e in leer_precios_capa(_hoja, _lista)}
+        except Exception:
+            _precios_capa = {}
+        if _precios_capa:
+            st.caption(f"✓ {len(_precios_capa)} producto(s) con precio en "
+                       f"**{listado_sel}** — el resto usa el precio general.")
+        else:
+            st.warning(f"El listado **{listado_sel}** no tiene precios "
+                       "cargados; se usarán los precios del Listado General.")
+
+    def _precio_listado(p: dict) -> float:
+        """Precio default del producto según el listado elegido, con fallback
+        al precio del catálogo general."""
+        _pl = _precios_capa.get(p["nombre"].strip().lower())
+        return float(_pl) if _pl else float(p.get("precio", 0))
+
     st.divider()
 
     # Vigencia
@@ -423,7 +473,7 @@ def _cotizacion():
             p_imp  = round(costo / (1 - seg/0.95) * 1.12, 2) if seg > 0 and costo else 0
 
             if k_prec not in st.session_state:
-                st.session_state[k_prec] = float(p.get("precio", 0))
+                st.session_state[k_prec] = _precio_listado(p)
 
             if is_formal:
                 # Formal 10 cols: r[0]=prod r[1]=spec r[2]=vol r[3]=costo
