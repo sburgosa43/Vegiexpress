@@ -296,7 +296,9 @@ def _cotizacion():
     # Al CAMBIAR de listado, resetear los precios ya cargados en las filas
     # para que tomen el default del listado nuevo.
     _prev_listado = st.session_state.get("cot_listado_prev")
-    if _prev_listado is not None and _prev_listado != listado_sel:
+    if _prev_listado != listado_sel:
+        # Limpiar precios cargados (incluida la primera elección, para que
+        # los precios de la capa SIEMPRE se apliquen sobre restos de sesión).
         for _k in list(st.session_state.keys()):
             if isinstance(_k, str) and _k.startswith("cot_prec_"):
                 st.session_state.pop(_k, None)
@@ -327,6 +329,40 @@ def _cotizacion():
         al precio del catálogo general."""
         _pl = _precios_capa.get(p["nombre"].strip().lower())
         return float(_pl) if _pl else float(p.get("precio", 0))
+
+    # ── Cargar los productos del listado en la grilla ────────────────────────
+    if st.button("📥 Cargar todos los productos del listado",
+                 key="cot_cargar_listado",
+                 help="Llena la grilla con los productos del listado elegido "
+                      "y sus precios. Después podés quitar los que no quieras "
+                      "(dejando el producto en blanco) o ajustar precios."):
+        from data_helper import cargar_productos as _cp
+        _cat = {p["nombre"].strip().lower(): p
+                for p in _cp(False, solo_catalogo=False)}
+        if listado_sel == "Listado General":
+            _nombres_cargar = sorted(
+                p["nombre"] for p in _cat.values()
+                if float(p.get("precio") or 0) > 0)
+        else:
+            # Solo los productos presentes en la capa elegida (orden A-Z)
+            _nombres_cargar = sorted(
+                _cat[n]["nombre"] for n in _precios_capa if n in _cat)
+        if not _nombres_cargar:
+            st.warning("El listado elegido no tiene productos para cargar.")
+        else:
+            # Rellenar la grilla y limpiar keys de widgets para que tomen
+            # el producto y precio nuevos.
+            st.session_state["cot_grilla"] = [
+                {"producto": n, "precio_cotizar": 0.0,
+                 "especificacion": "", "volumen_semanal": 0.0}
+                for n in _nombres_cargar]
+            st.session_state["cot_nfilas"] = len(_nombres_cargar)
+            for _k in list(st.session_state.keys()):
+                if isinstance(_k, str) and _k.startswith(
+                        ("cot_prod_", "cot_prec_", "cot_spec_",
+                         "cot_vol_", "cot_costo_")):
+                    st.session_state.pop(_k, None)
+            st.rerun()
 
     st.divider()
 
@@ -665,6 +701,8 @@ def _cotizacion():
         btn_lbl = "📄 Generar Cotizacion Formal" if is_formal else "📄 Generar PDF"
         if st.button(btn_lbl, type="primary"):
             with st.spinner("Generando PDF..."):
+                # Productos en orden alfabético A-Z en el PDF (ambos tipos)
+                lineas_pdf.sort(key=lambda l: str(l.get("producto","")).lower())
                 if is_formal:
                     pdf_bytes = generar_cotizacion_formal(
                         lineas_pdf, desde, hasta,
