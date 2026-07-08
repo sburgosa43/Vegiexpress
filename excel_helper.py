@@ -168,6 +168,18 @@ def editar_fecha_pedido(unico: str, nueva_fecha: date) -> int:
     año = nueva_fecha.year
     mes = nueva_fecha.month
     dia_es = DIAS_ES[nueva_fecha.weekday()]
+
+    # Si el pedido usa un unico de FALLBACK (generado desde la fecha en cada
+    # lectura, prefijo "_fbk_"), al cambiar la fecha ese unico cambiaría y el
+    # pedido "desaparecería" de las vistas agrupadas. Fix: escribir un unico
+    # REAL y estable en la columna AB para que deje de depender de la fecha.
+    unico_estable = None
+    if unico.startswith("_fbk_"):
+        import time as _time
+        unico_estable = f"FIX{nueva_fecha.day:02d}{mes:02d}{sem:02d}{año}" \
+                        f"{int(_time.time()) % 10000}"
+
+    cols_por_fila = 5 + (1 if unico_estable else 0)
     for p in pedidos:
         if p["unico"] == unico:
             rn = p["row_num"]
@@ -178,10 +190,12 @@ def editar_fecha_pedido(unico: str, nueva_fecha: date) -> int:
                 {"range": f"O{rn}", "values": [[sem]]},
                 {"range": f"P{rn}", "values": [[año]]},
             ]
+            if unico_estable:
+                upd.append({"range": f"AB{rn}", "values": [[unico_estable]]})
     if upd:
         update_cells(_K_PED, upd)
         leer_pedidos.clear()
-    return len(upd) // 5
+    return len(upd) // cols_por_fila
 
 
 def editar_cambios_batch(cambios: list) -> int:

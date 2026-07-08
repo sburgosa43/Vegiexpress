@@ -143,23 +143,26 @@ def guardar_edicion_pedidos(cambios: list,
         rn = ch["row_num"]
         if "producto_nuevo" in ch:
             upd.append({"range": f"D{rn}", "values": [[ch["producto_nuevo"]]]})
-        if "cantidad_nueva" in ch or "precio_nuevo" in ch:
+        if "cantidad_nueva" in ch or "precio_nuevo" in ch or "costo_nuevo" in ch:
             cant  = _sf(ch.get("cantidad_nueva") or ch.get("_cant_actual", 0))
             prec  = _sf(ch.get("precio_nuevo")   or ch.get("_prec_actual", 0))
             cost  = _sf(ch.get("costo_nuevo")    or ch.get("_costo_actual", 0))
             fin   = _calcular(prec, cost, cant)
+            # Los TOTALES se recalculan SIEMPRE que cambie cantidad, precio o
+            # costo (antes solo con cantidad → total desactualizado al cambiar
+            # precio, y Facturación sumaba montos viejos).
             if "cantidad_nueva" in ch:
-                upd += [
-                    {"range": f"C{rn}", "values": [[cant]]},
-                    {"range": f"G{rn}", "values": [[fin["total"]]]},
-                    {"range": f"H{rn}", "values": [[fin["total_costo"]]]},
-                    {"range": f"I{rn}", "values": [[fin["margen_q"]]]},
-                    {"range": f"J{rn}", "values": [[fin["margen_pct"]]]},
-                ]
+                upd.append({"range": f"C{rn}", "values": [[cant]]})
             if "precio_nuevo" in ch:
                 upd.append({"range": f"E{rn}", "values": [[prec]]})
             if "costo_nuevo" in ch:
                 upd.append({"range": f"F{rn}", "values": [[cost]]})
+            upd += [
+                {"range": f"G{rn}", "values": [[fin["total"]]]},
+                {"range": f"H{rn}", "values": [[fin["total_costo"]]]},
+                {"range": f"I{rn}", "values": [[fin["margen_q"]]]},
+                {"range": f"J{rn}", "values": [[fin["margen_pct"]]]},
+            ]
 
     if upd:
         try:

@@ -507,12 +507,16 @@ def _modificar(todos):
                     st.error(f"❌ Error: {e}")
                     st.stop()
 
-            # Limpiar session state
+            # Limpiar session state — purga COMPLETA de claves de edición.
+            # Crítico: los widget keys usan row_num, y tras eliminar filas los
+            # row_nums se desplazan; claves residuales harían que el valor de
+            # un pedido aparezca en otro (corrupción silenciosa).
             for unico in sel:
                 st.session_state.pop(f"mod_nuevas_{unico}", None)
-            for rn in list(lineas_originales.keys()):
-                st.session_state.pop(f"del_row_{rn}", None)
-            st.session_state.pop(snap_key, None)   # reset snapshot tras guardar
+            _prefijos_purgar = ("mod_", "del_row_", "mod_snap_")
+            for _k in list(st.session_state.keys()):
+                if isinstance(_k, str) and _k.startswith(_prefijos_purgar):
+                    st.session_state.pop(_k, None)
 
             partes = []
             if res["ediciones"]:   partes.append(f"{res['ediciones']} edición(es)")
