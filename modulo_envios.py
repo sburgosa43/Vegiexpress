@@ -16,6 +16,26 @@ from config       import (ZONAS_MAP as _ZONAS_CFG, excluido_dashboard, es_hogar,
 
 ZONAS_ENVIO = _ZONAS_CFG   # Fuente única: config.py
 
+@st.cache_data(ttl=180, max_entries=80, show_spinner=False)
+def _pdf_envio_cached(cliente_info: dict, fecha_ped, lineas_pdf: list,
+                      unico: str) -> bytes:
+    """PDF de envío CACHEADO. Antes se regeneraba por CADA pedido en CADA
+    rerun (~2 PDFs × N pedidos por interacción), acumulando CPU y memoria
+    hasta tumbar la app en Streamlit Cloud. La clave incluye las líneas:
+    si el pedido cambia, el PDF se regenera solo."""
+    from pdf_helper import generar_envio
+    return generar_envio(cliente=cliente_info, fecha=fecha_ped,
+                         lineas=lineas_pdf, unico=unico)
+
+
+@st.cache_data(ttl=180, max_entries=80, show_spinner=False)
+def _pdf_remision_cached(cliente: str, lineas: list, semana: int,
+                         año: int, fecha_str: str) -> bytes:
+    """PDF de remisión CACHEADO (mismo motivo que _pdf_envio_cached)."""
+    from pdf_helper import generar_remision
+    return generar_remision(cliente, lineas, semana, año, fecha_str)
+
+
 @st.cache_data(ttl=300)
 def _get_cli_map():
     try:
@@ -132,8 +152,8 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
 
         with col_pdf:
             try:
-                pdf_bytes = generar_envio(cliente=cliente_info, fecha=fecha_ped,
-                                          lineas=lineas_pdf, unico=unico)
+                pdf_bytes = _pdf_envio_cached(cliente_info, fecha_ped,
+                                              lineas_pdf, unico)
                 st.download_button("📄 Descargar PDF", data=pdf_bytes,
                     file_name=nombre_archivo(l0["cliente"], fecha_ped),
                     mime="application/pdf",
@@ -149,8 +169,9 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
                         "cantidad": float(l.get("cantidad") or 0),
                         "total": round(float(l.get("precio") or 0)*float(l.get("cantidad") or 0),2)}
                        for l in lineas_pdf]
-                _rb = _gen_rem(l0["cliente"], _lr, int(l0["semana"]),
-                               int(l0["año"]), fecha_ped.strftime("%d/%m/%Y"))
+                _rb = _pdf_remision_cached(l0["cliente"], _lr,
+                                           int(l0["semana"]), int(l0["año"]),
+                                           fecha_ped.strftime("%d/%m/%Y"))
                 components.html(
                     _btn_imp(_rb, f"env_{sufijo}_{unico}", "🖨️ Remisión"),
                     height=44)
@@ -470,7 +491,7 @@ def _tab_impresion_masiva(todos: list, cli_list: list, sem_def: int, año_def: i
         # Generar PDF
         try:
             unico    = peds[0].get("unico", "") if peds else ""
-            pdf_bytes = generar_envio(cli_info, fecha_ent, lineas, unico)
+            pdf_bytes = _pdf_envio_cached(cli_info, fecha_ent, lineas, unico)
             pdf_b64   = base64.b64encode(pdf_bytes).decode()
             nom_safe  = "".join(ch for ch in cli_nombre if ch.isalnum() or ch == "_")
             filename  = f"Envio_{nom_safe}_S{semana}_{año}.pdf"
