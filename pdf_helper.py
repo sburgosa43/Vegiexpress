@@ -1448,9 +1448,12 @@ def boton_imprimir_html(pdf_bytes: bytes, fn_id: str,
 
     fn_id: identificador único de la función JS (sin guiones ni puntos).
     """
-    import base64
+    import base64, re as _re
     b64 = base64.b64encode(pdf_bytes).decode()
-    fn  = "imp_" + str(fn_id).replace("-", "_").replace(".", "_").replace(" ", "_")
+    # Sanitización ROBUSTA: el fn_id se vuelve nombre de función JS. Unicos de
+    # fallback (con "/" de fechas), clientes con acentos o paréntesis generaban
+    # JS inválido → el botón no hacía nada al hacer clic. Solo ASCII seguro.
+    fn  = "imp_" + _re.sub(r"[^a-zA-Z0-9_]", "_", str(fn_id))
 
     # Abrir el PDF en pestaña nueva usando data: URL (no blob:). Chrome tiene un
     # bug conocido: los PDFs abiertos desde blob: se ven en pantalla pero al

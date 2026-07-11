@@ -186,14 +186,25 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
                 mes=mes, año=año,
                 por_semana=datos_cli["por_semana"],
             )
-            st.download_button(
-                label="📄 Descargar PDF de Facturación",
-                data=pdf_bytes,
-                file_name=nombre_archivo_factura(cli_nombre, mes, año),
-                mime="application/pdf",
-                key=f"fact_pdf_{cli_nombre}_{mes}_{año}",
-                type="primary",
-            )
+            _cf1, _cf2 = st.columns(2)
+            with _cf1:
+                st.download_button(
+                    label="📄 Descargar PDF de Facturación",
+                    data=pdf_bytes,
+                    file_name=nombre_archivo_factura(cli_nombre, mes, año),
+                    mime="application/pdf",
+                    key=f"fact_pdf_{cli_nombre}_{mes}_{año}",
+                    type="primary",
+                    use_container_width=True,
+                )
+            with _cf2:
+                from pdf_helper import boton_imprimir_html as _btn_imp_fac
+                import streamlit.components.v1 as _cpv_fac
+                _cpv_fac.html(
+                    _btn_imp_fac(pdf_bytes,
+                                 f"fac_{cli_nombre}_{mes}_{año}",
+                                 "🖨️ Imprimir"),
+                    height=44)
         except Exception as e:
             st.error(f"Error generando PDF: {e}")
 

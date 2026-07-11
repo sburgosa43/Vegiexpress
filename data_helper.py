@@ -81,6 +81,7 @@ def cargar_productos(es_antigua: bool = False,
             "tipo_producto":  str(row[18] if not es_antigua else "" or "").strip(),
             "tipo_producto2": str(row[20] if not es_antigua else row[10] or "").strip(),
             "empacado":       str(row[23] if not es_antigua else "").strip(),
+            "cotizar":        cotizar,
         })
     return prods
 

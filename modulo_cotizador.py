@@ -330,15 +330,33 @@ def _cotizacion():
         _pl = _precios_capa.get(p["nombre"].strip().lower())
         return float(_pl) if _pl else float(p.get("precio", 0))
 
-    # ── Cargar los productos del listado en la grilla ────────────────────────
-    if st.button("📥 Cargar todos los productos del listado",
-                 key="cot_cargar_listado",
-                 help="Llena la grilla con los productos del listado elegido "
-                      "y sus precios. Después podés quitar los que no quieras "
-                      "(dejando el producto en blanco) o ajustar precios."):
+    # ── Cargar listado / Limpiar ─────────────────────────────────────────────
+    _cbl1, _cbl2 = st.columns(2)
+    with _cbl2:
+        if st.button("🗑 Nueva cotización (limpiar todo)",
+                     key="cot_limpiar_todo", use_container_width=True,
+                     help="Vacía la grilla y todos los campos para empezar "
+                          "una cotización desde cero."):
+            for _k in list(st.session_state.keys()):
+                if isinstance(_k, str) and _k.startswith(
+                        ("cot_prod_", "cot_prec_", "cot_spec_", "cot_vol_",
+                         "cot_costo_", "cot_del_", "cot_grilla", "cot_nfilas",
+                         "cot_dirigida", "cot_notas")):
+                    st.session_state.pop(_k, None)
+            st.rerun()
+
+    with _cbl1:
+        _cargar_click = st.button(
+            "📥 Cargar todos los productos del listado",
+            key="cot_cargar_listado", use_container_width=True,
+            help="Llena la grilla con los productos del listado elegido y "
+                 "sus precios. Quitá los que no necesités con el botón ✖.")
+
+    if _cargar_click:
         from data_helper import cargar_productos as _cp
         _cat = {p["nombre"].strip().lower(): p
-                for p in _cp(False, solo_catalogo=False)}
+                for p in _cp(False, solo_catalogo=False)
+                if p.get("cotizar", "") != "no"}
         if listado_sel == "Listado General":
             _nombres_cargar = sorted(
                 p["nombre"] for p in _cat.values()
@@ -439,7 +457,11 @@ def _cotizacion():
     SEGS = {"Premium":50,"Alto":40,"Media Alta":35,"Media":30,
             "Media Baja":25,"Baja":20,"Sin Segmento":0}
 
-    prods      = cargar_productos(False)
+    # Universo completo (sin filtro de precio>0): un producto puede tener
+    # precio SOLO en una capa (ej. Antigua) y precio general 0 — igual debe
+    # poder cotizarse. Se respeta la marca explícita "no cotizar".
+    prods      = [p for p in cargar_productos(False, solo_catalogo=False)
+                  if p.get("cotizar", "") != "no"]
     prod_dict  = {p["nombre"]: p for p in prods}
     nombres    = [""] + sorted([p["nombre"] for p in prods])
     n_filas    = st.session_state.get("cot_nfilas", 5)
@@ -460,12 +482,12 @@ def _cotizacion():
 
     # Encabezado — diferente por tipo
     if is_formal:
-        hdr = st.columns([1.4, 1.0, 0.6, 0.65, 0.7, 0.65, 0.7, 0.6, 0.65, 0.7])
+        hdr = st.columns([1.4, 1.0, 0.6, 0.65, 0.7, 0.65, 0.7, 0.6, 0.65, 0.7, 0.35])
         for h, lbl in zip(hdr, ["Producto","Espec.","Vol","Costo","C+Flete",
-                                  "Pto.Eq","Precio","Mg%","MgQ","P.Final"]):
+                                  "Pto.Eq","Precio","Mg%","MgQ","P.Final",""]):
             h.markdown(f"<small><b>{lbl}</b></small>", unsafe_allow_html=True)
     else:
-        hdr = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
+        hdr = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9, 0.35])
         for h, lbl in zip(hdr, ["Producto","Unidad","Costo","Pto. Eq.","P. Imp.",
                                   "Precio Cotizar","Margen %","Margen Q","IVA/u","ISR/u"]):
             h.markdown(f"<small><b>{lbl}</b></small>", unsafe_allow_html=True)
@@ -498,13 +520,41 @@ def _cotizacion():
 
         # ── Columnas según modo ───────────────────────────────────────────────
         if is_formal:
-            r = st.columns([1.4, 1.0, 0.6, 0.65, 0.7, 0.65, 0.7, 0.6, 0.65, 0.7])
+            r = st.columns([1.4, 1.0, 0.6, 0.65, 0.7, 0.65, 0.7, 0.6, 0.65, 0.7, 0.35])
         else:
-            r = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9])
+            r = st.columns([2.4, 0.9, 0.9, 1.0, 1.0, 1.2, 0.85, 0.95, 0.9, 0.9, 0.35])
 
         prod_sel = r[0].selectbox("", nombres,
             index=(nombres.index(fila["producto"]) if fila["producto"] in nombres else 0),
             key=k_prod, label_visibility="collapsed")
+
+        # Botón para eliminar esta fila (conserva las ediciones de las demás)
+        if r[10].button("✖", key=f"cot_del_{i}",
+                        help="Quitar esta fila de la cotización"):
+            _nueva_grilla = []
+            for _j in range(len(grilla)):
+                if _j == i:
+                    continue
+                _nueva_grilla.append({
+                    "producto": st.session_state.get(f"cot_prod_{_j}",
+                                    grilla[_j].get("producto", "")),
+                    "precio_cotizar": float(st.session_state.get(
+                        f"cot_prec_{_j}",
+                        grilla[_j].get("precio_cotizar", 0.0)) or 0),
+                    "especificacion": st.session_state.get(f"cot_spec_{_j}",
+                                    grilla[_j].get("especificacion", "")),
+                    "volumen_semanal": float(st.session_state.get(
+                        f"cot_vol_{_j}",
+                        grilla[_j].get("volumen_semanal", 0.0)) or 0),
+                })
+            st.session_state["cot_grilla"] = _nueva_grilla
+            st.session_state["cot_nfilas"] = max(len(_nueva_grilla), 1)
+            for _k in list(st.session_state.keys()):
+                if isinstance(_k, str) and _k.startswith(
+                        ("cot_prod_", "cot_prec_", "cot_spec_",
+                         "cot_vol_", "cot_costo_", "cot_del_")):
+                    st.session_state.pop(_k, None)
+            st.rerun()
 
         if prod_sel and prod_sel in prod_dict:
             p      = prod_dict[prod_sel]
@@ -514,7 +564,8 @@ def _cotizacion():
             p_imp  = round(costo / (1 - seg/0.95) * 1.12, 2) if seg > 0 and costo else 0
 
             if k_prec not in st.session_state:
-                st.session_state[k_prec] = _precio_listado(p)
+                _pg = float(fila.get("precio_cotizar", 0) or 0)
+                st.session_state[k_prec] = _pg if _pg > 0 else _precio_listado(p)
 
             if is_formal:
                 # Formal 10 cols: r[0]=prod r[1]=spec r[2]=vol r[3]=costo
