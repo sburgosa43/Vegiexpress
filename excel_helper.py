@@ -60,6 +60,20 @@ def _parse_fecha(v) -> date | None:
 
 
 # ── PEDIDOS ────────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=300, max_entries=1, show_spinner=False)
+def leer_pedidos_op() -> list[dict]:
+    """Pedidos OPERATIVOS: solo los últimos 12 meses. Los módulos de operación
+    diaria (Inicio, Envíos, Proveedores, Flujo de Caja, etc.) no necesitan el
+    histórico completo, y cada llamada a leer_pedidos() copia TODA la lista
+    (así funciona st.cache_data) — con un histórico creciente, esas copias
+    disparaban picos de memoria que tumbaban la app en Streamlit Cloud.
+    Esta vista recortada mantiene las copias livianas y acotadas."""
+    from datetime import date, timedelta
+    corte = date.today() - timedelta(days=365)
+    return [p for p in leer_pedidos()
+            if p.get("fecha") and p["fecha"] >= corte]
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def leer_pedidos() -> list[dict]:
     rows   = get_all_rows(_K_PED)

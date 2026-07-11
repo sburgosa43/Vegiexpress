@@ -5,7 +5,7 @@ import os
 import streamlit as st
 from datetime import date
 from config import excluido_dashboard as _excluido
-from excel_helper import leer_pedidos, _sf
+from excel_helper import leer_pedidos_op as leer_pedidos, _sf
 from data_helper  import cargar_clientes
 from gsheets      import get_all_rows
 

@@ -8,7 +8,7 @@ from config import excluido_proveedores as _excluido_cfg
 _excluido = _excluido_cfg  # alias local
 import pandas as pd
 from datetime import date
-from excel_helper import leer_pedidos
+from excel_helper import leer_pedidos_op as leer_pedidos
 from data_helper  import cargar_productos, cargar_clientes
 from pdf_helper   import generar_lista_compras_proveedor
 
@@ -173,7 +173,7 @@ def _editores_fragment(sel_prov, base_dfs, prod_map, todas_areas,
 
 def _tab_por_area(semana: int, año: int, prod_map: dict):
     """Desglose de compras necesarias por área — Río / Antigua / Hogares."""
-    from excel_helper import leer_pedidos
+    from excel_helper import leer_pedidos_op as leer_pedidos
     from data_helper  import cargar_clientes
 
     AREAS = {

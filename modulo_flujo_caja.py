@@ -9,7 +9,7 @@ from config import (REGLAS_PAGO as REGLAS, ISR_UMBRAL,
 _excluido = _excluido_fc  # alias local
 import pandas as pd
 from datetime import date, timedelta
-from excel_helper import leer_pedidos
+from excel_helper import leer_pedidos_op as leer_pedidos
 from data_helper  import cargar_clientes
 
 ZONA_GT_RIO  = ["L01", "L05", "L06"]

@@ -486,7 +486,7 @@ def _analisis_top_hoteles():
     """
     import pandas as pd
     from collections import Counter
-    from excel_helper import leer_pedidos
+    from excel_helper import leer_pedidos_op as leer_pedidos
     from data_helper import cargar_clientes
 
     st.markdown("#### 📊 Top productos vendidos a Hoteles")
@@ -1071,7 +1071,7 @@ def _tab_importar(canal: str = "hogares"):
 def _ejecutar_importacion(intento: dict, cat_info: dict, cli_precio_fn, canal: str = "hogares"):
     """Importa todos los pedidos seleccionados y muestra el resultado."""
     from order_helper import guardar_pedidos_batch
-    from excel_helper import leer_pedidos
+    from excel_helper import leer_pedidos_op as leer_pedidos
 
     cola = []
     resumen = []

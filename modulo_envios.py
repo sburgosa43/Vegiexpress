@@ -7,7 +7,7 @@ import pandas as pd
 import base64
 import streamlit.components.v1 as components
 from datetime import date
-from excel_helper import (leer_pedidos, cancelar_pedido,
+from excel_helper import (leer_pedidos_op as leer_pedidos, cancelar_pedido,
                           restaurar_pedido, guardar_cambios_precio)
 from data_helper  import cargar_clientes
 from pdf_helper   import generar_envio, nombre_archivo
