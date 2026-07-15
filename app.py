@@ -38,7 +38,7 @@ PAGES = [
     ("🔧 Mantenimiento",                        "modulo_mantenimiento"),
     ("👥 Clientes (Nuevos y Mantenimiento)",    "modulo_clientes"),
     ("🧮 Cotizador",                            "modulo_cotizador"),
-    ("🔍 Precios La Torre",                     "modulo_scraper"),
+    ("🔍 Precios de Mercado",                   "modulo_scraper"),
     ("🌱 Producción",                           "modulo_produccion"),
 ]
 
@@ -58,7 +58,7 @@ with st.sidebar:
         if target in MENU:
             st.session_state["nav"] = target
 
-    pagina = st.radio("", MENU, key="nav", label_visibility="collapsed")
+    pagina = st.radio("Menú", MENU, key="nav", label_visibility="collapsed")
 
     st.divider()
     st.caption(
@@ -72,3 +72,9 @@ with st.sidebar:
 modulo_nombre = ROUTES.get(pagina)
 if modulo_nombre:
     importlib.import_module(modulo_nombre).mostrar()
+
+# Liberar memoria de objetos transitorios del render (copias de caché, PDFs,
+# DataFrames). En Streamlit Cloud la memoria es limitada y el GC por defecto
+# puede demorar en recoger ciclos — esto mantiene el proceso liviano.
+import gc as _gc
+_gc.collect()

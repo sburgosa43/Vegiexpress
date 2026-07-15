@@ -3,6 +3,7 @@ excel_helper.py — Acceso a datos via Google Sheets (migrado de Excel/Drive).
 Mismas firmas de función que antes — todos los módulos funcionan sin cambios.
 """
 import streamlit as st
+from sys import intern as _intern
 from datetime import date, datetime, timedelta
 from gsheets import (ws as _ws, get_all_rows, append_rows,
                      update_cells, update_cell, delete_rows)
@@ -113,9 +114,9 @@ def leer_pedidos() -> list[dict]:
         result.append({
             "row_num":    i,
             "fecha":      fecha,
-            "cliente":    str(row[1]  or ""),
+            "cliente":    _intern(str(row[1]  or "")),
             "cantidad":   cantidad,
-            "producto":   str(row[3]  or ""),
+            "producto":   _intern(str(row[3]  or "")),
             "precio":     precio_xl,
             "precio_excel": precio_xl,
             "costo":      costo,
@@ -123,11 +124,11 @@ def leer_pedidos() -> list[dict]:
             "margen_q":   margen_q,
             "semana":     semana_val,
             "año":        año_val,
-            "status":     str(row[30] or "Pendiente"),
+            "status":     _intern(str(row[30] or "Pendiente")),
             "unico":      unico_val,
-            "direccion":  str(row[18] or ""),
-            "unidad":     str(row[16] or ""),
-            "proveedor":  str(row[17] or ""),
+            "direccion":  _intern(str(row[18] or "")),
+            "unidad":     _intern(str(row[16] or "")),
+            "proveedor":  _intern(str(row[17] or "")),
             "fecha_venc": fvenc,
         })
     return result

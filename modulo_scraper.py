@@ -173,15 +173,8 @@ def _a_csv_bytes(productos: list) -> bytes:
 
 
 # ── Punto de entrada ──────────────────────────────────────────────────────────
-def mostrar():
-    # Navegacion coherente con el resto de modulos
-    if st.button("Inicio", key="btn_home_scraper", type="secondary"):
-        st.session_state["_nav_target"] = "🏠 Inicio"
-        st.rerun()
-
-    st.markdown("## 🔍 Precios La Torre")
+def _tab_latorre():
     st.caption("Frutas, Verduras y Complementos · latorre.com.gt")
-    st.divider()
 
     # Estado de sesion
     if "lt_productos" not in st.session_state:
@@ -271,3 +264,264 @@ def mostrar():
         file_name=f"latorre_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
         mime="text/csv",
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CENMA — API directa (adaptado del script scraping_cenma_v6 de Sergio)
+# ══════════════════════════════════════════════════════════════════════════════
+_CENMA_API = "https://www.cenma.com.gt/api/get_products_for_category"
+_CENMA_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Origin": "https://www.cenma.com.gt",
+    "Referer": "https://www.cenma.com.gt/",
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"),
+    "base_version": "2",
+    "device_type": "3",
+    "timezone": "America/Guatemala",
+    "language": "es",
+}
+_CENMA_USER_ID        = 1472667
+_CENMA_MARKETPLACE_ID = "eab6628bd3634360a0b41e4f24b97a71"
+_CENMA_MKT_USER_ID    = 958678
+_CENMA_CATEGORIAS = {
+    "Verdura":         11284143,
+    "Fruta":           11284144,
+    "Hierbas y Hojas": 11284145,
+    "Granos":          11284146,
+    "Especias":        11284147,
+    "Abarroteria":     11284148,
+    "Otros":           11284149,
+    "Mayoreo":         11284150,
+}
+
+
+def _cenma_categoria(categoria: str, category_id: int,
+                     max_paginas: int = 20) -> list:
+    """Descarga una categoría de Cenma paginando la API (con pausa
+    respetuosa y tope de páginas para proteger memoria/tiempo)."""
+    import time as _t
+    from datetime import datetime as _dt
+    todos, page, limit = [], 1, 25
+    while page <= max_paginas:
+        payload = {
+            "date_time": _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+            "domain_name": "www.cenma.com.gt",
+            "dual_user_key": 0,
+            "language": "es",
+            "limit": limit,
+            "marketplace_reference_id": _CENMA_MARKETPLACE_ID,
+            "marketplace_user_id": _CENMA_MKT_USER_ID,
+            "offset": (page - 1) * limit,
+            "page_no": page,
+            "parent_category_id": category_id,
+            "user_id": _CENMA_USER_ID,
+        }
+        try:
+            resp = requests.post(_CENMA_API, json=payload,
+                                 headers=_CENMA_HEADERS, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            break
+        if data.get("status") != 200:
+            break
+        pagina = data.get("data", [])
+        if not pagina:
+            break
+        for p in pagina:
+            todos.append({
+                "Categoría":   categoria,
+                "Producto":    p.get("name", "Sin nombre"),
+                "Precio":      p.get("price", 0),
+                "Precio base": p.get("product_base_price", 0),
+            })
+        if len(pagina) < limit:
+            break
+        page += 1
+        _t.sleep(0.5)   # pausa respetuosa con el sitio
+    return todos
+
+
+def _tab_cenma():
+    st.caption("Mercado CENMA / CENDEC · cenma.com.gt · vía API directa")
+
+    if "cenma_prods" not in st.session_state:
+        st.session_state.cenma_prods = []
+        st.session_state.cenma_captura = None
+
+    cats_sel = st.multiselect(
+        "Categorías a capturar:",
+        list(_CENMA_CATEGORIAS.keys()),
+        default=["Verdura", "Fruta", "Hierbas y Hojas"],
+        key="cenma_cats",
+        help="Menos categorías = captura más rápida y liviana.")
+
+    col_b, col_i = st.columns([2, 3])
+    iniciar = col_b.button("▶ Capturar precios Cenma", type="primary",
+                           use_container_width=True,
+                           disabled=not cats_sel)
+    with col_i:
+        if st.session_state.cenma_captura:
+            st.success(f"Última captura: **{st.session_state.cenma_captura}**"
+                       f" · {len(st.session_state.cenma_prods)} productos")
+        else:
+            st.info("Sin captura en esta sesión.")
+
+    if iniciar:
+        bar = st.progress(0, text="Iniciando...")
+        todos = []
+        for i, cat in enumerate(cats_sel):
+            bar.progress((i) / len(cats_sel),
+                         text=f"Descargando {cat}...")
+            todos += _cenma_categoria(cat, _CENMA_CATEGORIAS[cat])
+        bar.progress(1.0, text="Completado")
+        from datetime import datetime as _dt
+        st.session_state.cenma_prods = todos
+        st.session_state.cenma_captura = _dt.now().strftime("%d/%m/%Y %H:%M")
+        st.rerun()
+
+    prods = st.session_state.cenma_prods
+    if prods:
+        import pandas as pd
+        df = pd.DataFrame(prods)
+        # Filtro rápido
+        filtro = st.text_input("Buscar producto:", key="cenma_filtro",
+                               placeholder="tomate, brócoli...")
+        if filtro:
+            df = df[df["Producto"].str.contains(filtro, case=False, na=False)]
+        st.dataframe(df, hide_index=True, use_container_width=True,
+                     height=min(500, 60 + len(df) * 35))
+        csv = df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("📥 Descargar CSV", data=csv,
+                           file_name=f"precios_cenma_{st.session_state.cenma_captura or ''}.csv".replace("/", "-").replace(":", ""),
+                           mime="text/csv", key="cenma_csv")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MERCADO LA TERMINAL — intento con requests (el sitio renderiza con JS;
+# el script original usa Playwright/Chromium, inviable en Streamlit Cloud
+# por memoria. Acá se intenta extraer el JSON inline que las tiendas Ecwid
+# a veces incluyen en el HTML inicial).
+# ══════════════════════════════════════════════════════════════════════════════
+def _laterminal_intento() -> tuple[list, str]:
+    """Intenta extraer productos del HTML estático. Retorna (productos, msg)."""
+    import re as _re, json as _json
+    url = "https://www.mercadolaterminalonline.com/products"
+    try:
+        r = requests.get(url, timeout=20, headers={
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")})
+        r.raise_for_status()
+    except Exception as e:
+        return [], f"No se pudo acceder al sitio: {e}"
+
+    html = r.text
+    productos = []
+
+    # Intento 1: cards renderizadas server-side
+    soup = BeautifulSoup(html, "html.parser")
+    for card in soup.select("div[data-product-id]"):
+        t = card.select_one("a.grid-product__title")
+        s = card.select_one("div.grid-product__subtitle")
+        p = card.select_one("div.grid-product__price")
+        if t:
+            productos.append({
+                "Producto":     (t.get("title") or t.get_text() or "").strip(),
+                "Presentación": (s.get_text().strip() if s else ""),
+                "Precio":       (p.get_text().strip() if p else ""),
+            })
+    if productos:
+        return productos, ""
+
+    # Intento 2: JSON inline de Ecwid en <script>
+    for pat in (r'window\.ec\s*=\s*(\{.*?\});',
+                r'"items"\s*:\s*(\[.*?\])\s*[,}]'):
+        mjs = _re.search(pat, html, _re.DOTALL)
+        if mjs:
+            try:
+                data = _json.loads(mjs.group(1))
+                items = data if isinstance(data, list) else \
+                        data.get("storefront", {}).get("products", [])
+                for it in items:
+                    if isinstance(it, dict) and it.get("name"):
+                        productos.append({
+                            "Producto":     it.get("name", ""),
+                            "Presentación": it.get("subtitle", ""),
+                            "Precio":       it.get("defaultDisplayedPriceFormatted",
+                                                   it.get("price", "")),
+                        })
+                if productos:
+                    return productos, ""
+            except Exception:
+                continue
+
+    return [], ("El sitio no incluye los productos en el HTML inicial "
+                "(los dibuja con JavaScript). Este sitio requiere un navegador "
+                "para capturarse, lo cual no es viable en Streamlit Cloud por "
+                "consumo de memoria. Seguí usando tu script local de "
+                "Playwright para este sitio.")
+
+
+def _tab_laterminal():
+    st.caption("Mercado La Terminal Online · mercadolaterminalonline.com")
+
+    if "lter_prods" not in st.session_state:
+        st.session_state.lter_prods = []
+        st.session_state.lter_captura = None
+
+    col_b, col_i = st.columns([2, 3])
+    iniciar = col_b.button("▶ Intentar captura", type="primary",
+                           use_container_width=True,
+                           help="Este sitio usa JavaScript; la captura sin "
+                                "navegador puede no ser posible.")
+    with col_i:
+        if st.session_state.lter_captura:
+            st.success(f"Última captura: **{st.session_state.lter_captura}** "
+                       f"· {len(st.session_state.lter_prods)} productos")
+        else:
+            st.info("Sin captura en esta sesión.")
+
+    if iniciar:
+        with st.spinner("Intentando capturar sin navegador..."):
+            prods, msg = _laterminal_intento()
+        if prods:
+            from datetime import datetime as _dt
+            st.session_state.lter_prods = prods
+            st.session_state.lter_captura = _dt.now().strftime("%d/%m/%Y %H:%M")
+            st.rerun()
+        else:
+            st.warning(msg)
+
+    prods = st.session_state.lter_prods
+    if prods:
+        import pandas as pd
+        df = pd.DataFrame(prods)
+        st.dataframe(df, hide_index=True, use_container_width=True,
+                     height=min(500, 60 + len(df) * 35))
+        csv = df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("📥 Descargar CSV", data=csv,
+                           file_name="precios_laterminal.csv",
+                           mime="text/csv", key="lter_csv")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+def mostrar():
+    if st.button("Inicio", key="btn_home_scraper", type="secondary"):
+        st.session_state["_nav_target"] = "🏠 Inicio"
+        st.rerun()
+
+    st.markdown("## 🔍 Precios de Mercado")
+    st.caption("Captura de precios de referencia de sitios del mercado "
+               "guatemalteco. Cada pestaña es un sitio.")
+    st.divider()
+
+    tab_lt, tab_cen, tab_ter = st.tabs(
+        ["🏪 La Torre", "🥬 Cenma", "🛒 La Terminal"])
+    with tab_lt:
+        _tab_latorre()
+    with tab_cen:
+        _tab_cenma()
+    with tab_ter:
+        _tab_laterminal()
