@@ -774,6 +774,193 @@ def _tab_formulario_hoteles():
                            "cuenta de servicio como Editor.")
 
 
+# ── Pedidos pegados desde WhatsApp ────────────────────────────────────────────
+# Unidades reconocidas en el texto (singular y plural, con abreviaturas)
+_WA_UNIDADES = {
+    "caja": "caja", "cajas": "caja",
+    "manojo": "manojo", "manojos": "manojo",
+    "onz": "onz", "onza": "onz", "onzas": "onz", "oz": "onz",
+    "lb": "lb", "lbs": "lb", "libra": "lb", "libras": "lb",
+    "bolsa": "bolsa", "bolsas": "bolsa",
+    "bandeja": "bandeja", "bandejas": "bandeja",
+    "docena": "docena", "docenas": "docena",
+    "unidad": "unidad", "unidades": "unidad",
+    "qq": "qq", "quintal": "qq", "quintales": "qq",
+    "kg": "kg", "kilo": "kg", "kilos": "kg",
+    "saco": "saco", "sacos": "saco",
+    "red": "red", "redes": "red",
+    "cubeta": "cubeta", "cubetas": "cubeta",
+    "bote": "bote", "botes": "bote",
+    "libreta": "libreta", "libretas": "libreta",
+}
+
+
+def _parsear_texto_whatsapp(texto: str) -> list[dict]:
+    """Convierte un listado libre (pegado de WhatsApp) en líneas estructuradas.
+
+    Reconoce patrones como:
+      "2 cajas de aguacates"  → cant=2, unidad=caja, producto=aguacates
+      "5 romanas"             → cant=5, unidad="", producto=romanas
+      "12 onz de arrugula"    → cant=12, unidad=onz, producto=arrugula
+      "2 bandejas d flores"   → tolera "d" en vez de "de"
+
+    Líneas sin cantidad inicial (saludos, etc.) se ignoran.
+    """
+    lineas = []
+    for raw in (texto or "").splitlines():
+        l = raw.strip()
+        if not l:
+            continue
+        # Debe empezar con un número (cantidad)
+        mnum = re.match(r"^(\d+(?:[.,]\d+)?)\s+(.*)$", l)
+        if not mnum:
+            continue   # saludo u otra línea sin cantidad
+        cant = float(mnum.group(1).replace(",", "."))
+        resto = mnum.group(2).strip()
+
+        # ¿El primer token es una unidad conocida?
+        tokens = resto.split()
+        unidad = ""
+        if tokens:
+            t0 = _norm(tokens[0])
+            if t0 in _WA_UNIDADES:
+                unidad = _WA_UNIDADES[t0]
+                tokens = tokens[1:]
+                # Saltar el conector "de"/"d"
+                if tokens and _norm(tokens[0]) in ("de", "d"):
+                    tokens = tokens[1:]
+        producto_txt = " ".join(tokens).strip()
+        if not producto_txt:
+            continue
+        lineas.append({
+            "original": l,
+            "cantidad": cant,
+            "unidad":   unidad,
+            "producto_txt": producto_txt,
+        })
+    return lineas
+
+
+def _tab_whatsapp():
+    """Pestaña: pegar un listado de WhatsApp y convertirlo en pedido."""
+    from data_helper import cargar_clientes, cargar_productos, cli_precio
+
+    st.markdown("#### 📱 Pegar pedido de WhatsApp")
+    st.caption("Pegá el listado tal como te lo mandó el cliente. El sistema "
+               "reconoce cantidades, unidades y productos contra tu catálogo. "
+               "Las líneas dudosas quedan para que las corrijás antes de "
+               "importar.")
+
+    # 1. Cliente y fecha
+    clientes = [c for c in cargar_clientes() if c.get("activo", True)]
+    nombres_cli = [c["nombre"] for c in clientes]
+    c1, c2 = st.columns(2)
+    cli_sel = c1.selectbox("Cliente:", [""] + nombres_cli, key="wa_cliente")
+    fecha_ent = c2.date_input("Fecha de entrega:", value=date.today(),
+                              key="wa_fecha")
+
+    # 2. Texto pegado
+    texto = st.text_area("Listado del cliente:", height=220, key="wa_texto",
+                         placeholder="2 cajas de aguacates\n5 romanas\n"
+                                     "3 manojos de kale\n...")
+
+    if st.button("🔍 Analizar listado", key="wa_analizar",
+                 disabled=not texto.strip()):
+        lineas = _parsear_texto_whatsapp(texto)
+        if not lineas:
+            st.warning("No encontré líneas con cantidades en el texto.")
+        else:
+            # Match contra el catálogo
+            catalogo = cargar_productos(False, solo_catalogo=False)
+            cat_map  = {_norm(p["nombre"]): p["nombre"] for p in catalogo}
+            for ln in lineas:
+                prod_cat, tipo = _match_producto(ln["producto_txt"], cat_map)
+                ln["prod_cat"] = prod_cat
+                ln["match"]    = tipo
+            st.session_state["wa_lineas"] = lineas
+        st.rerun()
+
+    # 3. Revisión de resultados
+    lineas = st.session_state.get("wa_lineas", [])
+    if lineas:
+        n_ok  = sum(1 for l in lineas if l.get("prod_cat"))
+        n_sin = len(lineas) - n_ok
+        if n_sin:
+            st.warning(f"✅ {n_ok} reconocidos · ⚠️ {n_sin} sin reconocer — "
+                       "asignalos manualmente abajo o dejalos en blanco para "
+                       "omitirlos.")
+        else:
+            st.success(f"✅ Los {n_ok} productos fueron reconocidos.")
+
+        catalogo = cargar_productos(False, solo_catalogo=False)
+        nombres_cat = [""] + sorted(p["nombre"] for p in catalogo)
+
+        st.markdown("**Revisá y corregí antes de importar:**")
+        hdr = st.columns([2.2, 0.8, 0.8, 2.2])
+        for h, lbl in zip(hdr, ["Texto original", "Cant.", "Unidad",
+                                 "Producto del catálogo"]):
+            h.markdown(f"**{lbl}**")
+
+        for i, ln in enumerate(lineas):
+            r = st.columns([2.2, 0.8, 0.8, 2.2])
+            icono = "✅" if ln.get("prod_cat") else "⚠️"
+            r[0].markdown(f"{icono} {ln['original'][:42]}")
+            ln["cantidad"] = r[1].number_input(
+                "c", value=float(ln["cantidad"]), min_value=0.0, step=1.0,
+                key=f"wa_cant_{i}", label_visibility="collapsed")
+            r[2].markdown(ln["unidad"] or "—")
+            idx_def = (nombres_cat.index(ln["prod_cat"])
+                       if ln.get("prod_cat") in nombres_cat else 0)
+            ln["prod_cat"] = r[3].selectbox(
+                "p", nombres_cat, index=idx_def,
+                key=f"wa_prod_{i}", label_visibility="collapsed") or None
+
+        # 4. Importar
+        st.divider()
+        items_validos = [l for l in lineas
+                         if l.get("prod_cat") and l["cantidad"] > 0]
+        if st.button(f"📥 Importar pedido ({len(items_validos)} línea(s))",
+                     type="primary", key="wa_importar",
+                     disabled=not cli_sel or not items_validos):
+            cli = next((c for c in clientes if c["nombre"] == cli_sel), {})
+            cat_info = {p["nombre"]: p
+                        for p in cargar_productos(False, solo_catalogo=False)}
+            items = []
+            for l in items_validos:
+                prod = cat_info.get(l["prod_cat"], {})
+                precio, _ = cli_precio(cli, l["prod_cat"])
+                items.append({
+                    "nombre":   l["prod_cat"],
+                    "unidad":   prod.get("unidad") or l["unidad"] or "",
+                    "cantidad": float(l["cantidad"]),
+                    "precio":   precio,
+                    "costo":    float(prod.get("costo") or 0),
+                })
+            from order_helper import guardar_pedidos_batch
+            with st.spinner("Creando pedido..."):
+                try:
+                    res = guardar_pedidos_batch([{
+                        "cliente_nombre": cli_sel,
+                        "fecha": fecha_ent,
+                        "items": items,
+                    }])
+                    filas = res.get("filas", 0) if isinstance(res, dict) else 0
+                    st.success(f"✅ Pedido creado para **{cli_sel}** con "
+                               f"{filas or len(items)} línea(s), entrega "
+                               f"{fecha_ent.strftime('%d/%m/%Y')}.")
+                    # Limpiar para el siguiente pegado
+                    for _k in ("wa_lineas", "wa_texto"):
+                        st.session_state.pop(_k, None)
+                    for _k in list(st.session_state.keys()):
+                        if isinstance(_k, str) and _k.startswith(
+                                ("wa_cant_", "wa_prod_")):
+                            st.session_state.pop(_k, None)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error al crear el pedido: "
+                             f"{type(e).__name__}: {e}")
+
+
 def mostrar():
     st.markdown("## 📥 Pedidos Entrantes")
     if st.button("Inicio", key="btn_home_pe", type="secondary"):
@@ -781,8 +968,8 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    tab_imp, tab_form_hog, tab_form_hot, tab_top = st.tabs(
-        ["📥 Importar", "🏠 Formulario Hogares",
+    tab_imp, tab_wa, tab_form_hog, tab_form_hot, tab_top = st.tabs(
+        ["📥 Importar", "📱 WhatsApp", "🏠 Formulario Hogares",
          "🏨 Formulario Hoteles", "📊 Top Hoteles"])
 
     with tab_imp:
@@ -804,6 +991,9 @@ def mostrar():
         st.divider()
         canal = st.session_state.get("pe_canal", "hogares")
         _tab_importar(canal)
+
+    with tab_wa:
+        _tab_whatsapp()
 
     with tab_form_hog:
         _tab_formulario()   # formulario de Hogares (sistema Google Forms actual)
