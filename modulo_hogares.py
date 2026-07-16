@@ -784,7 +784,7 @@ _WA_UNIDADES = {
     "bolsa": "bolsa", "bolsas": "bolsa",
     "bandeja": "bandeja", "bandejas": "bandeja",
     "docena": "docena", "docenas": "docena",
-    "unidad": "unidad", "unidades": "unidad",
+    "unidad": "unidad", "unidades": "unidad", "u": "unidad", "un": "unidad",
     "qq": "qq", "quintal": "qq", "quintales": "qq",
     "kg": "kg", "kilo": "kg", "kilos": "kg",
     "saco": "saco", "sacos": "saco",
@@ -806,32 +806,58 @@ def _parsear_texto_whatsapp(texto: str) -> list[dict]:
 
     Líneas sin cantidad inicial (saludos, etc.) se ignoran.
     """
+    def _limpiar_unidad(u: str) -> str:
+        """Normaliza el token de unidad: quita puntos, emoji y mapea."""
+        u = re.sub(r"[^\wáéíóúü]", "", _norm(u))
+        return _WA_UNIDADES.get(u, "")
+
     lineas = []
     for raw in (texto or "").splitlines():
         l = raw.strip()
         if not l:
             continue
-        # Debe empezar con un número (cantidad)
-        mnum = re.match(r"^(\d+(?:[.,]\d+)?)\s+(.*)$", l)
-        if not mnum:
-            continue   # saludo u otra línea sin cantidad
-        cant = float(mnum.group(1).replace(",", "."))
-        resto = mnum.group(2).strip()
 
-        # ¿El primer token es una unidad conocida?
-        tokens = resto.split()
-        unidad = ""
-        if tokens:
-            t0 = _norm(tokens[0])
-            if t0 in _WA_UNIDADES:
-                unidad = _WA_UNIDADES[t0]
-                tokens = tokens[1:]
-                # Saltar el conector "de"/"d"
-                if tokens and _norm(tokens[0]) in ("de", "d"):
+        cant, unidad, producto_txt = None, "", ""
+
+        # ── Formato A: "CANTIDAD [UNIDAD] [de] PRODUCTO" ──────────────────────
+        # (ej. "2 cajas de aguacates", "5 romanas")
+        m_a = re.match(r"^(\d+(?:[.,]\d+)?)\s+(.*)$", l)
+        if m_a:
+            cant  = float(m_a.group(1).replace(",", "."))
+            tokens = m_a.group(2).strip().split()
+            if tokens:
+                u = _limpiar_unidad(tokens[0])
+                if u:
+                    unidad = u
                     tokens = tokens[1:]
-        producto_txt = " ".join(tokens).strip()
-        if not producto_txt:
-            continue
+                    if tokens and _norm(tokens[0]) in ("de", "d"):
+                        tokens = tokens[1:]
+            producto_txt = " ".join(tokens).strip(" .")
+
+        # ── Formato B: "PRODUCTO[.] CANTIDAD [UNIDAD]" ────────────────────────
+        # (ej. "Cebolla.  2 lbs", "Apio. 1 u.", "Culantro. 1 🫱")
+        if cant is None:
+            m_b = re.match(
+                r"^([^\d]{2,45}?)[.\s]+(\d+(?:[.,]\d+)?)\s*(\S*)\s*$", l)
+            if m_b and not l.rstrip().endswith(":"):
+                producto_txt = m_b.group(1).strip(" .")
+                cant   = float(m_b.group(2).replace(",", "."))
+                unidad = _limpiar_unidad(m_b.group(3))
+
+        # ── Formato C: "PRODUCTO media/medio LIBRA" (cantidad en palabras) ────
+        # (ej. "Te de tilo media libra.")
+        if cant is None:
+            m_c = re.match(
+                r"^(.+?)\s+med(?:ia|io)\s+(libra|lb|kilo|kg)\.?\s*$",
+                l, re.IGNORECASE)
+            if m_c:
+                producto_txt = m_c.group(1).strip(" .")
+                cant   = 0.5
+                unidad = _limpiar_unidad(m_c.group(2))
+
+        if cant is None or not producto_txt:
+            continue   # saludo, despedida o línea sin cantidad
+
         lineas.append({
             "original": l,
             "cantidad": cant,
