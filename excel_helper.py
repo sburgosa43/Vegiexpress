@@ -142,7 +142,7 @@ def cancelar_pedido(unico: str) -> int:
             upd.append({"range": f"AE{p['row_num']}", "values": [["Cancelado"]]})
     if upd:
         update_cells(_K_PED, upd)
-        leer_pedidos.clear()
+        leer_pedidos.clear(); leer_pedidos_op.clear()
     return len(upd)
 
 
@@ -154,7 +154,7 @@ def restaurar_pedido(unico: str) -> int:
             upd.append({"range": f"AE{p['row_num']}", "values": [["Pendiente"]]})
     if upd:
         update_cells(_K_PED, upd)
-        leer_pedidos.clear()
+        leer_pedidos.clear(); leer_pedidos_op.clear()
     return len(upd)
 
 
@@ -163,7 +163,7 @@ def eliminar_pedido(unico: str) -> int:
     rows_to_delete = [p["row_num"] for p in pedidos if p["unico"] == unico]
     if rows_to_delete:
         delete_rows(_K_PED, rows_to_delete)
-        leer_pedidos.clear()
+        leer_pedidos.clear(); leer_pedidos_op.clear()
     return len(rows_to_delete)
 
 
@@ -172,7 +172,7 @@ def editar_linea(row_num: int, campo: str, valor) -> None:
     col = COL_MAP.get(campo)
     if col:
         update_cells(_K_PED, [{"range": f"{col}{row_num}", "values": [[valor]]}])
-        leer_pedidos.clear()
+        leer_pedidos.clear(); leer_pedidos_op.clear()
 
 
 def editar_fecha_pedido(unico: str, nueva_fecha: date) -> int:
@@ -209,7 +209,7 @@ def editar_fecha_pedido(unico: str, nueva_fecha: date) -> int:
                 upd.append({"range": f"AB{rn}", "values": [[unico_estable]]})
     if upd:
         update_cells(_K_PED, upd)
-        leer_pedidos.clear()
+        leer_pedidos.clear(); leer_pedidos_op.clear()
     return len(upd) // cols_por_fila
 
 
@@ -231,7 +231,7 @@ def editar_cambios_batch(cambios: list) -> int:
             upd.append({"range": f"G{rn}", "values": [[ch["total_nuevo"]]]})
     if upd:
         update_cells(_K_PED, upd)
-        leer_pedidos.clear()
+        leer_pedidos.clear(); leer_pedidos_op.clear()
     return len(cambios)
 
 
@@ -254,7 +254,7 @@ def guardar_cambios_precio(cambios: list, actualizar_catalogo: bool = False) -> 
         _actualizar_precio_catalogo(prod_map)
 
     if upd_ped:
-        leer_pedidos.clear()
+        leer_pedidos.clear(); leer_pedidos_op.clear()
     return len(reales)
 
 
@@ -354,7 +354,7 @@ def aplicar_correccion_masiva(patron: str, campo: str, valor_nuevo,
         prod_map = {prod: _sf(valor_nuevo) for prod in productos_unicos}
         _actualizar_precio_catalogo(prod_map)
 
-    leer_pedidos.clear()
+    leer_pedidos.clear(); leer_pedidos_op.clear()
     return len(afectados)
 
 
@@ -402,7 +402,7 @@ def actualizar_precio_semana(cambios: list, semana: int, año: int,
     prods_cat = 0
     if upd:
         update_cells(_K_PED, upd)
-        leer_pedidos.clear()
+        leer_pedidos.clear(); leer_pedidos_op.clear()
     if actualizar_catalogo and (precio_map or costo_map):
         prods_cat = _actualizar_precio_catalogo(precio_map, costo_map)
 

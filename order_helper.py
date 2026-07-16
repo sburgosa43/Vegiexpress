@@ -4,7 +4,7 @@ order_helper.py — Guardar y editar pedidos via Google Sheets.
 import streamlit as st
 from datetime import date, datetime
 from gsheets import append_rows, update_cells, get_all_rows
-from excel_helper import leer_pedidos, DIAS_ES, MESES_N, _sf
+from excel_helper import leer_pedidos, leer_pedidos_op, DIAS_ES, MESES_N, _sf
 
 _K_PED = "pedidos"
 
@@ -16,6 +16,7 @@ def _clear_pedidos_cache():
     que también se refresquen precios (evita el bug de precios inconsistentes
     al editar/agregar líneas)."""
     leer_pedidos.clear()
+    leer_pedidos_op.clear()
     try:
         from data_helper import refrescar_datos
         refrescar_datos(pedidos=True, productos=False, clientes=False, precios=True)

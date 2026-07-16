@@ -276,8 +276,9 @@ def refrescar_datos(pedidos=True, productos=True, clientes=False, precios=True):
 
     if pedidos:
         try:
-            from excel_helper import leer_pedidos
+            from excel_helper import leer_pedidos, leer_pedidos_op
             leer_pedidos.clear()
+            leer_pedidos_op.clear()
         except Exception as e:
             errores.append(f"pedidos: {e}")
 

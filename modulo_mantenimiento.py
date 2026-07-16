@@ -436,6 +436,8 @@ def _tab_cache():
     if col1.button("Limpiar Pedidos", key="cc_ped"):
         from excel_helper import leer_pedidos
         leer_pedidos.clear()
+        from excel_helper import leer_pedidos_op as _lpo
+        _lpo.clear()
         st.success("Cache de pedidos limpiado.")
 
     if col2.button("Limpiar Clientes", key="cc_cli"):
@@ -454,6 +456,8 @@ def _tab_cache():
         from data_helper  import cargar_clientes, cargar_productos
         from gsheets      import _gc
         leer_pedidos.clear()
+        from excel_helper import leer_pedidos_op as _lpo
+        _lpo.clear()
         cargar_clientes.clear()
         cargar_productos.clear()
         _gc.clear()
@@ -545,6 +549,8 @@ def _tab_renombrar():
                     time.sleep(0.5)
 
             leer_pedidos.clear()
+            from excel_helper import leer_pedidos_op as _lpo
+            _lpo.clear()
             cargar_clientes.clear()
             st.success(f"Renombrado completo: {len(upd_cli)} cliente(s) + "
                        f"{len(upd_ped)} pedido(s) actualizados.")
@@ -652,6 +658,8 @@ def _tab_backup():
                         time.sleep(0.3)
                     from excel_helper import leer_pedidos
                     leer_pedidos.clear()
+                    from excel_helper import leer_pedidos_op as _lpo
+                    _lpo.clear()
                     st.success(f"{len(df)} filas restauradas.")
                     st.rerun()
         except Exception as e:
@@ -763,6 +771,8 @@ def _tab_proveedores():
         get_proveedores.clear()
         if upd_ped:
             leer_pedidos.clear()
+            from excel_helper import leer_pedidos_op as _lpo
+            _lpo.clear()
         st.success(f"'{viejo}' renombrado a '{nuevo_n}' — "
                    f"{total} producto(s)"
                    + (f" + {len(upd_ped)} pedido(s) historicos." if upd_ped else "."))
@@ -875,6 +885,8 @@ def _tab_reparar_pedidos():
                 st.success(f"✅ Pedidos de {d['cliente']} unidos bajo el código "
                            f"`{destino}`. Recargá para ver el cambio.")
                 leer_pedidos.clear()
+                from excel_helper import leer_pedidos_op as _lpo
+                _lpo.clear()
                 st.cache_data.clear()
 
 

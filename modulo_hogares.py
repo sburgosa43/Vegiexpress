@@ -1349,7 +1349,9 @@ def _ejecutar_importacion(intento: dict, cat_info: dict, cli_precio_fn, canal: s
         for nombre_cli, n_items, ts in resumen:
             _registrar_importado(ts, nombre_cli, n_items)
         # Verificar
-        leer_pedidos.clear()
+        from excel_helper import leer_pedidos as _lp_full
+        leer_pedidos.clear()      # vista operativa (12 meses)
+        _lp_full.clear()          # lista completa
         st.success(f"✅ **{len(cola)} pedido(s) importado(s)** "
                    f"({filas} línea(s) en total).")
         for nombre_cli, n_items, _ in resumen:
