@@ -536,7 +536,6 @@ def mostrar():
         resumen_tp  = {}   # {tipo_producto: {(prod,unidad): {area: qty, total: qty}}}
         sin_detalle = []
 
-        _unidades_por_prod = {}   # producto → set de unidades vistas
         for p in pedidos_sem:
             info   = prod_map.get(str(p["producto"]).strip().lower(), {})
             prov   = info.get("proveedor", "").strip() or "⚠️ SIN PROVEEDOR"
@@ -548,8 +547,6 @@ def mostrar():
             empac  = info.get("empacado", "")
             zona_c = cli_zona.get(p["cliente"].lower(), "")
             area   = _get_area(p["cliente"], zona_c)
-            _unidades_por_prod.setdefault(prod, set()).add(
-                str(unidad or "").strip() or "(sin unidad)")
 
             # ── Condicional Patojas: proveedor=Patojas + tipo=Proceso + empacado=Sí
             es_patojas = (
@@ -610,15 +607,9 @@ def mostrar():
         # la columna "A Comprar" — permite retomar en otra sesión.
         try:
             from compras_helper import cargar_temporal
-            _borrador, _borrador_areas = cargar_temporal(semana, año)
+            _borrador = cargar_temporal(semana, año)
         except Exception:
-            _borrador, _borrador_areas = {}, []
-
-        # Restaurar el filtro de áreas guardado con el borrador (una sola vez)
-        if _borrador_areas and "apedir_areas_sel" not in st.session_state:
-            _validas = [a for a in _borrador_areas if a in todas_areas]
-            if _validas:
-                st.session_state["apedir_areas_sel"] = _validas
+            _borrador = {}
 
         # DataFrames base (FIJOS) por proveedor
         base_dfs = {}
@@ -715,18 +706,6 @@ def mostrar():
         pass
 
     # ══ TABS PRINCIPALES ══════════════════════════════════════════════════════
-    # ── Aviso de unidades inconsistentes ─────────────────────────────────────
-    # El mismo producto con unidades distintas se parte en filas separadas y
-    # confunde el consolidado. Detectarlo acá, al momento.
-    _mixtos = {p: u for p, u in _unidades_por_prod.items() if len(u) > 1}
-    if _mixtos:
-        _det = " · ".join(f"**{p}**: {', '.join(sorted(u))}"
-                          for p, u in sorted(_mixtos.items()))
-        st.warning(
-            f"⚠️ **Productos con unidades mezcladas esta semana** — aparecen "
-            f"partidos en más de una fila en A Pedir: {_det}. "
-            f"Corregilo en 🔧 Mantenimiento → Unidades inconsistentes.")
-
     tab_apedir, tab_resumen, tab_area, tab_costo, tab_patojas = st.tabs(
         ["📦 A Pedir", "📊 Resumen por Tipo", "📍 Por Área",
          "💰 Costo por Área", "👷 Patojas"])
@@ -792,45 +771,9 @@ def mostrar():
                 st.session_state[reset_key] = reset_n + 1
                 st.rerun()
 
-            # ── Filtro de áreas: la tabla se vuelve pivote ────────────────────
-            areas_pedido = st.multiselect(
-                "📍 Áreas para este pedido:", todas_areas,
-                default=todas_areas, key="apedir_areas_sel",
-                help="La tabla muestra solo las áreas elegidas; el Total y el "
-                     "guardado de compras se calculan únicamente con ellas.")
-
-            if not areas_pedido:
-                st.info("Seleccioná al menos un área para armar el pedido.")
-                base_dfs_f = {p: (d.iloc[0:0] if d is not None else d)
-                              for p, d in base_dfs.items()}
-            elif set(areas_pedido) == set(todas_areas):
-                base_dfs_f = base_dfs
-            else:
-                # Vista filtrada: solo columnas de las áreas elegidas, Total
-                # recalculado con ellas, sin productos con Total 0.
-                base_dfs_f = {}
-                for _prov, _df in base_dfs.items():
-                    if _df is None or _df.empty:
-                        base_dfs_f[_prov] = _df
-                        continue
-                    _dfc = _df.copy()
-                    _dfc["Total"] = sum(
-                        (_dfc[a] if a in _dfc.columns else 0)
-                        for a in areas_pedido)
-                    _dfc["Total"] = _dfc["Total"].round(1)
-                    _dfc = _dfc[_dfc["Total"] > 0].reset_index(drop=True)
-                    _cols = (["Producto", "Unidad"]
-                             + [a for a in areas_pedido if a in _dfc.columns]
-                             + ["Total", "A Comprar", "_costo"])
-                    base_dfs_f[_prov] = _dfc[[c for c in _cols
-                                              if c in _dfc.columns]]
-
             # Editores + totales en vivo, aislados en fragmento (rapido)
-            if areas_pedido:
-                _filtro_id = "_".join(sorted(areas_pedido))[:40]
-                _editores_fragment(sel_prov, base_dfs_f, prod_map,
-                                   areas_pedido, semana, año,
-                                   f"{reset_n}_{_filtro_id}")
+            _editores_fragment(sel_prov, base_dfs, prod_map, todas_areas,
+                                semana, año, reset_n)
 
             # ── Guardado de compras (temporal y definitivo) ───────────────────
             st.divider()
@@ -839,8 +782,8 @@ def mostrar():
                        "otra sesión), y cuando la compra esté lista, guardala "
                        "en definitivo para el histórico con costo por área.")
 
-            _armar_compras = _recolectar_compras(sel_prov, base_dfs_f, prod_map,
-                                                 areas_pedido)
+            _armar_compras = _recolectar_compras(sel_prov, base_dfs, prod_map,
+                                                 todas_areas)
 
             cg1, cg2 = st.columns(2)
             with cg1:
@@ -858,8 +801,7 @@ def mostrar():
                     } for c in _armar_compras]
                     with st.spinner("Guardando borrador..."):
                         try:
-                            n = guardar_temporal(semana, año, items_temp,
-                                                 areas=areas_pedido)
+                            n = guardar_temporal(semana, año, items_temp)
                             st.success(f"✅ Borrador guardado: {n} línea(s). "
                                        "Podés cerrar y retomar después.")
                         except Exception as e:
