@@ -332,32 +332,54 @@ def _tab_costo_area(base_dfs: dict, prod_map: dict, todas_areas: list,
                     continue
                 costo = float(info.get("costo") or 0)
                 valor = round(costo * cant, 2)
+
+                # "A Comprar" (ingresado en la pestaña A Pedir, total por
+                # producto) repartido PROPORCIONALMENTE a la demanda del área
+                # — mismo criterio que el guardado definitivo de compras.
+                _ok, _pend, ac_total = _val_comprar(row.get("A Comprar", ""))
+                try:
+                    dem_total = float(row.get("Total") or 0)
+                except Exception:
+                    dem_total = 0
+                ac_area = (round(ac_total * (cant / dem_total), 2)
+                           if _ok and ac_total > 0 and dem_total > 0 else 0.0)
+                valor_ac = round(costo * ac_area, 2)
+
                 por_seg.setdefault(seg, []).append({
-                    "Producto": prod,
-                    "Unidad":   row.get("Unidad", ""),
-                    "Costo":    costo,
-                    "Cantidad": cant,
-                    "Valor Q":  valor,
+                    "Producto":   prod,
+                    "Unidad":     row.get("Unidad", ""),
+                    "Costo":      costo,
+                    "Demanda":    cant,
+                    "Valor Dem.": valor,
+                    "A Comprar":  ac_area,
+                    "Valor Comp.": valor_ac,
                 })
                 total_area += valor
 
         if not por_seg:
             continue
 
+        total_area_ac = sum(f["Valor Comp."] for fs in por_seg.values()
+                            for f in fs)
         gran_total += total_area
-        st.markdown(f"### 📍 {area} — Total a costo: Q{total_area:,.2f}")
+        st.markdown(f"### 📍 {area} — Demanda a costo: Q{total_area:,.2f}"
+                    + (f"  ·  A Comprar: Q{total_area_ac:,.2f}"
+                       if total_area_ac else ""))
 
         for seg in sorted(por_seg.keys()):
             filas = sorted(por_seg[seg], key=lambda x: x["Producto"].lower())
-            sub = sum(f["Valor Q"] for f in filas)
-            st.markdown(f"**{area} — {seg}**  ·  Q{sub:,.2f}")
+            sub    = sum(f["Valor Dem."] for f in filas)
+            sub_ac = sum(f["Valor Comp."] for f in filas)
+            st.markdown(f"**{area} — {seg}**  ·  Demanda Q{sub:,.2f}"
+                        + (f"  ·  Compra Q{sub_ac:,.2f}" if sub_ac else ""))
             df_t = pd.DataFrame(filas)
             st.dataframe(
                 df_t, hide_index=True, use_container_width=True,
                 height=min(320, 60 + len(df_t) * 35),
                 column_config={
-                    "Costo":   st.column_config.NumberColumn(format="Q%.2f"),
-                    "Valor Q": st.column_config.NumberColumn(format="Q%.2f"),
+                    "Costo":       st.column_config.NumberColumn(format="Q%.2f"),
+                    "Valor Dem.":  st.column_config.NumberColumn(format="Q%.2f"),
+                    "Valor Comp.": st.column_config.NumberColumn(format="Q%.2f"),
                 })
         st.divider()
 
@@ -384,6 +406,13 @@ def _tab_costo_area(base_dfs: dict, prod_map: dict, todas_areas: list,
                     if tipo not in tipos_sel or seg not in segs_sel:
                         continue
                     costo = float(info.get("costo") or 0)
+                    _ok, _p, ac_total = _val_comprar(row.get("A Comprar", ""))
+                    try:
+                        dem_total = float(row.get("Total") or 0)
+                    except Exception:
+                        dem_total = 0
+                    ac_area = (round(ac_total * (cant / dem_total), 2)
+                               if _ok and ac_total > 0 and dem_total > 0 else 0.0)
                     filas_csv.append({
                         "Área": area,
                         "Segmento": seg,
@@ -391,8 +420,10 @@ def _tab_costo_area(base_dfs: dict, prod_map: dict, todas_areas: list,
                         "Producto": prod,
                         "Unidad": row.get("Unidad", ""),
                         "Costo": costo,
-                        "Cantidad": cant,
-                        "Valor": round(costo * cant, 2),
+                        "Demanda": cant,
+                        "Valor Demanda": round(costo * cant, 2),
+                        "A Comprar": ac_area,
+                        "Valor Compra": round(costo * ac_area, 2),
                     })
         csv = pd.DataFrame(filas_csv).to_csv(index=False).encode("utf-8-sig")
         st.download_button("📥 Descargar CSV", data=csv,
