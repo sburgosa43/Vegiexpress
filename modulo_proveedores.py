@@ -292,16 +292,27 @@ def _tab_costo_area(base_dfs: dict, prod_map: dict, todas_areas: list,
     st.caption("Valor a costo de la demanda de cada área, agrupado por tipo "
                "de producto. No incluye los procesados de Patojas.")
 
-    areas_sel = st.multiselect("Áreas:", todas_areas, default=todas_areas,
+    # Filtros: área + doble filtro Tipo de Producto / Segmento
+    tipos_disp = sorted({(v.get("tipo_producto") or "Sin Tipo")
+                         for v in prod_map.values()})
+    segs_disp  = sorted({(v.get("segmento") or "Sin Segmento")
+                         for v in prod_map.values()})
+
+    f1, f2, f3 = st.columns(3)
+    areas_sel = f1.multiselect("Áreas:", todas_areas, default=todas_areas,
                                key="costo_areas_sel")
+    tipos_sel = f2.multiselect("Tipo de Producto:", tipos_disp,
+                               default=tipos_disp, key="costo_tipos_sel")
+    segs_sel  = f3.multiselect("Segmento:", segs_disp,
+                               default=segs_disp, key="costo_segs_sel")
     if not areas_sel:
         st.info("Seleccioná al menos un área.")
         return
 
     gran_total = 0.0
     for area in areas_sel:
-        # Recolectar productos con demanda en esta área
-        por_tipo = {}   # {tipo: [(producto, unidad, costo, cant, valor)]}
+        # Recolectar productos con demanda en esta área (filtros aplicados)
+        por_seg = {}   # {segmento: [filas]}
         total_area = 0.0
         for prov, df in base_dfs.items():
             if df is None or df.empty or area not in df.columns:
@@ -315,10 +326,13 @@ def _tab_costo_area(base_dfs: dict, prod_map: dict, todas_areas: list,
                     continue
                 prod  = str(row.get("Producto", ""))
                 info  = prod_map.get(prod.strip().lower(), {})
-                costo = float(info.get("costo") or 0)
                 tipo  = info.get("tipo_producto", "") or "Sin Tipo"
+                seg   = info.get("segmento", "") or "Sin Segmento"
+                if tipo not in tipos_sel or seg not in segs_sel:
+                    continue
+                costo = float(info.get("costo") or 0)
                 valor = round(costo * cant, 2)
-                por_tipo.setdefault(tipo, []).append({
+                por_seg.setdefault(seg, []).append({
                     "Producto": prod,
                     "Unidad":   row.get("Unidad", ""),
                     "Costo":    costo,
@@ -327,16 +341,16 @@ def _tab_costo_area(base_dfs: dict, prod_map: dict, todas_areas: list,
                 })
                 total_area += valor
 
-        if not por_tipo:
+        if not por_seg:
             continue
 
         gran_total += total_area
         st.markdown(f"### 📍 {area} — Total a costo: Q{total_area:,.2f}")
 
-        for tipo in sorted(por_tipo.keys()):
-            filas = sorted(por_tipo[tipo], key=lambda x: x["Producto"].lower())
+        for seg in sorted(por_seg.keys()):
+            filas = sorted(por_seg[seg], key=lambda x: x["Producto"].lower())
             sub = sum(f["Valor Q"] for f in filas)
-            st.markdown(f"**{area} — {tipo}**  ·  Q{sub:,.2f}")
+            st.markdown(f"**{area} — {seg}**  ·  Q{sub:,.2f}")
             df_t = pd.DataFrame(filas)
             st.dataframe(
                 df_t, hide_index=True, use_container_width=True,
@@ -365,10 +379,15 @@ def _tab_costo_area(base_dfs: dict, prod_map: dict, todas_areas: list,
                         continue
                     prod  = str(row.get("Producto", ""))
                     info  = prod_map.get(prod.strip().lower(), {})
+                    tipo  = info.get("tipo_producto", "") or "Sin Tipo"
+                    seg   = info.get("segmento", "") or "Sin Segmento"
+                    if tipo not in tipos_sel or seg not in segs_sel:
+                        continue
                     costo = float(info.get("costo") or 0)
                     filas_csv.append({
                         "Área": area,
-                        "Tipo": info.get("tipo_producto", "") or "Sin Tipo",
+                        "Segmento": seg,
+                        "Tipo": tipo,
                         "Producto": prod,
                         "Unidad": row.get("Unidad", ""),
                         "Costo": costo,
@@ -465,6 +484,7 @@ def mostrar():
             "proveedor":     p.get("proveedor", "").strip(),
             "costo":         float(p.get("costo") or 0),
             "tipo_producto": str(p.get("tipo_producto", "") or "").strip(),
+            "segmento":      str(p.get("segmento", "") or "").strip(),
             "empacado":      str(p.get("empacado", "") or "").strip(),
         } for p in catalog}
 
