@@ -281,6 +281,108 @@ def _tab_por_area(semana: int, año: int, prod_map: dict):
         cols_r[-1].metric("**TOTAL SEMANA**", f"Q{grand_total:,.0f}")
 
 
+def _tab_costo_area(base_dfs: dict, prod_map: dict, todas_areas: list,
+                    semana: int, año: int):
+    """Pivote Área × Tipo de producto: por cada área, los productos que
+    demanda agrupados por tipo, con costo unitario, cantidad y valor a costo.
+    Solo compra neta (Patojas ya está separado de base_dfs)."""
+    import pandas as pd
+
+    st.markdown(f"**💰 Costo por Área — Semana {semana}/{año}**")
+    st.caption("Valor a costo de la demanda de cada área, agrupado por tipo "
+               "de producto. No incluye los procesados de Patojas.")
+
+    areas_sel = st.multiselect("Áreas:", todas_areas, default=todas_areas,
+                               key="costo_areas_sel")
+    if not areas_sel:
+        st.info("Seleccioná al menos un área.")
+        return
+
+    gran_total = 0.0
+    for area in areas_sel:
+        # Recolectar productos con demanda en esta área
+        por_tipo = {}   # {tipo: [(producto, unidad, costo, cant, valor)]}
+        total_area = 0.0
+        for prov, df in base_dfs.items():
+            if df is None or df.empty or area not in df.columns:
+                continue
+            for _, row in df.iterrows():
+                try:
+                    cant = float(row.get(area) or 0)
+                except Exception:
+                    cant = 0
+                if cant <= 0:
+                    continue
+                prod  = str(row.get("Producto", ""))
+                info  = prod_map.get(prod.strip().lower(), {})
+                costo = float(info.get("costo") or 0)
+                tipo  = info.get("tipo_producto", "") or "Sin Tipo"
+                valor = round(costo * cant, 2)
+                por_tipo.setdefault(tipo, []).append({
+                    "Producto": prod,
+                    "Unidad":   row.get("Unidad", ""),
+                    "Costo":    costo,
+                    "Cantidad": cant,
+                    "Valor Q":  valor,
+                })
+                total_area += valor
+
+        if not por_tipo:
+            continue
+
+        gran_total += total_area
+        st.markdown(f"### 📍 {area} — Total a costo: Q{total_area:,.2f}")
+
+        for tipo in sorted(por_tipo.keys()):
+            filas = sorted(por_tipo[tipo], key=lambda x: x["Producto"].lower())
+            sub = sum(f["Valor Q"] for f in filas)
+            st.markdown(f"**{area} — {tipo}**  ·  Q{sub:,.2f}")
+            df_t = pd.DataFrame(filas)
+            st.dataframe(
+                df_t, hide_index=True, use_container_width=True,
+                height=min(320, 60 + len(df_t) * 35),
+                column_config={
+                    "Costo":   st.column_config.NumberColumn(format="Q%.2f"),
+                    "Valor Q": st.column_config.NumberColumn(format="Q%.2f"),
+                })
+        st.divider()
+
+    if gran_total:
+        st.markdown(f"## Total general a costo: Q{gran_total:,.2f}")
+
+        # Export CSV consolidado
+        filas_csv = []
+        for area in areas_sel:
+            for prov, df in base_dfs.items():
+                if df is None or df.empty or area not in df.columns:
+                    continue
+                for _, row in df.iterrows():
+                    try:
+                        cant = float(row.get(area) or 0)
+                    except Exception:
+                        cant = 0
+                    if cant <= 0:
+                        continue
+                    prod  = str(row.get("Producto", ""))
+                    info  = prod_map.get(prod.strip().lower(), {})
+                    costo = float(info.get("costo") or 0)
+                    filas_csv.append({
+                        "Área": area,
+                        "Tipo": info.get("tipo_producto", "") or "Sin Tipo",
+                        "Producto": prod,
+                        "Unidad": row.get("Unidad", ""),
+                        "Costo": costo,
+                        "Cantidad": cant,
+                        "Valor": round(costo * cant, 2),
+                    })
+        csv = pd.DataFrame(filas_csv).to_csv(index=False).encode("utf-8-sig")
+        st.download_button("📥 Descargar CSV", data=csv,
+                           file_name=f"costo_por_area_S{semana}_{año}.csv",
+                           mime="text/csv", key="costo_area_csv")
+    else:
+        st.info("No hay demanda registrada en las áreas seleccionadas.")
+
+
 def _recolectar_compras(sel_prov, base_dfs, prod_map, todas_areas):
     """Recolecta las líneas con 'A Comprar' > 0 de los proveedores seleccionados
     (compra neta — Patojas ya está separado y no aparece acá). Para cada línea
@@ -553,8 +655,9 @@ def mostrar():
         pass
 
     # ══ TABS PRINCIPALES ══════════════════════════════════════════════════════
-    tab_apedir, tab_resumen, tab_area, tab_patojas = st.tabs(
-        ["📦 A Pedir", "📊 Resumen por Tipo", "📍 Por Área", "👷 Patojas"])
+    tab_apedir, tab_resumen, tab_area, tab_costo, tab_patojas = st.tabs(
+        ["📦 A Pedir", "📊 Resumen por Tipo", "📍 Por Área",
+         "💰 Costo por Área", "👷 Patojas"])
 
     with tab_area:
         _tab_por_area(semana, año, prod_map)
@@ -812,6 +915,10 @@ Imprimir: Ctrl+P (o Compartir → Imprimir en el teléfono)</p>
                                    help="Ingresá cantidades primero",
                                    use_container_width=True)
 
+
+    # ══ TAB COSTO POR ÁREA ══════════════════════════════════════════════════
+    with tab_costo:
+        _tab_costo_area(base_dfs, prod_map, todas_areas, semana, año)
 
     # ══ TAB PATOJAS (proceso: Patojas + Proceso + Sí) ═══════════════════════
     with tab_patojas:
