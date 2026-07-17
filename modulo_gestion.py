@@ -284,6 +284,35 @@ def _modificar(todos):
                         index=(prods_lista.index(linea["producto"])
                                if linea["producto"] in prods_lista else 0),
                         key=f"{uid}_prod", label_visibility="collapsed")
+
+                    # Al CAMBIAR el producto → cargar el precio correcto para
+                    # este cliente (cascada) y el costo del producto nuevo.
+                    # (Las líneas nuevas ya lo hacían; las existentes no.)
+                    _ppk = f"{uid}_prod_prev"
+                    _prev = st.session_state.get(_ppk)
+                    if _prev is None:
+                        st.session_state[_ppk] = prod_nuevo
+                    elif _prev != prod_nuevo:
+                        st.session_state[_ppk] = prod_nuevo
+                        if prod_nuevo == linea["producto"]:
+                            # Volvió al producto original → restaurar precio
+                            st.session_state[f"{uid}_prec"] = _snap.get(
+                                rn, {}).get("precio",
+                                            float(linea["precio"] or 0))
+                        else:
+                            _cli_obj = st.session_state.get("gest_cli_obj")
+                            _np = 0.0
+                            if _cli_obj:
+                                try:
+                                    _np, _ = cli_precio(_cli_obj, prod_nuevo)
+                                except Exception:
+                                    _np = 0.0
+                            if not _np:
+                                _np = float(prods_cat.get(prod_nuevo, {})
+                                            .get("precio", 0) or 0)
+                            if _np > 0:
+                                st.session_state[f"{uid}_prec"] = float(_np)
+                        st.rerun()
                     cant_nueva = ec2.number_input("", min_value=0.0,
                         value=float(linea["cantidad"] or 0),
                         step=0.5, key=f"{uid}_cant",
@@ -461,6 +490,14 @@ def _modificar(todos):
                 }
                 if prod_n and prod_n != linea["producto"]:
                     cambio["producto_nuevo"] = prod_n
+                    # El producto nuevo trae SU costo y SU unidad — sin esto,
+                    # la fila quedaba con el costo/unidad del producto viejo
+                    # y los márgenes se corrompían.
+                    _pc = prods_cat.get(prod_n, {})
+                    cambio["costo_nuevo"] = float(_pc.get("costo", 0) or 0)
+                    _und = str(_pc.get("unidad", "") or "").strip()
+                    if _und:
+                        cambio["unidad_nueva"] = _und
                 _orig_sv = st.session_state.get(snap_key, {}).get(rn, {})
                 if abs(float(cant_n or 0) - _orig_sv.get("cantidad", float(linea["cantidad"] or 0))) > 0.001:
                     cambio["cantidad_nueva"] = float(cant_n)
