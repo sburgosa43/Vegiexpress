@@ -15,7 +15,7 @@ import streamlit as st
 from datetime import date
 
 _TEMP_HEADER = ["semana", "año", "proveedor", "producto", "unidad",
-                "a_comprar", "costo_unit", "actualizado"]
+                "a_comprar", "costo_unit", "actualizado", "areas"]
 
 _HIST_HEADER = ["fecha_compra", "semana", "año", "proveedor", "producto",
                 "unidad", "cantidad", "costo_unit", "total",
@@ -41,9 +41,12 @@ def _ensure_hist():
 
 
 # ── TEMPORAL (borrador) ───────────────────────────────────────────────────────
-def guardar_temporal(semana: int, año: int, items: list) -> int:
+def guardar_temporal(semana: int, año: int, items: list,
+                     areas: list | None = None) -> int:
     """Guarda el borrador de la compra (cantidades A Comprar) para esta semana.
-    Sobrescribe el borrador anterior de la misma semana/año.
+    Sobrescribe el borrador anterior de la misma semana/año. Si se pasa
+    `areas` (filtro de áreas activo al armar la compra), se persiste para
+    restaurarlo al retomar el borrador.
 
     items: [{"proveedor","producto","unidad","a_comprar","costo_unit"}, ...]
     """
@@ -65,6 +68,7 @@ def guardar_temporal(semana: int, año: int, items: list) -> int:
         conservar.append(r)
 
     hoy = date.today().strftime("%d/%m/%Y %H:%M")
+    areas_str = "|".join(areas) if areas else ""
     nuevas = []
     for it in items:
         ac = float(it.get("a_comprar") or 0)
@@ -73,6 +77,7 @@ def guardar_temporal(semana: int, año: int, items: list) -> int:
         nuevas.append([
             semana, año, it.get("proveedor", ""), it.get("producto", ""),
             it.get("unidad", ""), ac, float(it.get("costo_unit") or 0), hoy,
+            areas_str,
         ])
 
     # Reescribir la hoja completa
@@ -83,12 +88,13 @@ def guardar_temporal(semana: int, año: int, items: list) -> int:
     return len(nuevas)
 
 
-def cargar_temporal(semana: int, año: int) -> dict:
+def cargar_temporal(semana: int, año: int) -> tuple[dict, list]:
     """Carga el borrador guardado de una semana/año.
-    Retorna {(proveedor, producto): a_comprar}."""
+    Retorna ({(proveedor, producto): a_comprar}, areas_del_filtro).
+    areas_del_filtro es [] si el borrador no guardó filtro (compatibilidad)."""
     _ensure_temp()
     from gsheets import get_all_rows
-    result = {}
+    result, areas = {}, []
     for r in get_all_rows("compras_temp"):
         if not r or len(r) < 6:
             continue
@@ -106,7 +112,10 @@ def cargar_temporal(semana: int, año: int) -> dict:
             ac = 0
         if ac > 0:
             result[(prov, prod)] = ac
-    return result
+        # Filtro de áreas guardado (columna 9, si existe)
+        if not areas and len(r) > 8 and str(r[8]).strip():
+            areas = [a for a in str(r[8]).split("|") if a.strip()]
+    return result, areas
 
 
 # ── DEFINITIVO (histórico) ────────────────────────────────────────────────────
