@@ -786,7 +786,7 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
+    t1, t2, t3, t4, t5, t6, t7, t8, t9, t10 = st.tabs([
         "Correccion Masiva",
         "Migracion de Datos",
         "Estructura Sheets",
@@ -796,6 +796,7 @@ def mostrar():
         "Proveedores",
         "Backup Drive",
         "🔗 Reparar Pedidos",
+        "📏 Unidades",
     ])
     with t1: _tab_correccion()
     with t2: _tab_migracion()
@@ -806,6 +807,7 @@ def mostrar():
     with t7: _tab_proveedores()
     with t8: _tab_backup()
     with t9: _tab_reparar_pedidos()
+    with t10: _tab_unidades()
 
 
 def _tab_reparar_pedidos():
@@ -903,3 +905,116 @@ def _unir_pedidos(unicos: dict, destino: str):
             updates.append({"range": f"AB{rn}", "values": [[destino]]})
     if updates:
         update_cells("pedidos", updates)
+
+
+def _tab_unidades():
+    """Diagnóstico y corrección de unidades inconsistentes: el mismo producto
+    con unidades distintas en los pedidos (parte la demanda en A Pedir) o
+    con unidad diferente a la del catálogo actual."""
+    from data_helper import cargar_productos
+
+    st.markdown("#### 📏 Unidades inconsistentes")
+    st.caption("El mismo producto con unidades distintas se parte en varias "
+               "filas en A Pedir y confunde el consolidado de compras. Acá "
+               "podés detectarlo y corregirlo.")
+
+    if st.button("🔎 Escanear pedidos activos", key="uni_scan"):
+        from excel_helper import leer_pedidos as _lp
+        todos = _lp()
+        # Solo pedidos no cancelados de las últimas ~8 semanas
+        from datetime import date, timedelta
+        corte = date.today() - timedelta(days=56)
+        activos = [p for p in todos
+                   if p.get("fecha") and p["fecha"] >= corte
+                   and p.get("status") != "Cancelado"]
+
+        # Unidad del catálogo (fuente de verdad)
+        cat = {p["nombre"].strip().lower(): p
+               for p in cargar_productos(False, solo_catalogo=False)}
+
+        # Agrupar: producto → unidad → filas
+        por_prod = {}
+        for p in activos:
+            prod = str(p.get("producto", "")).strip()
+            und  = str(p.get("unidad", "")).strip() or "(sin unidad)"
+            por_prod.setdefault(prod, {}).setdefault(und, []).append(p)
+
+        problemas = []
+        for prod, unds in sorted(por_prod.items()):
+            und_cat = str(cat.get(prod.lower(), {}).get("unidad", "")).strip()
+            if len(unds) > 1:
+                problemas.append({"producto": prod, "unidades": unds,
+                                  "und_catalogo": und_cat,
+                                  "tipo": "mixto"})
+            elif und_cat and list(unds.keys())[0] != und_cat:
+                problemas.append({"producto": prod, "unidades": unds,
+                                  "und_catalogo": und_cat,
+                                  "tipo": "difiere_catalogo"})
+        st.session_state["uni_problemas"] = problemas
+        st.rerun()
+
+    problemas = st.session_state.get("uni_problemas")
+    if problemas is None:
+        return
+    if not problemas:
+        st.success("✅ Sin inconsistencias: cada producto usa una sola unidad "
+                   "y coincide con el catálogo.")
+        return
+
+    st.warning(f"Se encontraron **{len(problemas)}** producto(s) con "
+               "inconsistencias en pedidos de las últimas 8 semanas.")
+
+    for i, pb in enumerate(problemas):
+        etiqueta = ("unidades MEZCLADAS" if pb["tipo"] == "mixto"
+                    else "difiere del catálogo")
+        with st.expander(f"⚠️ {pb['producto']} — {etiqueta} · catálogo: "
+                         f"'{pb['und_catalogo'] or '—'}'"):
+            for und, filas in sorted(pb["unidades"].items()):
+                clientes = sorted({f["cliente"] for f in filas})[:6]
+                st.markdown(
+                    f"- **{und}**: {len(filas)} línea(s) · clientes: "
+                    f"{', '.join(clientes)}{'…' if len(pb['unidades'][und]) > 6 else ''}")
+
+            und_cat = pb["und_catalogo"]
+            if not und_cat:
+                st.info("Este producto no está en el catálogo (o no tiene "
+                        "unidad definida) — corregí primero el catálogo.")
+                continue
+
+            # Corrección: cambiar las filas que NO usan la unidad del catálogo
+            filas_mal = [f for und, fs in pb["unidades"].items()
+                         if und != und_cat for f in fs]
+            if not filas_mal:
+                continue
+            st.markdown(f"**Corregir {len(filas_mal)} línea(s) → "
+                        f"'{und_cat}'** (la unidad del catálogo)")
+            factor = st.number_input(
+                "Factor de conversión de cantidades (multiplica la cantidad "
+                "al cambiar la unidad; dejá 1 si no aplica):",
+                min_value=0.0, value=1.0, step=0.5, key=f"uni_factor_{i}",
+                help="Ej.: docena → unidad = 12. Las cantidades se "
+                     "multiplican por este factor.")
+            if st.button(f"✅ Corregir '{pb['producto']}'", key=f"uni_fix_{i}"):
+                from gsheets import update_cells
+                upd = []
+                for f in filas_mal:
+                    rn = f["row_num"]
+                    upd.append({"range": f"Q{rn}", "values": [[und_cat]]})
+                    if factor and factor != 1.0:
+                        nueva_cant = round(float(f["cantidad"] or 0) * factor, 2)
+                        upd.append({"range": f"C{rn}",
+                                    "values": [[nueva_cant]]})
+                with st.spinner("Corrigiendo..."):
+                    try:
+                        update_cells("pedidos", upd)
+                        from excel_helper import leer_pedidos as _lp2, \
+                            leer_pedidos_op as _lpo2
+                        _lp2.clear(); _lpo2.clear()
+                        st.success(f"✅ {len(filas_mal)} línea(s) corregidas a "
+                                   f"'{und_cat}'"
+                                   + (f" (cantidades ×{factor:g})"
+                                      if factor != 1.0 else "") + ".")
+                        st.session_state.pop("uni_problemas", None)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
