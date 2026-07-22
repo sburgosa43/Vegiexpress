@@ -317,7 +317,7 @@ def _tab_listados(todos, semana, año):
 
 
 def mostrar():
-    st.markdown("## 🚚 Envíos y Facturación — Semana Actual")
+    st.markdown("## 🚚 Envíos y Facturación")
     # Botón de regreso al Inicio
     if st.button("🏠 Inicio", key="btn_home_env", type="secondary"):
         st.session_state["_nav_target"] = "🏠 Inicio"
@@ -330,16 +330,32 @@ def mostrar():
         cli_list = cargar_clientes()
 
     hoy        = date.today()
-    sem_act    = hoy.isocalendar()[1]
-    año_act    = hoy.year
+    sem_hoy    = hoy.isocalendar()[1]
+    año_hoy    = hoy.year
+
+    # ── Selector de semana (default: semana actual) ──────────────────────────
+    # Se listan las semanas que tienen pedidos, más reciente primero; la actual
+    # queda seleccionada por defecto aunque aún no tenga pedidos.
+    semanas_disp = sorted({(p["año"], p["semana"]) for p in todos}, reverse=True)
+    if (año_hoy, sem_hoy) not in semanas_disp:
+        semanas_disp = [(año_hoy, sem_hoy)] + semanas_disp
+
+    def _fmt_sem(t):
+        a, s = t
+        return (f"Semana {s} · {a}"
+                + ("  (actual)" if (a, s) == (año_hoy, sem_hoy) else ""))
+
+    idx_def = semanas_disp.index((año_hoy, sem_hoy)) \
+        if (año_hoy, sem_hoy) in semanas_disp else 0
+    sel = st.selectbox("📅 Semana a mostrar:", semanas_disp, index=idx_def,
+                       format_func=_fmt_sem, key="env_semana_sel")
+    año_act, sem_act = sel[0], sel[1]
 
     pedidos_sem = [p for p in todos
                    if p["semana"] == sem_act and p["año"] == año_act]
 
-    st.markdown(f"**Semana {sem_act} · {año_act}** — {hoy.strftime('%d/%m/%Y')}")
-
     if not pedidos_sem:
-        st.info(f"No hay pedidos para la semana {sem_act}."); return
+        st.info(f"No hay pedidos para la semana {sem_act} · {año_act}."); return
 
     # Agrupar por Unico
     grupos: dict = {}
