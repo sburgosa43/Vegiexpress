@@ -21,50 +21,47 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── MENÚ Y RUTAS ──────────────────────────────────────────────────────────────
-# Menú agrupado en secciones por flujo de trabajo. Los encabezados de sección
-# (con prefijo "—") son separadores visuales NO seleccionables: sirven para
-# orientar al usuario, no navegan a ningún módulo. Dentro de cada sección el
-# orden es por frecuencia de uso.
-_SEP = "sep"   # marca de separador (no es un módulo)
-
-PAGES = [
-    ("—— 🔵 OPERACIÓN DIARIA ——",               _SEP),
-    ("🏠 Inicio",                               "modulo_inicio"),
-    ("📥 Ingreso de Pedidos",                   "modulo_ingreso"),
-    ("📋 Gestión de Pedidos",                   "modulo_gestion"),
-    ("🛒 Compras a Proveedores",                "modulo_proveedores"),
-    ("🚚 Envíos y Facturación Semanal",         "modulo_envios"),
-
-    ("—— 🟢 ADMINISTRACIÓN ——",                 _SEP),
-    ("🧾 Facturación Mensual",                  "modulo_facturacion"),
-    ("💳 Gastos",                               "modulo_gastos"),
-    ("🏡 Casa / Personal",                      "modulo_casa"),
-    ("💰 Flujo de Caja",                        "modulo_flujo_caja"),
-
-    ("—— 🟡 CATÁLOGOS ——",                      _SEP),
-    ("📦 Productos",                            "modulo_productos"),
-    ("👥 Clientes",                             "modulo_clientes"),
-
-    ("—— 🟣 ANÁLISIS Y HERRAMIENTAS ——",        _SEP),
-    ("📊 Dashboard",                            "modulo_dashboard"),
-    ("🧮 Cotizador",                            "modulo_cotizador"),
-    ("🔍 Precios de Mercado",                   "modulo_scraper"),
-
-    ("—— 🌱 PRODUCCIÓN ——",                     _SEP),
-    ("🌱 Producción",                           "modulo_produccion"),
-
-    ("—— ⚙️ CONFIGURACIÓN ——",                  _SEP),
-    ("📝 Formularios",                          "modulo_formularios"),
-    ("🗂️ Datos",                                "modulo_datos"),
-    ("🔧 Mantenimiento",                        "modulo_mantenimiento"),
+# Menú agrupado en secciones por flujo de trabajo. Cada sección tiene su
+# encabezado (en negrita) y sus páginas; los encabezados NO son seleccionables
+# (se renderizan aparte del radio). Orden de secciones y páginas según uso.
+SECCIONES = [
+    ("🔵 OPERACIÓN DIARIA", [
+        ("🏠 Inicio",                       "modulo_inicio"),
+        ("📥 Ingreso de Pedidos",           "modulo_ingreso"),
+        ("📋 Gestión de Pedidos",           "modulo_gestion"),
+        ("🛒 Compras a Proveedores",        "modulo_proveedores"),
+        ("🚚 Envíos y Facturación Semanal", "modulo_envios"),
+        ("🧾 Facturación Mensual",          "modulo_facturacion"),
+    ]),
+    ("🟡 CATÁLOGOS", [
+        ("📦 Productos",                    "modulo_productos"),
+        ("👥 Clientes",                     "modulo_clientes"),
+    ]),
+    ("🟢 ADMINISTRACIÓN", [
+        ("💳 Gastos",                       "modulo_gastos"),
+        ("🏡 Casa / Personal",              "modulo_casa"),
+        ("💰 Flujo de Caja",                "modulo_flujo_caja"),
+    ]),
+    ("🌱 PRODUCCIÓN", [
+        ("🌱 Producción",                   "modulo_produccion"),
+    ]),
+    ("⚙️ CONFIGURACIÓN", [
+        ("📝 Formularios",                  "modulo_formularios"),
+        ("🗂️ Datos",                        "modulo_datos"),
+        ("🔧 Mantenimiento",                "modulo_mantenimiento"),
+    ]),
+    ("🟣 ANÁLISIS Y HERRAMIENTAS", [
+        ("📊 Dashboard",                    "modulo_dashboard"),
+        ("🧮 Cotizador",                    "modulo_cotizador"),
+        ("🔍 Precios de Mercado",           "modulo_scraper"),
+    ]),
 ]
 
-MENU   = [label  for label, _      in PAGES]
+# Estructuras derivadas
+PAGES  = [(label, mod) for _sec, items in SECCIONES for label, mod in items]
+MENU   = [label for label, _ in PAGES]
 ROUTES = {label: modulo for label, modulo in PAGES}
-# Etiquetas que son separadores (no navegan)
-SEPARADORES = {label for label, modulo in PAGES if modulo == _SEP}
-# Primer módulo real (destino por defecto si cae en un separador)
-_PRIMER_MODULO = next(label for label, m in PAGES if m != _SEP)
+_PRIMER_MODULO = MENU[0]
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -77,19 +74,26 @@ with st.sidebar:
     if "_nav_target" in st.session_state:
         target = st.session_state.pop("_nav_target")
         if target in MENU:
-            st.session_state["nav"] = target
+            st.session_state["menu_sel"] = target
 
-    # Índice inicial en "🏠 Inicio" (no en el primer separador)
-    _idx_ini = MENU.index("🏠 Inicio") if "🏠 Inicio" in MENU else 0
-    pagina = st.radio("Menú", MENU, index=_idx_ini, key="nav",
-                      label_visibility="collapsed")
+    # Página activa (persiste entre reruns)
+    activa = st.session_state.get("menu_sel", _PRIMER_MODULO)
+    if activa not in MENU:
+        activa = _PRIMER_MODULO
 
-    # Si el usuario tocó un encabezado de sección (separador), no navegar:
-    # volver a la última página real visitada (o el primer módulo).
-    if pagina in SEPARADORES:
-        pagina = st.session_state.get("_ultima_pagina", _PRIMER_MODULO)
-    else:
-        st.session_state["_ultima_pagina"] = pagina
+    # Menú por secciones: encabezado en negrita (no seleccionable) + un botón
+    # por página. El botón de la página activa se resalta (primary). Botones en
+    # vez de radio → control total, sin estados intermedios raros.
+    for _sec_nombre, _items in SECCIONES:
+        st.markdown(f"**{_sec_nombre}**")
+        for _lbl, _mod in _items:
+            if st.button(_lbl, key=f"nav_{_mod}",
+                         use_container_width=True,
+                         type=("primary" if _lbl == activa else "secondary")):
+                st.session_state["menu_sel"] = _lbl
+                st.rerun()
+
+    pagina = activa
 
     st.divider()
     st.caption(

@@ -664,15 +664,15 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    tab_np, tab_upd, tab_cat, tab_lp, tab_val = st.tabs([
+    tab_upd, tab_np, tab_cat, tab_lp, tab_val = st.tabs([
+        "✏️ Actualizar Precios",
         "➕ Nuevo Producto",
-        "✏️ Actualizar Producto",
         "📋 Ver Catálogo",
-        "🏷️ Listas de Precios",
+        "🏷️ Lista de Precios Especiales",
         "🔍 Validación",
     ])
-    with tab_np:  _tab_nuevo()
     with tab_upd: _tab_actualizar(es_antigua=False)
+    with tab_np:  _tab_nuevo()
     with tab_cat: _tab_catalogo()
     with tab_lp:  _tab_listas()
     with tab_val: _tab_validacion()
