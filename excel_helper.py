@@ -629,6 +629,14 @@ def editar_productos_batch(ediciones: list, es_antigua: bool = False) -> int:
         refrescar_datos(pedidos=False, productos=True, clientes=False, precios=True)
     except Exception:
         pass
+    # Marca de última edición de productos: los módulos que cachean el catálogo
+    # en session_state (ej. Proveedores) la comparan para saber si su copia
+    # quedó vieja y deben reconstruirla.
+    try:
+        import time as _t, streamlit as _st
+        _st.session_state["_productos_edit_ts"] = _t.time()
+    except Exception:
+        pass
     return len(ediciones)
 
 

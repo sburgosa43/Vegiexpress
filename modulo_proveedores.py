@@ -500,6 +500,14 @@ def mostrar():
         st.session_state.pop(base_key, None)
         st.session_state[reset_key] = st.session_state.get(reset_key, 0) + 1
 
+    # Si se editó algún producto (proveedor, costo, etc.) DESPUÉS de armar el
+    # snapshot en sesión, ese snapshot quedó viejo → forzar reconstrucción para
+    # que el cambio se refleje sin tener que apretar "Cargar semana" de nuevo.
+    _edit_ts = st.session_state.get("_productos_edit_ts", 0)
+    _snap_ts = st.session_state.get(f"{base_key}_ts", 0)
+    if _edit_ts and _edit_ts > _snap_ts:
+        st.session_state.pop(base_key, None)
+
     # ── Carga de datos ────────────────────────────────────────────────────────
     if not st.session_state.get(base_key):
         if not cargar:
@@ -647,6 +655,7 @@ def mostrar():
         patojas_df = pd.DataFrame(patojas_rows)
 
         st.session_state[base_key]                        = base_dfs
+        st.session_state[f"{base_key}_ts"]                = __import__("time").time()
         st.session_state[f"prov_prodmap_v3_{semana}_{año}"] = prod_map
         st.session_state[f"prov_areas_v3_{semana}_{año}"]   = todas_areas
         st.session_state[f"prov_resumen_v3_{semana}_{año}"] = resumen_tp
