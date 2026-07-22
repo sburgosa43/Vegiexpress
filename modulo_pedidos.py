@@ -75,7 +75,7 @@ def _aviso_costos() -> bool:
     """, unsafe_allow_html=True)
 
     if st.button("📦 Ir a Productos a revisar costos", type="secondary"):
-        st.session_state["_nav_target"] = "📦 Productos (Nuevos y Mantenimiento)"
+        st.session_state["_nav_target"] = "📦 Productos"
         st.rerun()
 
     st.markdown("&nbsp;")

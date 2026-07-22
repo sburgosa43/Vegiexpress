@@ -169,7 +169,7 @@ def mostrar():
             f"(compraron la anterior):**  " +
             "  ·  ".join(f"**{c}**" for c in kpis["sin_pedido"]))
         if col_b.button("📋 Ver pedidos", key="home_sinped"):
-            _nav("📋 Gestión Pedidos (Revisar y Editar)")
+            _nav("📋 Gestión de Pedidos")
 
     # Ventas por zona + triangulitos
     if kpis:
@@ -262,16 +262,16 @@ def mostrar():
     _seccion("⚡ Operación", [
         ("📥", "Pedidos Entrantes",  "Pedidos recibidos de clientes",      "📥 Pedidos Entrantes",                    "b00"),
         ("🛒", "Nuevo Pedido",       "Ingresar pedidos de clientes",        "🛒 Nuevo Pedido",                          "b01"),
-        ("📋", "Gestión Pedidos",    "Revisar y editar pedidos",            "📋 Gestión Pedidos (Revisar y Editar)",    "b02"),
-        ("🚚", "Envíos Semana",      "Gestionar envíos de la semana",       "🚚 Envíos y Facturación Semana",           "b03"),
+        ("📋", "Gestión Pedidos",    "Revisar y editar pedidos",            "📋 Gestión de Pedidos",    "b02"),
+        ("🚚", "Envíos Semana",      "Gestionar envíos de la semana",       "🚚 Envíos y Facturación Semanal",           "b03"),
         ("🧾", "Facturación",        "Resumen mensual por cliente",         "🧾 Facturación Mensual",                   "b04"),
     ])
     _seccion("📁 Catálogo", [
-        ("📦", "Productos",          "Gestionar catálogo y precios",        "📦 Productos (Nuevos y Mantenimiento)",    "b05"),
-        ("👥", "Clientes",           "Gestionar cartera de clientes",       "👥 Clientes (Nuevos y Mantenimiento)",     "b06"),
+        ("📦", "Productos",          "Gestionar catálogo y precios",        "📦 Productos",    "b05"),
+        ("👥", "Clientes",           "Gestionar cartera de clientes",       "👥 Clientes",     "b06"),
     ])
     _seccion("💰 Finanzas", [
-        ("📦", "Proveedores",        "Lista de compras semanal",            "📦 Pedidos a Proveedores",                 "b07"),
+        ("📦", "Proveedores",        "Lista de compras semanal",            "🛒 Compras a Proveedores",                 "b07"),
         ("💰", "Flujo de Caja",      "Liquidez semanal y proyecciones",     "💰 Flujo de Caja",                         "b08"),
         ("💳", "Gastos",             "Gastos operativos y personales",      "💳 Gastos",                                "b09"),
         ("📊", "Dashboard",          "KPIs y análisis de negocio",          "📊 Dashboard",                             "b10"),

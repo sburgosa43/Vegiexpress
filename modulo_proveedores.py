@@ -472,7 +472,7 @@ def _recolectar_compras(sel_prov, base_dfs, prod_map, todas_areas):
 
 
 def mostrar():
-    st.markdown("## 📦 Pedidos a Proveedores")
+    st.markdown("## 🛒 Compras a Proveedores")
     if st.button("🏠 Inicio", key="btn_home_prov", type="secondary"):
         st.session_state["_nav_target"] = "🏠 Inicio"
         st.rerun()
