@@ -252,6 +252,33 @@ def mostrar():
                 _card(cols[j], emoji, tit, desc, nk, bk)
         st.markdown("&nbsp;", unsafe_allow_html=True)
 
+    # ── Guía Rápida: el flujo del día en 4 pasos ─────────────────────────────
+    st.markdown(
+        "<div style='font-size:.95rem;font-weight:bold;color:#2D7A2D;"
+        "margin:4px 0 8px 0'>✨ Guía Rápida — el flujo del día</div>",
+        unsafe_allow_html=True)
+    _pasos = [
+        ("1️⃣", "Ingresar",  "Cargá los pedidos del día",      "📥 Ingreso de Pedidos"),
+        ("2️⃣", "Revisar",   "Revisá y ajustá lo ingresado",   "📋 Gestión de Pedidos"),
+        ("3️⃣", "Comprar",   "Armá la compra a proveedores",   "🛒 Compras a Proveedores"),
+        ("4️⃣", "Enviar",    "Prepará envíos y remisiones",    "🚚 Envíos y Facturación Semanal"),
+    ]
+    _pcols = st.columns(4)
+    for _pc, (_num, _tit, _desc, _dest) in zip(_pcols, _pasos):
+        with _pc:
+            st.markdown(
+                f"<div style='text-align:center;font-size:1.4rem'>{_num}</div>"
+                f"<div style='text-align:center;font-weight:bold;font-size:.9rem'>"
+                f"{_tit}</div>"
+                f"<div style='text-align:center;color:#666;font-size:.72rem;"
+                f"min-height:2.4em'>{_desc}</div>",
+                unsafe_allow_html=True)
+            if st.button("Ir →", key=f"guia_{_dest[:8]}",
+                         use_container_width=True):
+                _nav(_dest)
+    st.markdown("&nbsp;", unsafe_allow_html=True)
+    st.divider()
+
     # ── Widget de Producción (cosechas + alertas fertilización) ────────────────
     try:
         from modulo_produccion import widget_inicio as _prod_widget
@@ -260,18 +287,17 @@ def mostrar():
         pass
 
     _seccion("⚡ Operación", [
-        ("📥", "Pedidos Entrantes",  "Pedidos recibidos de clientes",      "📥 Pedidos Entrantes",                    "b00"),
-        ("🛒", "Nuevo Pedido",       "Ingresar pedidos de clientes",        "🛒 Nuevo Pedido",                          "b01"),
-        ("📋", "Gestión Pedidos",    "Revisar y editar pedidos",            "📋 Gestión de Pedidos",    "b02"),
-        ("🚚", "Envíos Semana",      "Gestionar envíos de la semana",       "🚚 Envíos y Facturación Semanal",           "b03"),
-        ("🧾", "Facturación",        "Resumen mensual por cliente",         "🧾 Facturación Mensual",                   "b04"),
+        ("📥", "Ingreso de Pedidos", "Cargar pedidos (manual, forms, etc.)", "📥 Ingreso de Pedidos",           "b00"),
+        ("📋", "Gestión Pedidos",    "Revisar y editar pedidos",            "📋 Gestión de Pedidos",           "b02"),
+        ("🛒", "Compras Proveedores","Lista de compras semanal",            "🛒 Compras a Proveedores",        "b03b"),
+        ("🚚", "Envíos Semana",      "Gestionar envíos de la semana",       "🚚 Envíos y Facturación Semanal", "b03"),
+        ("🧾", "Facturación",        "Resumen mensual por cliente",         "🧾 Facturación Mensual",          "b04"),
     ])
     _seccion("📁 Catálogo", [
         ("📦", "Productos",          "Gestionar catálogo y precios",        "📦 Productos",    "b05"),
         ("👥", "Clientes",           "Gestionar cartera de clientes",       "👥 Clientes",     "b06"),
     ])
     _seccion("💰 Finanzas", [
-        ("📦", "Proveedores",        "Lista de compras semanal",            "🛒 Compras a Proveedores",                 "b07"),
         ("💰", "Flujo de Caja",      "Liquidez semanal y proyecciones",     "💰 Flujo de Caja",                         "b08"),
         ("💳", "Gastos",             "Gastos operativos y personales",      "💳 Gastos",                                "b09"),
         ("📊", "Dashboard",          "KPIs y análisis de negocio",          "📊 Dashboard",                             "b10"),

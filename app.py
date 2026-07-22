@@ -84,14 +84,19 @@ with st.sidebar:
     # Menú por secciones: encabezado en negrita (no seleccionable) + un botón
     # por página. El botón de la página activa se resalta (primary). Botones en
     # vez de radio → control total, sin estados intermedios raros.
+    # Menú por secciones COLAPSABLES. La sección que contiene la página activa
+    # se abre automáticamente; las demás quedan plegadas para un menú compacto.
     for _sec_nombre, _items in SECCIONES:
-        st.markdown(f"**{_sec_nombre}**")
-        for _lbl, _mod in _items:
-            if st.button(_lbl, key=f"nav_{_mod}",
-                         use_container_width=True,
-                         type=("primary" if _lbl == activa else "secondary")):
-                st.session_state["menu_sel"] = _lbl
-                st.rerun()
+        _labels_sec = [lbl for lbl, _ in _items]
+        _tiene_activa = activa in _labels_sec
+        with st.expander(f"**{_sec_nombre}**", expanded=_tiene_activa):
+            for _lbl, _mod in _items:
+                if st.button(_lbl, key=f"nav_{_mod}",
+                             use_container_width=True,
+                             type=("primary" if _lbl == activa
+                                   else "secondary")):
+                    st.session_state["menu_sel"] = _lbl
+                    st.rerun()
 
     pagina = activa
 

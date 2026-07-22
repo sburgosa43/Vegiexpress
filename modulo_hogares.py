@@ -1030,6 +1030,22 @@ def mostrar():
     with tab_top:
         _analisis_top_hoteles()
 
+def _fecha_de_timestamp(ts: str):
+    """Convierte la marca temporal del formulario (varios formatos posibles)
+    en una fecha. Devuelve None si no se puede parsear."""
+    from datetime import datetime
+    ts = str(ts or "").strip()
+    if not ts:
+        return None
+    for fmt in ("%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S",
+                "%m/%d/%Y %H:%M:%S", "%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(ts, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def _tab_importar(canal: str = "hogares"):
     """Importación de pedidos desde el formulario.
 
@@ -1091,21 +1107,56 @@ def _tab_importar(canal: str = "hogares"):
         return  # _leer_respuestas ya mostró el error
 
     importados = _get_imported_timestamps(canal)
+
+    # ── Filtro por antigüedad ────────────────────────────────────────────────
+    # Evita que respuestas de semanas pasadas (ej. que se manejaron por otra
+    # vía y nunca se marcaron como importadas) sigan apareciendo para siempre.
+    from datetime import date, timedelta
+    _hoy = date.today()
+    _ini_semana = _hoy - timedelta(days=_hoy.weekday())   # lunes de esta semana
+    _opciones_ant = {
+        "Solo esta semana": _ini_semana,
+        "Últimos 7 días":   _hoy - timedelta(days=7),
+        "Últimos 14 días":  _hoy - timedelta(days=14),
+        "Todas":            None,
+    }
+    _sel_ant = st.selectbox(
+        "📆 Mostrar respuestas de:", list(_opciones_ant.keys()), index=0,
+        key=f"imp_antiguedad_{canal}",
+        help="Las respuestas más viejas que este rango se ocultan. Cambiá a "
+             "'Todas' si necesitás importar un pedido atrasado.")
+    _corte = _opciones_ant[_sel_ant]
+
     nuevas = []
+    _ocultas_viejas = 0
     for row in rows:
         resp = _parsear_respuesta(headers, row, cat_map, cli_map)
         if not resp["timestamp"]:
             continue
         if resp["timestamp"] in importados:
             continue
+        # Filtro de antigüedad
+        if _corte is not None:
+            _f = _fecha_de_timestamp(resp["timestamp"])
+            if _f is not None and _f < _corte:
+                _ocultas_viejas += 1
+                continue
         nuevas.append(resp)
 
     if not nuevas:
-        st.success("✅ No hay pedidos nuevos. Todo está importado.")
+        if _ocultas_viejas:
+            st.success(f"✅ No hay pedidos nuevos en el rango elegido. "
+                       f"({_ocultas_viejas} respuesta(s) más antigua(s) "
+                       f"oculta(s) — cambiá el filtro a 'Todas' para verlas.)")
+        else:
+            st.success("✅ No hay pedidos nuevos. Todo está importado.")
         return
 
-    st.caption(f"**{len(nuevas)}** pedido(s) nuevo(s) · "
-               f"{len(importados)} ya importado(s)")
+    _cap = (f"**{len(nuevas)}** pedido(s) nuevo(s) · "
+            f"{len(importados)} ya importado(s)")
+    if _ocultas_viejas:
+        _cap += f" · {_ocultas_viejas} antiguo(s) oculto(s)"
+    st.caption(_cap)
     st.divider()
 
     # ── Fecha de entrega (común a todos) ──────────────────────────────────────
