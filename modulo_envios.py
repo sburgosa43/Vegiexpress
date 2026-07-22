@@ -357,6 +357,12 @@ def mostrar():
     if not pedidos_sem:
         st.info(f"No hay pedidos para la semana {sem_act} · {año_act}."); return
 
+    # Total vendido de la semana (todas las áreas, sin cancelados)
+    _tot_sem = sum(float(p.get("total") or 0) for p in pedidos_sem
+                   if p.get("status") != "Cancelado")
+    st.markdown(f"#### 💰 Total semana {sem_act}/{año_act}: "
+                f"**Q{_tot_sem:,.2f}**")
+
     # Agrupar por Unico
     grupos: dict = {}
     for p in pedidos_sem:
@@ -403,6 +409,14 @@ def mostrar():
             if not grupo_zona:
                 st.info(f"No hay pedidos para {zona} esta semana.")
                 continue
+            # Total vendido del área (suma de líneas no canceladas)
+            _tot_zona = sum(
+                float(l.get("total") or 0)
+                for ls in grupo_zona.values() for l in ls
+                if l.get("status") != "Cancelado")
+            _n_ped = len(grupo_zona)
+            st.markdown(f"### 📍 {zona} — **Q{_tot_zona:,.2f}** vendido "
+                        f"· {_n_ped} pedido(s)")
             for unico, ls in grupo_zona.items():
                 cli_info = _get_cli(ls[0]["cliente"], mapa_exact, mapa_lower) \
                            or {"nombre": ls[0]["cliente"]}
