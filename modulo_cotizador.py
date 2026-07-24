@@ -8,6 +8,8 @@ Fórmulas base (las mismas del Listado Productos):
   %Margen     = Margen Neto / Precio
   Pto.Equil.  = Costo × 1.12  (menor precio sin perder ni ganar)
 """
+import re
+
 import streamlit as st
 import pandas as pd
 
@@ -271,25 +273,39 @@ def _tab_escenarios():
 
 
 # ── KEYS DE LA GRILLA ─────────────────────────────────────────────────────────
-# Cada fila de la grilla usa keys con la forma "<prefijo><indice>". El índice
-# numérico es lo que las distingue de las keys de las otras pestañas: sin ese
-# chequeo, un startswith("cot_costo_") también borraría cot_costo_c / _v / _e,
-# que son los inputs de costo de Calcular / Verificar / Comparar.
-_PREFIJOS_FILA = ("cot_prod_", "cot_prec_", "cot_spec_",
-                  "cot_vol_", "cot_costo_", "cot_del_")
+# Las keys de fila tienen la forma "cot_<campo>_g<generacion>_<indice>".
+#
+# Por qué la generación: no alcanza con borrar la key de session_state para que
+# un widget vuelva a tomar su `index=`/`value=`. En el rerun, Streamlit reaplica
+# los widget states que el navegador reenvía para los widgets que siguen
+# montados, así que la key borrada reaparece con el valor viejo y la fila queda
+# en blanco. Cambiando la generación, las keys son OTRAS: para Streamlit son
+# widgets nuevos, sin estado previo, y sí toman el valor de la grilla.
+#
+# El sufijo numérico además distingue estas keys de las de las otras pestañas
+# (cot_costo_c / _v / _e, los inputs de Calcular / Verificar / Comparar), que
+# nunca deben borrarse desde acá.
+_CAMPOS_FILA = ("prod", "prec", "spec", "vol", "costo", "del")
+_RE_KEY_FILA = re.compile(r"^cot_(?:" + "|".join(_CAMPOS_FILA) + r")_g\d+_\d+$")
 
 
 def _es_key_fila(k) -> bool:
-    """True si la key pertenece a una fila de la grilla (cot_<campo>_<n>)."""
-    if not isinstance(k, str):
-        return False
-    return any(k.startswith(p) and k[len(p):].isdigit() for p in _PREFIJOS_FILA)
+    """True si la key pertenece a una fila de la grilla."""
+    return isinstance(k, str) and _RE_KEY_FILA.match(k) is not None
 
 
-def _limpiar_keys_filas():
-    """Borra las keys de widget de todas las filas para que se reinicialicen
-    desde la grilla. Necesario porque Streamlit ignora `index=`/`value=` cuando
-    la key ya existe en session_state."""
+def _kfila(campo: str, i: int) -> str:
+    """Key del widget para el campo `campo` de la fila `i`, en la generación
+    actual. Usar SIEMPRE esto en vez de armar la key a mano."""
+    return f"cot_{campo}_g{st.session_state.get('cot_gen', 0)}_{i}"
+
+
+def _nueva_generacion():
+    """Invalida las keys de widget de todas las filas.
+
+    Llamar después de repoblar o reordenar la grilla, para que los inputs tomen
+    el producto y el precio nuevos en vez del valor que reenvía el navegador."""
+    st.session_state["cot_gen"] = st.session_state.get("cot_gen", 0) + 1
     for k in [k for k in st.session_state if _es_key_fila(k)]:
         st.session_state.pop(k, None)
 
@@ -326,11 +342,11 @@ def _cotizacion():
     _prev_listado   = st.session_state.get("cot_listado_prev")
     _listado_cambio = _prev_listado != listado_sel
     if _listado_cambio:
-        # Limpiar precios cargados (incluida la primera elección, para que
-        # los precios de la capa SIEMPRE se apliquen sobre restos de sesión).
-        for _k in list(st.session_state.keys()):
-            if isinstance(_k, str) and _k.startswith("cot_prec_"):
-                st.session_state.pop(_k, None)
+        # Invalidar las keys de fila para que los precios se recalculen desde
+        # la capa nueva (incluida la primera elección, para que los precios
+        # SIEMPRE se apliquen sobre restos de sesión). La especificación y el
+        # volumen no se pierden: viven en cot_grilla, no en las keys.
+        _nueva_generacion()
     st.session_state["cot_listado_prev"] = listado_sel
 
     # Mapa de precios de la capa elegida (vacío si es el Listado General)
@@ -379,7 +395,7 @@ def _cotizacion():
              "especificacion": "", "volumen_semanal": 0.0}
             for n in nombres_cargar]
         st.session_state["cot_nfilas"] = len(nombres_cargar)
-        _limpiar_keys_filas()
+        _nueva_generacion()
 
     def _grilla_vacia() -> bool:
         """True si todavía no hay ningún producto elegido. Mira la grilla y
@@ -387,11 +403,9 @@ def _cotizacion():
         if any(str(f.get("producto", "")).strip()
                for f in st.session_state.get("cot_grilla", [])):
             return False
-        return not any(
-            str(v or "").strip()
-            for k, v in st.session_state.items()
-            if isinstance(k, str) and k.startswith("cot_prod_")
-            and k[len("cot_prod_"):].isdigit())
+        return not any(str(v or "").strip()
+                       for k, v in st.session_state.items()
+                       if _es_key_fila(k) and k.startswith("cot_prod_"))
 
     # Al elegir un listado específico, cargar sus productos automáticamente.
     # Solo si la grilla está vacía: nunca pisa una cotización ya empezada, y
@@ -413,14 +427,12 @@ def _cotizacion():
     # Para ubicar por qué quedan filas en blanco. Quitar una vez resuelto.
     with st.expander("🐞 Diagnóstico (temporal)", expanded=True):
         _g = st.session_state.get("cot_grilla", [])
-        _kp = sorted(
-            ((k, repr(st.session_state[k])) for k in st.session_state
-             if isinstance(k, str) and k.startswith("cot_prod_")
-             and k[len("cot_prod_"):].isdigit()),
-            key=lambda kv: int(kv[0][len("cot_prod_"):]))
+        _kp = sorted(((k, repr(st.session_state[k])) for k in st.session_state
+                      if _es_key_fila(k) and k.startswith("cot_prod_")),
+                     key=lambda kv: int(kv[0].rsplit("_", 1)[1]))
         st.write({
             "1_listado_sel":         listado_sel,
-            "2_cot_listado_prev":    st.session_state.get("cot_listado_prev"),
+            "2_cot_gen":             st.session_state.get("cot_gen", 0),
             "3_listado_cambio":      _listado_cambio,
             "4_grilla_vacia()":      _grilla_vacia(),
             "5_cot_nfilas":          st.session_state.get("cot_nfilas"),
@@ -440,10 +452,11 @@ def _cotizacion():
                      help="Vacía la grilla y todos los campos para empezar "
                           "una cotización desde cero."):
             for _k in list(st.session_state.keys()):
-                if _es_key_fila(_k) or (isinstance(_k, str) and _k.startswith(
+                if isinstance(_k, str) and _k.startswith(
                         ("cot_grilla", "cot_nfilas",
-                         "cot_dirigida", "cot_notas"))):
+                         "cot_dirigida", "cot_notas")):
                     st.session_state.pop(_k, None)
+            _nueva_generacion()
             st.rerun()
 
     with _cbl1:
@@ -586,7 +599,7 @@ def _cotizacion():
     if is_formal and flete_total_pre > 0:
         _vol_total_pre = 0.0
         for _j in range(n_filas):
-            _vj = st.session_state.get(f"cot_vol_{_j}", 0.0)
+            _vj = st.session_state.get(_kfila("vol", _j), 0.0)
             try:
                 _vol_total_pre += float(_vj or 0)
             except (ValueError, TypeError):
@@ -595,10 +608,10 @@ def _cotizacion():
             flete_x_lb_pre = flete_total_pre / _vol_total_pre
 
     for i, fila in enumerate(grilla):
-        k_prod = f"cot_prod_{i}"
-        k_prec = f"cot_prec_{i}"
-        k_spec = f"cot_spec_{i}"
-        k_vol  = f"cot_vol_{i}"
+        k_prod = _kfila("prod",  i)
+        k_prec = _kfila("prec",  i)
+        k_spec = _kfila("spec",  i)
+        k_vol  = _kfila("vol",   i)
 
         def _ref(col, txt):
             col.markdown(
@@ -616,27 +629,30 @@ def _cotizacion():
             key=k_prod, label_visibility="collapsed")
 
         # Botón para eliminar esta fila (conserva las ediciones de las demás)
-        if r[10].button("✖", key=f"cot_del_{i}",
+        if r[10].button("✖", key=_kfila("del", i),
                         help="Quitar esta fila de la cotización"):
             _nueva_grilla = []
             for _j in range(len(grilla)):
                 if _j == i:
                     continue
                 _nueva_grilla.append({
-                    "producto": st.session_state.get(f"cot_prod_{_j}",
+                    "producto": st.session_state.get(_kfila("prod", _j),
                                     grilla[_j].get("producto", "")),
                     "precio_cotizar": float(st.session_state.get(
-                        f"cot_prec_{_j}",
+                        _kfila("prec", _j),
                         grilla[_j].get("precio_cotizar", 0.0)) or 0),
-                    "especificacion": st.session_state.get(f"cot_spec_{_j}",
+                    "especificacion": st.session_state.get(_kfila("spec", _j),
                                     grilla[_j].get("especificacion", "")),
                     "volumen_semanal": float(st.session_state.get(
-                        f"cot_vol_{_j}",
+                        _kfila("vol", _j),
                         grilla[_j].get("volumen_semanal", 0.0)) or 0),
+                    "costo_editado": float(st.session_state.get(
+                        _kfila("costo", _j),
+                        grilla[_j].get("costo_editado", 0.0)) or 0),
                 })
             st.session_state["cot_grilla"] = _nueva_grilla
             st.session_state["cot_nfilas"] = max(len(_nueva_grilla), 1)
-            _limpiar_keys_filas()
+            _nueva_generacion()
             st.rerun()
 
         if prod_sel and prod_sel in prod_dict:
@@ -662,7 +678,7 @@ def _cotizacion():
                                              min_value=0.0, step=100.0, key=k_vol,
                                              label_visibility="collapsed")
                 # Costo editable — default del catálogo, NO se guarda en ningún lado
-                k_costo = f"cot_costo_{i}"
+                k_costo = _kfila("costo", i)
                 if k_costo not in st.session_state:
                     st.session_state[k_costo] = float(costo)
                 costo_ed = r[3].number_input("", min_value=0.0,
@@ -774,7 +790,7 @@ def _cotizacion():
         if st.button("🗑 Limpiar grilla", key="cot_clear", type="secondary"):
             st.session_state.pop("cot_grilla", None)
             st.session_state["cot_nfilas"] = 15
-            _limpiar_keys_filas()
+            _nueva_generacion()
             st.rerun()
 
     st.divider()
