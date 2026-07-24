@@ -409,6 +409,29 @@ def _cotizacion():
                    f"producto(s) de **{listado_sel}** con sus precios. "
                    f"Quitá los que no necesités con el botón ✖.")
 
+    # ── DIAGNÓSTICO TEMPORAL ─────────────────────────────────────────────────
+    # Para ubicar por qué quedan filas en blanco. Quitar una vez resuelto.
+    with st.expander("🐞 Diagnóstico (temporal)", expanded=True):
+        _g = st.session_state.get("cot_grilla", [])
+        _kp = sorted(
+            ((k, repr(st.session_state[k])) for k in st.session_state
+             if isinstance(k, str) and k.startswith("cot_prod_")
+             and k[len("cot_prod_"):].isdigit()),
+            key=lambda kv: int(kv[0][len("cot_prod_"):]))
+        st.write({
+            "1_listado_sel":         listado_sel,
+            "2_cot_listado_prev":    st.session_state.get("cot_listado_prev"),
+            "3_listado_cambio":      _listado_cambio,
+            "4_grilla_vacia()":      _grilla_vacia(),
+            "5_cot_nfilas":          st.session_state.get("cot_nfilas"),
+            "6_len(cot_grilla)":     len(_g),
+            "7_len(precios_capa)":   len(_precios_capa),
+            "8_len(del_listado)":    len(_nombres_del_listado()),
+            "9_grilla[0:8]":         [f.get("producto", "") for f in _g[:8]],
+            "10_keys_cot_prod[0:8]": _kp[:8],
+            "11_total_keys_prod":    len(_kp),
+        })
+
     # ── Cargar listado / Limpiar ─────────────────────────────────────────────
     _cbl1, _cbl2 = st.columns(2)
     with _cbl2:
