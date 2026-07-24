@@ -632,6 +632,8 @@ def _cotizacion():
                 if precio_ed > 0 and costo > 0:
                     mp  = round(margen_neto_pct(costo, precio_ed), 1)
                     mq  = round(margen_neto_q(costo, precio_ed), 2)
+                    iva = round(precio_ed - precio_ed / IVA_FACTOR, 2)
+                    isr = round(precio_ed / IVA_FACTOR * ISR_RATE, 2)
                     col = "#2D7A2D" if mp >= 20 else "#E65100"
                     _ref(r[6], f"<span style='color:{col}'><b>{mp}%</b></span>")
                     _ref(r[7], f"<span style='color:{col}'>Q{mq:,.2f}</span>")
