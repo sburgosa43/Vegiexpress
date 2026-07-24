@@ -19,10 +19,10 @@ from config import (IVA_RATE, ISR_RATE, IVA_FACTOR, ISR_FACTOR,
 
 def _desde_margen_pct(costo: float, margen_pct: float) -> dict | None:
     """Precio dado costo y margen neto deseado en %."""
-    denom = 1 - margen_pct / 0.95
+    denom = 1 - margen_pct / ISR_FACTOR
     if denom <= 0 or costo <= 0:
         return None
-    precio = costo * (1 + IVA_RATE) / denom
+    precio = costo * IVA_FACTOR / denom
     return _desglose(costo, precio)
 
 
@@ -30,22 +30,26 @@ def _desde_margen_q(costo: float, margen_q: float) -> dict | None:
     """Precio dado costo y margen neto deseado en Q."""
     if costo <= 0:
         return None
-    precio = margen_q / (1 - ISR_RATE) + costo * (1 + IVA_RATE)
+    precio = margen_q / ISR_FACTOR + costo * IVA_FACTOR
     return _desglose(costo, precio)
 
 
 def _desglose(costo: float, precio: float) -> dict | None:
-    """Todos los campos derivados dado costo y precio de venta."""
+    """Todos los campos derivados dado costo y precio de venta.
+
+    Usa las fórmulas centralizadas de config.py para que un cambio de
+    tasa (IVA/ISR) se refleje aquí automáticamente.
+    """
     if precio <= 0 or costo <= 0:
         return None
-    precio_sin_iva  = precio / 1.12
-    iva_amount      = precio - precio_sin_iva         # IVA = Precio - Precio/1.12
-    isr_retencion   = precio_sin_iva * 0.05           # ISR = (Precio/1.12) x 0.05
-    neto_recibido   = precio - isr_retencion          # Neto recibido despues de ISR
-    margen_neto_q   = 0.95 * (precio - costo * 1.12) # Formula acordada
-    margen_neto_pct = (margen_neto_q / precio * 100) if precio else 0
-    pto_equilibrio  = costo * 1.12                    # Precio x 1.12 = equilibrio
-    sobre_costo     = ((precio - costo) / costo * 100) if costo else 0
+    precio_sin_iva = precio / IVA_FACTOR
+    iva_amount     = precio - precio_sin_iva          # IVA = Precio - Precio/1.12
+    isr_retencion  = precio_sin_iva * ISR_RATE        # ISR = (Precio/1.12) x 5%
+    neto_recibido  = precio - isr_retencion           # Neto recibido despues de ISR
+    mq             = margen_neto_q(costo, precio)
+    mp             = margen_neto_pct(costo, precio)
+    pto_eq         = punto_equilibrio(costo)
+    sobre_costo    = ((precio - costo) / costo * 100) if costo else 0
     return {
         "costo":           round(costo, 4),
         "precio":          round(precio, 4),
@@ -53,11 +57,11 @@ def _desglose(costo: float, precio: float) -> dict | None:
         "iva_amount":      round(iva_amount, 4),
         "isr_retencion":   round(isr_retencion, 4),
         "neto_recibido":   round(neto_recibido, 4),
-        "margen_neto_q":   round(margen_neto_q, 4),
-        "margen_neto_pct": round(margen_neto_pct, 2),
-        "pto_equilibrio":  round(pto_equilibrio, 4),
+        "margen_neto_q":   round(mq, 4),
+        "margen_neto_pct": round(mp, 2),
+        "pto_equilibrio":  round(pto_eq, 4),
         "sobre_costo":     round(sobre_costo, 2),
-        "rentable":        margen_neto_q > 0,
+        "rentable":        mq > 0,
     }
 
 
@@ -248,7 +252,7 @@ def _tab_escenarios():
                      })
         st.caption(
             f"Costo base: Q{costo:.2f} · "
-            f"Punto de equilibrio: Q{costo * 1.12:.4f} · "
+            f"Punto de equilibrio: Q{punto_equilibrio(costo):.4f} · "
             f"IVA 12% · ISR 5%"
         )
 
@@ -560,8 +564,8 @@ def _cotizacion():
             p      = prod_dict[prod_sel]
             costo  = float(p.get("costo", 0))
             seg    = SEGS.get(p.get("tipo_producto2",""), 0) / 100
-            pto_eq = round(costo * 1.12, 2) if costo else 0
-            p_imp  = round(costo / (1 - seg/0.95) * 1.12, 2) if seg > 0 and costo else 0
+            pto_eq = round(punto_equilibrio(costo), 2) if costo else 0
+            p_imp  = round(costo / (1 - seg/ISR_FACTOR) * IVA_FACTOR, 2) if seg > 0 and costo else 0
 
             if k_prec not in st.session_state:
                 _pg = float(fila.get("precio_cotizar", 0) or 0)
@@ -626,10 +630,8 @@ def _cotizacion():
                     step=0.25, key=k_prec, label_visibility="collapsed")
 
                 if precio_ed > 0 and costo > 0:
-                    mp  = round(0.95 * (1 - costo * 1.12 / precio_ed) * 100, 1)
-                    mq  = round(0.95 * (precio_ed - costo * 1.12), 2)
-                    iva = round(precio_ed - precio_ed / 1.12, 2)
-                    isr = round(precio_ed / 1.12 * 0.05, 2)
+                    mp  = round(margen_neto_pct(costo, precio_ed), 1)
+                    mq  = round(margen_neto_q(costo, precio_ed), 2)
                     col = "#2D7A2D" if mp >= 20 else "#E65100"
                     _ref(r[6], f"<span style='color:{col}'><b>{mp}%</b></span>")
                     _ref(r[7], f"<span style='color:{col}'>Q{mq:,.2f}</span>")
