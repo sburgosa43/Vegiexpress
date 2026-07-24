@@ -270,6 +270,30 @@ def _tab_escenarios():
 
 
 
+# ── KEYS DE LA GRILLA ─────────────────────────────────────────────────────────
+# Cada fila de la grilla usa keys con la forma "<prefijo><indice>". El índice
+# numérico es lo que las distingue de las keys de las otras pestañas: sin ese
+# chequeo, un startswith("cot_costo_") también borraría cot_costo_c / _v / _e,
+# que son los inputs de costo de Calcular / Verificar / Comparar.
+_PREFIJOS_FILA = ("cot_prod_", "cot_prec_", "cot_spec_",
+                  "cot_vol_", "cot_costo_", "cot_del_")
+
+
+def _es_key_fila(k) -> bool:
+    """True si la key pertenece a una fila de la grilla (cot_<campo>_<n>)."""
+    if not isinstance(k, str):
+        return False
+    return any(k.startswith(p) and k[len(p):].isdigit() for p in _PREFIJOS_FILA)
+
+
+def _limpiar_keys_filas():
+    """Borra las keys de widget de todas las filas para que se reinicialicen
+    desde la grilla. Necesario porque Streamlit ignora `index=`/`value=` cuando
+    la key ya existe en session_state."""
+    for k in [k for k in st.session_state if _es_key_fila(k)]:
+        st.session_state.pop(k, None)
+
+
 # ── COTIZACIÓN DE PRECIOS ─────────────────────────────────────────────────────
 def _cotizacion():
     from datetime import date, timedelta
@@ -299,8 +323,9 @@ def _cotizacion():
 
     # Al CAMBIAR de listado, resetear los precios ya cargados en las filas
     # para que tomen el default del listado nuevo.
-    _prev_listado = st.session_state.get("cot_listado_prev")
-    if _prev_listado != listado_sel:
+    _prev_listado   = st.session_state.get("cot_listado_prev")
+    _listado_cambio = _prev_listado != listado_sel
+    if _listado_cambio:
         # Limpiar precios cargados (incluida la primera elección, para que
         # los precios de la capa SIEMPRE se apliquen sobre restos de sesión).
         for _k in list(st.session_state.keys()):
@@ -334,6 +359,56 @@ def _cotizacion():
         _pl = _precios_capa.get(p["nombre"].strip().lower())
         return float(_pl) if _pl else float(p.get("precio", 0))
 
+    # ── Carga de la grilla desde el listado ──────────────────────────────────
+    def _nombres_del_listado() -> list[str]:
+        """Productos que corresponden al listado elegido, en orden A-Z."""
+        from data_helper import cargar_productos as _cp
+        _cat = {p["nombre"].strip().lower(): p
+                for p in _cp(False, solo_catalogo=False)
+                if p.get("cotizar", "") != "no"}
+        if listado_sel == "Listado General":
+            return sorted(p["nombre"] for p in _cat.values()
+                          if float(p.get("precio") or 0) > 0)
+        return sorted(_cat[n]["nombre"] for n in _precios_capa if n in _cat)
+
+    def _poblar_grilla(nombres_cargar: list[str]):
+        """Deja la grilla con exactamente esos productos y reinicia las keys de
+        fila para que tomen el producto y el precio del listado nuevo."""
+        st.session_state["cot_grilla"] = [
+            {"producto": n, "precio_cotizar": 0.0,
+             "especificacion": "", "volumen_semanal": 0.0}
+            for n in nombres_cargar]
+        st.session_state["cot_nfilas"] = len(nombres_cargar)
+        _limpiar_keys_filas()
+
+    def _grilla_vacia() -> bool:
+        """True si todavía no hay ningún producto elegido. Mira la grilla y
+        también las keys de widget, que son la fuente de verdad en el rerun."""
+        if any(str(f.get("producto", "")).strip()
+               for f in st.session_state.get("cot_grilla", [])):
+            return False
+        return not any(
+            str(v or "").strip()
+            for k, v in st.session_state.items()
+            if isinstance(k, str) and k.startswith("cot_prod_")
+            and k[len("cot_prod_"):].isdigit())
+
+    # Al elegir un listado específico, cargar sus productos automáticamente.
+    # Solo si la grilla está vacía: nunca pisa una cotización ya empezada, y
+    # nunca autocarga el catálogo entero desde "Listado General".
+    if (_listado_cambio and listado_sel != "Listado General"
+            and _grilla_vacia()):
+        _auto = _nombres_del_listado()
+        if _auto:
+            _poblar_grilla(_auto)
+            st.session_state["cot_autocargado"] = listado_sel
+            st.rerun()
+
+    if st.session_state.pop("cot_autocargado", None) == listado_sel:
+        st.success(f"✓ Se cargaron los {len(st.session_state.get('cot_grilla', []))} "
+                   f"producto(s) de **{listado_sel}** con sus precios. "
+                   f"Quitá los que no necesités con el botón ✖.")
+
     # ── Cargar listado / Limpiar ─────────────────────────────────────────────
     _cbl1, _cbl2 = st.columns(2)
     with _cbl2:
@@ -342,10 +417,9 @@ def _cotizacion():
                      help="Vacía la grilla y todos los campos para empezar "
                           "una cotización desde cero."):
             for _k in list(st.session_state.keys()):
-                if isinstance(_k, str) and _k.startswith(
-                        ("cot_prod_", "cot_prec_", "cot_spec_", "cot_vol_",
-                         "cot_costo_", "cot_del_", "cot_grilla", "cot_nfilas",
-                         "cot_dirigida", "cot_notas")):
+                if _es_key_fila(_k) or (isinstance(_k, str) and _k.startswith(
+                        ("cot_grilla", "cot_nfilas",
+                         "cot_dirigida", "cot_notas"))):
                     st.session_state.pop(_k, None)
             st.rerun()
 
@@ -357,34 +431,20 @@ def _cotizacion():
                  "sus precios. Quitá los que no necesités con el botón ✖.")
 
     if _cargar_click:
-        from data_helper import cargar_productos as _cp
-        _cat = {p["nombre"].strip().lower(): p
-                for p in _cp(False, solo_catalogo=False)
-                if p.get("cotizar", "") != "no"}
-        if listado_sel == "Listado General":
-            _nombres_cargar = sorted(
-                p["nombre"] for p in _cat.values()
-                if float(p.get("precio") or 0) > 0)
-        else:
-            # Solo los productos presentes en la capa elegida (orden A-Z)
-            _nombres_cargar = sorted(
-                _cat[n]["nombre"] for n in _precios_capa if n in _cat)
+        _nombres_cargar = _nombres_del_listado()
         if not _nombres_cargar:
             st.warning("El listado elegido no tiene productos para cargar.")
         else:
-            # Rellenar la grilla y limpiar keys de widgets para que tomen
-            # el producto y precio nuevos.
-            st.session_state["cot_grilla"] = [
-                {"producto": n, "precio_cotizar": 0.0,
-                 "especificacion": "", "volumen_semanal": 0.0}
-                for n in _nombres_cargar]
-            st.session_state["cot_nfilas"] = len(_nombres_cargar)
-            for _k in list(st.session_state.keys()):
-                if isinstance(_k, str) and _k.startswith(
-                        ("cot_prod_", "cot_prec_", "cot_spec_",
-                         "cot_vol_", "cot_costo_")):
-                    st.session_state.pop(_k, None)
+            _poblar_grilla(_nombres_cargar)
+            st.session_state["cot_autocargado"] = listado_sel
             st.rerun()
+
+    # Si la grilla quedó vacía, decir explícitamente cómo llenarla: elegir el
+    # listado solo fija el precio default, no carga los productos.
+    if _grilla_vacia():
+        st.info("La grilla está vacía. Apretá **📥 Cargar todos los productos "
+                "del listado** para llenarla con los productos de "
+                f"**{listado_sel}**, o elegilos uno por uno más abajo.")
 
     st.divider()
 
@@ -553,11 +613,7 @@ def _cotizacion():
                 })
             st.session_state["cot_grilla"] = _nueva_grilla
             st.session_state["cot_nfilas"] = max(len(_nueva_grilla), 1)
-            for _k in list(st.session_state.keys()):
-                if isinstance(_k, str) and _k.startswith(
-                        ("cot_prod_", "cot_prec_", "cot_spec_",
-                         "cot_vol_", "cot_costo_", "cot_del_")):
-                    st.session_state.pop(_k, None)
+            _limpiar_keys_filas()
             st.rerun()
 
         if prod_sel and prod_sel in prod_dict:
@@ -644,8 +700,14 @@ def _cotizacion():
                 else:
                     for col in r[6:]: col.write("")
 
+                # La vista simple no edita especificación / volumen / costo.
+                # Se conservan los valores que ya tenía la fila en vez de
+                # ponerlos en cero, para no perder los datos de la cotización
+                # formal al alternar entre "Simple" y "Formal".
                 grilla[i] = {"producto": prod_sel, "precio_cotizar": precio_ed,
-                              "especificacion": "", "volumen_semanal": 0.0}
+                              "especificacion":  fila.get("especificacion", ""),
+                              "volumen_semanal": fila.get("volumen_semanal", 0.0),
+                              "costo_editado":   fila.get("costo_editado", 0.0)}
 
             if precio_ed > 0:
                 lineas_pdf.append({
@@ -657,9 +719,24 @@ def _cotizacion():
                     "costo_editado":   grilla[i].get("costo_editado", 0.0),
                 })
         else:
-            grilla[i] = {"producto":"","precio_cotizar":0.0,
-                          "especificacion":"","volumen_semanal":0.0}
-            for col in r[1:]: col.write("")
+            # El selector quedó vacío. Hay dos motivos posibles y se tratan
+            # distinto:
+            #   1. El usuario vació la fila a propósito → se limpia (esperado).
+            #   2. El producto guardado ya no está en el catálogo (renombrado,
+            #      marcado "no cotizar", o refresco del caché de 600s). Ahí el
+            #      selectbox cae a index 0 sin que nadie lo haya tocado, y
+            #      limpiar la fila perdería la línea en silencio. Se conserva
+            #      el dato y se avisa; la fila queda fuera del PDF hasta que se
+            #      resuelva, y se puede quitar con ✖.
+            _guardado = str(fila.get("producto", "")).strip()
+            if _guardado and _guardado not in nombres:
+                _ref(r[1], f"<span style='color:#c62828'>⚠️ «{_guardado}» ya "
+                           f"no está disponible en el catálogo</span>")
+                for col in r[2:10]: col.write("")
+            else:
+                grilla[i] = {"producto":"","precio_cotizar":0.0,
+                              "especificacion":"","volumen_semanal":0.0}
+                for col in r[1:]: col.write("")
     st.session_state["cot_grilla"] = grilla
 
     # Botones de fila
@@ -674,9 +751,7 @@ def _cotizacion():
         if st.button("🗑 Limpiar grilla", key="cot_clear", type="secondary"):
             st.session_state.pop("cot_grilla", None)
             st.session_state["cot_nfilas"] = 15
-            for i in range(50):
-                st.session_state.pop(f"cot_prod_{i}", None)
-                st.session_state.pop(f"cot_prec_{i}", None)
+            _limpiar_keys_filas()
             st.rerun()
 
     st.divider()
