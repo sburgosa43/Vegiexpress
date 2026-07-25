@@ -7,7 +7,8 @@ from sys import intern as _intern
 from datetime import date, datetime, timedelta
 from gsheets import (ws as _ws, get_all_rows, append_rows,
                      update_cells, update_cell, delete_rows)
-from config import HOJA_PEDIDOS, HOJA_CLIENTES, HOJA_PRODUCTOS, HOJA_PRODUCTOS_ANTIGUA
+from config import (HOJA_PEDIDOS, HOJA_CLIENTES, HOJA_PRODUCTOS,
+                    HOJA_PRODUCTOS_ANTIGUA, margen_neto_q)
 
 # ── Constantes ─────────────────────────────────────────────────────────────────
 DIAS_ES  = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"]
@@ -108,7 +109,7 @@ def leer_pedidos() -> list[dict]:
 
         fvenc = _parse_fecha(row[20]) if len(row) > 20 else None
 
-        margen_q = round(0.95 * (precio_xl - costo * 1.12) * cantidad, 2) \
+        margen_q = round(margen_neto_q(costo, precio_xl) * cantidad, 2) \
                    if precio_xl > 0 else 0.0
 
         result.append({

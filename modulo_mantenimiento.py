@@ -4,6 +4,19 @@ modulo_mantenimiento.py — Herramientas de mantenimiento y administracion.
 import streamlit as st
 from datetime import date
 
+from config import IVA_FACTOR, ISR_FACTOR
+
+
+def _js_margen(c: str, v: str) -> str:
+    """Expresión JavaScript del margen neto en %, para las variables `c` (costo)
+    y `v` (precio) del renderer de AgGrid.
+
+    Los renderers corren en el navegador, así que no pueden llamar a
+    config.margen_neto_pct. Se inyectan las tasas para que la fórmula del JS no
+    quede desincronizada de la de Python si cambia el IVA o el ISR.
+    """
+    return f"({ISR_FACTOR}*({v}-{c}*{IVA_FACTOR})/{v}*100)"
+
 
 # ── TAB 1: Correccion masiva ──────────────────────────────────────────────────
 def _tab_correccion():
@@ -134,7 +147,7 @@ def _tab_correccion():
             MG_ACT = JsCode("""function(p){
                 var c=p.data['Costo act'],v=p.data['P.General'];
                 if(!v||v<=0)return'';
-                var m=(1-0.05)*(v-c*1.12)/v*100;
+                var m=""" + _js_margen("c", "v") + """;
                 var b=m>=35?'[+]':(m>=20?'[~]':'[!]');
                 return b+' '+m.toFixed(1)+'%';
             }""")
@@ -142,8 +155,8 @@ def _tab_correccion():
                 var c=p.data['Costo nvo'],v=p.data['P.Nuevo'];
                 if(!v||v<=0)return'';
                 var ca=p.data['Costo act'],va=p.data['P.General'];
-                var ma=(va>0)?(1-0.05)*(va-ca*1.12)/va*100:0;
-                var mn=(1-0.05)*(v-c*1.12)/v*100;
+                var ma=(va>0)?""" + _js_margen("ca", "va") + """:0;
+                var mn=""" + _js_margen("c", "v") + """;
                 var b=mn>=35?'[+]':(mn>=20?'[~]':'[!]');
                 var s=b+' '+mn.toFixed(1)+'%';
                 var d=mn-ma;
@@ -155,7 +168,7 @@ def _tab_correccion():
                 var c=p.data['Costo(Gen)'];
                 var v=p.data['P.Act']||p.data['P.General'];
                 if(!v||v<=0)return'';
-                var m=(1-0.05)*(v-c*1.12)/v*100;
+                var m=""" + _js_margen("c", "v") + """;
                 var b=m>=35?'[+]':(m>=20?'[~]':'[!]');
                 return b+' '+m.toFixed(1)+'%';
             }""")
@@ -164,8 +177,8 @@ def _tab_correccion():
                 var v=p.data['P.Nuevo'];
                 if(!v||v<=0)return'';
                 var vact=p.data['P.Act']||p.data['P.General'];
-                var ma=(vact>0)?(1-0.05)*(vact-c*1.12)/vact*100:0;
-                var mn=(1-0.05)*(v-c*1.12)/v*100;
+                var ma=(vact>0)?""" + _js_margen("c", "vact") + """:0;
+                var mn=""" + _js_margen("c", "v") + """;
                 var b=mn>=35?'[+]':(mn>=20?'[~]':'[!]');
                 var s=b+' '+mn.toFixed(1)+'%';
                 var d=mn-ma;
@@ -177,7 +190,7 @@ def _tab_correccion():
             var c=p.data['Costo nvo']||p.data['Costo(Gen)']||0;
             var v=p.data['P.Nuevo']||0;
             if(!v||v<=0)return{};
-            var mn=(1-0.05)*(v-c*1.12)/v*100;
+            var mn=""" + _js_margen("c", "v") + """;
             if(mn>=35)return{color:'#1B5E20',fontWeight:'bold'};
             if(mn>=20)return{color:'#E65100',fontWeight:'bold'};
             return{color:'#B71C1C',fontWeight:'bold'};

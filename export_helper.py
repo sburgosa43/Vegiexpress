@@ -15,7 +15,7 @@ def generar_excel_mensual(mes: int, año: int) -> bytes:
                                 _VEGGI_CHIM_PCT, _VEGGI_HOG_PCT)
     from excel_helper import leer_pedidos
     from data_helper  import cargar_clientes
-    from config       import calcular_liquido
+    from config       import calcular_liquido, base_sin_iva
 
     cfg        = _cargar_config()
     campo_clis = cfg["campo_clis"]
@@ -126,7 +126,7 @@ def generar_excel_mensual(mes: int, año: int) -> bytes:
     for cli in sorted(por_cli, key=lambda x: -por_cli[x]):
         total = por_cli[cli]
         liq, isr, desc = calcular_liquido(cli, total)
-        base = round(total / 1.12, 2)
+        base = round(base_sin_iva(total), 2)
         vals = [cli, total, base, isr, desc, liq]
         for j, v in enumerate(vals, start=1):
             ws3.cell(row=r, column=j, value=v)

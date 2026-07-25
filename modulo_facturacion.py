@@ -10,7 +10,7 @@ from data_helper  import cargar_clientes
 from pdf_helper   import (generar_facturacion_mensual,
                            nombre_archivo_factura, MESES_ES)
 from config       import (ZONAS_MAP, COLORES_ZONA, ISR_UMBRAL,
-                           calcular_liquido, excluido_dashboard)
+                           calcular_liquido, excluido_dashboard, base_sin_iva)
 
 # Excluir mismos clientes que el dashboard
 
@@ -94,7 +94,7 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
             sub_sem    = sum(l["total"] for l in lineas_sem)
 
             liq_sem, isr_sem, desc_sem = calcular_liquido(cli_nombre, sub_sem)
-            base_sem = round(sub_sem / 1.12, 2)
+            base_sem = round(base_sin_iva(sub_sem), 2)
             if desc_sem > 0:
                 isr_txt = f"Desc.15%: Q{desc_sem:,.2f}  ·  "
             elif isr_sem > 0:
@@ -155,7 +155,7 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
         st.divider()
 
         # Totales con fórmulas fiscales correctas
-        base_iva  = round(total / 1.12, 2)                          # Base sin IVA
+        base_iva  = round(base_sin_iva(total), 2)
         liq_total, isr_ret, desc_ret = calcular_liquido(cli_nombre, total)
         isr_ret   = isr_ret  # ya calculado con exenciones
         liquido   = round(total - isr_ret, 2)                       # Líquido a recibir

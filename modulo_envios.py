@@ -10,6 +10,7 @@ from datetime import date
 from excel_helper import (leer_pedidos_op as leer_pedidos, cancelar_pedido,
                           restaurar_pedido, guardar_cambios_precio)
 from data_helper  import cargar_clientes
+from config       import base_sin_iva
 from pdf_helper   import generar_envio, nombre_archivo
 from config       import (ZONAS_MAP as _ZONAS_CFG, excluido_dashboard, es_hogar,
                            calcular_liquido)
@@ -73,7 +74,7 @@ def _pedido_card(unico: str, lineas: list, cliente_info: dict, sufijo: str):
     # Desglose fiscal sobre el total ORIGINAL (referencia de factura)
     # Mismas reglas que Facturacion Mensual: calcular_liquido maneja ISR/descuento
     liq_ped, isr_ped, desc_ped = calcular_liquido(l0["cliente"], total_orig)
-    base_iva = round(total_orig / 1.12, 2)
+    base_iva = round(base_sin_iva(total_orig), 2)
 
     with st.expander(
         f"{'🔴' if cancelado else '🟢'}  **{l0['cliente']}**  ·  "

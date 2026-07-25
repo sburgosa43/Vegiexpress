@@ -160,3 +160,28 @@ def margen_neto_q(costo: float, precio: float) -> float:
 def punto_equilibrio(costo: float) -> float:
     """Precio mínimo sin ganar ni perder: costo·IVA_FACTOR."""
     return costo * IVA_FACTOR
+
+def margen_neto_frac(costo: float, precio: float) -> float:
+    """Margen neto como FRACCIÓN (0–1), no como porcentaje.
+
+    Existe para los llamadores que multiplican por 100 al mostrar. Usar este o
+    margen_neto_pct según corresponda — confundirlos da un error de 100×.
+    """
+    return margen_neto_pct(costo, precio) / 100
+
+# ── Desglose de un monto que ya incluye IVA ───────────────────────────────────
+# En este negocio los totales facturados vienen con IVA incluido; estas tres
+# funciones lo descomponen. Centralizadas para que un cambio de tasa no obligue
+# a buscar "1.12" por toda la app.
+
+def base_sin_iva(total: float) -> float:
+    """Base imponible: el monto sin el IVA que ya trae incluido."""
+    return total / IVA_FACTOR
+
+def iva_incluido(total: float) -> float:
+    """IVA contenido en un monto que ya lo incluye."""
+    return total - total / IVA_FACTOR
+
+def isr_retencion(total: float) -> float:
+    """Retención ISR: ISR_RATE sobre la base sin IVA."""
+    return total / IVA_FACTOR * ISR_RATE

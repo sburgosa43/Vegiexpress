@@ -5,7 +5,8 @@ Fase 1: clientes semanales GT/Río.
 """
 import streamlit as st
 from config import (REGLAS_PAGO as REGLAS, ISR_UMBRAL,
-                     ZONA_GT_RIO, excluido_dashboard as _excluido_fc)
+                     ZONA_GT_RIO, excluido_dashboard as _excluido_fc,
+                     isr_retencion)
 _excluido = _excluido_fc  # alias local
 import pandas as pd
 from datetime import date, timedelta
@@ -105,7 +106,7 @@ def _liquido(total: float, reglas: dict) -> float:
     if reglas["desc"] > 0:
         return round(total * (1 - reglas["desc"] / 100), 2)
     if reglas["isr"] and total >= ISR_UMBRAL:
-        isr = total * 0.05 / 1.12
+        isr = isr_retencion(total)
         return round(total - isr, 2)
     return round(total, 2)
 

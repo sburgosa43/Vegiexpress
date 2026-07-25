@@ -21,6 +21,7 @@ from excel_helper import (leer_pedidos, cancelar_pedido, restaurar_pedido,
 from order_helper import guardar_edicion_pedidos
 from data_helper import cargar_clientes, cargar_productos
 from pdf_helper import generar_envio, nombre_archivo
+from config import punto_equilibrio, margen_neto_frac
 from excel_helper import guardar_cambios_precio
 
 
@@ -347,8 +348,9 @@ def _modificar(todos):
                     # ── Contexto financiero ───────────────────────────────
                     prod_info = prods_cat.get(prod_nuevo, {})
                     costo_p   = float(prod_info.get("costo", linea.get("costo", 0)) or 0)
-                    pto_eq    = round(costo_p * 1.12, 2) if costo_p > 0 else 0
-                    margen_p  = round(0.95 * (1 - costo_p * 1.12 / prec_nuevo), 4)                                 if (costo_p > 0 and prec_nuevo > 0) else 0
+                    pto_eq    = round(punto_equilibrio(costo_p), 2) if costo_p > 0 else 0
+                    # margen_p es FRACCIÓN (0–1): abajo se muestra como *100.
+                    margen_p  = round(margen_neto_frac(costo_p, prec_nuevo), 4)                                 if (costo_p > 0 and prec_nuevo > 0) else 0
                     if costo_p > 0:
                         bajo_eq = prec_nuevo > 0 and prec_nuevo < pto_eq
                         c_eq    = "#c62828" if bajo_eq else "#555"

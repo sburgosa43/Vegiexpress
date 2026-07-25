@@ -5,6 +5,7 @@ import streamlit as st
 from datetime import date, datetime
 from gsheets import append_rows, update_cells, get_all_rows
 from excel_helper import leer_pedidos, leer_pedidos_op, DIAS_ES, MESES_N, _sf
+from config import margen_neto_q, margen_neto_frac, iva_incluido
 
 _K_PED = "pedidos"
 
@@ -31,10 +32,11 @@ def _calcular(precio: float, costo: float, cant: float) -> dict:
     return {
         "total":       round(precio * cant, 4),
         "total_costo": round(costo  * cant, 4),
-        "margen_q":    round(0.95 * (precio - costo * 1.12) * cant, 4),
-        "margen_pct":  round(0.95 * (1 - costo * 1.12 / precio), 4)
+        "margen_q":    round(margen_neto_q(costo, precio) * cant, 4),
+        # OJO: margen_pct acá es una FRACCIÓN (0–1), no un porcentaje.
+        "margen_pct":  round(margen_neto_frac(costo, precio), 4)
                        if precio > 0 else 0,
-        "iva":         round((precio - precio / 1.12) * cant, 4),
+        "iva":         round(iva_incluido(precio) * cant, 4),
         "isr":         0,
     }
 

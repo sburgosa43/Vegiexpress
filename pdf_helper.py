@@ -548,8 +548,9 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
 
     # ── TOTALES ───────────────────────────────────────────────────────────────
     story.append(Spacer(1, 3*mm))
-    iva_mes = round(total_mes * 0.12 / 1.12, 2)
-    isr_mes = round(total_mes * 0.05 / 1.12, 2)
+    from config import iva_incluido, isr_retencion
+    iva_mes = round(iva_incluido(total_mes), 2)
+    isr_mes = round(isr_retencion(total_mes), 2)
 
     tot_col_w = [CW - 45*mm - 35*mm, 45*mm, 35*mm]
     tot_rows = [

@@ -28,7 +28,7 @@ def _selectbox_all(label, opciones, key):
 def _sabana_pedidos():
     from excel_helper import leer_pedidos
     from data_helper  import cargar_clientes
-    from config       import calcular_liquido, ZONAS_MAP
+    from config       import calcular_liquido, ZONAS_MAP, base_sin_iva
 
     todos    = leer_pedidos()
     clientes = {c["nombre"].lower().strip(): c for c in cargar_clientes()}
@@ -77,7 +77,7 @@ def _sabana_pedidos():
         total   = float(p.get("total")   or 0)
         mb      = round((precio - costo) * cant, 2)
         mn      = float(p.get("margen_q") or 0)
-        base_iv = round(total / 1.12, 2) if total else 0
+        base_iv = round(base_sin_iva(total), 2) if total else 0
         liq, isr, desc = calcular_liquido(p["cliente"], total)
 
         filas.append({
