@@ -34,12 +34,7 @@ def _proveedores():
                     "Importado","Otro","Sin Proveedor"]
 
 # ── Helpers de UI ─────────────────────────────────────────────────────────────
-def _conf(key, msg):
-    st.session_state[f"_conf_{key}"] = msg
-
-def _show_conf(key):
-    msg = st.session_state.pop(f"_conf_{key}", None)
-    if msg: st.success(msg)
+from utils import _conf, _show_conf
 
 def _ref_precios(costo: float, tipo2: str):
     segs = {"Premium":50,"Alto":40,"Media Alta":35,"Media":30,

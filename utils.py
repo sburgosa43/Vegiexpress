@@ -18,24 +18,22 @@ from datetime import date, datetime
 
 def _sf(v) -> float:
     """
-    Safe float — maneja vacíos, comas decimales, separadores de miles
-    y símbolos de moneda (Q, $).
+    Safe float — maneja vacíos, símbolos de moneda (Q, $) y separador de miles.
 
-    Soporta formato centroamericano: 1.234,56  →  1234.56
+    La hoja usa formato guatemalteco: la COMA separa miles y el PUNTO es el
+    decimal (1,500.50). Por eso la coma siempre se descarta.
+
+    Ojo: una versión anterior trataba la coma suelta como decimal, así que
+    "1,500" devolvía 1.5 en vez de 1500. Si alguna vez la hoja pasara a
+    formato europeo (1.500,50), esta función habría que revisarla.
     """
     if v is None or v == "":
         return 0.0
     if isinstance(v, (int, float)):
         return float(v)
-    s = str(v).strip().replace("Q", "").replace("$", "").replace(" ", "")
-    # Formato europeo/centroamericano: punto como miles, coma como decimal
-    if "," in s and "." in s:
-        if s.index(".") < s.index(","):   # 1.234,56
-            s = s.replace(".", "").replace(",", ".")
-        else:                              # 1,234.56
-            s = s.replace(",", "")
-    elif "," in s:
-        s = s.replace(",", ".")
+    s = (str(v).strip()
+         .replace("Q", "").replace("$", "").replace(" ", "")
+         .replace(",", ""))
     try:
         return float(s)
     except (ValueError, AttributeError):

@@ -252,23 +252,12 @@ def _col_letra(n: int) -> str:
     return s
 
 
-def _sf(v) -> float:
-    try:
-        return float(str(v).replace(",", "").strip() or 0)
-    except (ValueError, AttributeError):
-        return 0.0
+from utils import _sf
 
 
-def _parse_fecha(v):
-    if not v:
-        return None
-    from datetime import datetime
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
-        try:
-            return datetime.strptime(str(v).strip(), fmt).date()
-        except (ValueError, TypeError):
-            continue
-    return None
+# La copia local no aceptaba %m/%d/%Y y devolvía None para esas fechas, a
+# diferencia del resto de la app. Se usa la versión compartida.
+from utils import _parse_fecha
 
 
 def _calc_mezcla(aplicaciones: list, fert_map: dict) -> dict:

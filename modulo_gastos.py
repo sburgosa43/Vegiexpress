@@ -63,13 +63,7 @@ def _proveedores():
 
 
 # ── Helpers numericos ─────────────────────────────────────────────────────────
-def _sf(v):
-    try:    return float(str(v).replace(",","").strip() or 0)
-    except: return 0.0
-
-def _si(v):
-    try:    return int(float(str(v).replace(",","").strip() or 0))
-    except: return 0
+from utils import _sf, _si
 
 
 # ── Config I/O ────────────────────────────────────────────────────────────────
