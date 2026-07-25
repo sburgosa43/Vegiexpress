@@ -40,6 +40,12 @@ def _tab_correccion():
                              key="mc3_zona")
     nivel    = c4.selectbox("Lista a editar", nivel_opts, key="mc3_nivel")
 
+    # Generación de la tabla editable. Se incrementa al guardar: borrar la key
+    # de session_state no resetea el widget, porque en el rerun Streamlit
+    # reaplica el estado que reenvía el navegador y la tabla volvería a mostrar
+    # las ediciones ya guardadas como si siguieran pendientes.
+    _g = st.session_state.get("mc3_gen", 0)
+
     # ── Leer pedidos de la semana ─────────────────────────────────────────────
     todos    = leer_pedidos()
     clientes = {c["nombre"].lower().strip(): c for c in cargar_clientes()}
@@ -219,7 +225,7 @@ def _tab_correccion():
             gridOptions=go,
             update_mode=GridUpdateMode.VALUE_CHANGED,
             allow_unsafe_jscode=True,
-            key=f"mc3_ag_{nivel}_{semana}_{anio}",
+            key=f"mc3_ag_g{_g}_{nivel}_{semana}_{anio}",
             height=min(560, 55 + len(df) * 42),
             fit_columns_on_grid_load=True,
         )
@@ -243,7 +249,7 @@ def _tab_correccion():
             ccfg["P.Nuevo"]    = st.column_config.NumberColumn("P.Nuevo",    **ed)
         edited = st.data_editor(df[vis], column_config=ccfg,
                                 hide_index=True, use_container_width=True,
-                                key=f"mc3_ed_{nivel}_{semana}",
+                                key=f"mc3_ed_g{_g}_{nivel}_{semana}",
                                 height=min(560, 60+len(df)*35))
 
     # ── Detectar cambios ──────────────────────────────────────────────────────
@@ -321,6 +327,9 @@ def _tab_correccion():
             msg += f" + {n_ped} linea(s) de pedidos semana {semana}"
         st.success(msg)
 
+        # Lo que realmente resetea la tabla es la generación nueva; el pop solo
+        # evita que se acumulen keys de generaciones anteriores.
+        st.session_state["mc3_gen"] = st.session_state.get("mc3_gen", 0) + 1
         for k in list(st.session_state.keys()):
             if k.startswith("mc3_ag_") or k.startswith("mc3_ed_"):
                 st.session_state.pop(k, None)

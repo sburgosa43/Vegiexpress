@@ -171,6 +171,21 @@ def _modificar(todos):
     if not sel:
         st.info("Seleccioná al menos un pedido."); return
 
+    # ── Keys de los widgets de edición ────────────────────────────────────────
+    # Llevan la generación adentro (mod_g<N>_<row_num>), que se incrementa al
+    # guardar. Borrar la key de session_state NO alcanza para resetear el
+    # widget, y como estas keys usan row_num — que se desplaza al eliminar
+    # filas — un valor residual haría que el dato de un pedido aparezca en otro.
+    _g = st.session_state.get("mod_gen", 0)
+
+    def _uid_fila(rn) -> str:
+        """Prefijo de las keys de la fila `rn` (producto / cantidad / precio)."""
+        return f"mod_g{_g}_{rn}"
+
+    def _k_del(rn) -> str:
+        """Key del checkbox 'eliminar' de la fila `rn`."""
+        return f"del_row_g{_g}_{rn}"
+
     # ── Snapshot inmutable de valores originales ──────────────────────────────
     # Se crea UNA SOLA VEZ al abrir la selección; evita falsos positivos
     # causados por session_state obsoleto de sesiones anteriores de edición.
@@ -186,7 +201,7 @@ def _modificar(todos):
                     "precio":   float(_l["precio"]   or 0),
                 }
                 # Limpiar session_state obsoleto para estos widgets
-                _uid = f"mod_{_rn}"
+                _uid = _uid_fila(_rn)
                 for _sfx in ("_prec", "_cant", "_prod"):
                     st.session_state.pop(f"{_uid}{_sfx}", None)
         st.session_state[snap_key] = _snap
@@ -270,7 +285,7 @@ def _modificar(todos):
                 cambios_pedido = 0
                 for linea in lineas:
                     rn  = linea["row_num"]
-                    uid = f"mod_{rn}"
+                    uid = _uid_fila(rn)
                     lineas_originales[rn] = linea
 
                     # Pre-inicializar desde snapshot (garantiza valor limpio)
@@ -321,7 +336,7 @@ def _modificar(todos):
                         value=float(linea["precio"] or 0),
                         step=0.25, key=f"{uid}_prec",
                         label_visibility="collapsed")
-                    del_check = ec4.checkbox("", key=f"del_row_{rn}",
+                    del_check = ec4.checkbox("", key=_k_del(rn),
                         help="Eliminar esta línea al guardar",
                         label_visibility="collapsed")
                     if del_check:
@@ -373,7 +388,7 @@ def _modificar(todos):
                                 unsafe_allow_html=True)
 
                     # Indicadores de cambio — comparar vs snapshot, no vs linea en vivo
-                    _va_eliminar = st.session_state.get(f"del_row_{rn}", False)
+                    _va_eliminar = st.session_state.get(_k_del(rn), False)
                     _orig = _snap.get(rn, {})
                     hay_diff = []
                     if not _va_eliminar:
@@ -459,7 +474,7 @@ def _modificar(todos):
     )
     a_eliminar = sum(
         1 for rn in lineas_originales
-        if st.session_state.get(f"del_row_{rn}")
+        if st.session_state.get(_k_del(rn))
     )
     hay_algo = total_cambios > 0 or nuevas_validas > 0 or a_eliminar > 0
 
@@ -476,9 +491,9 @@ def _modificar(todos):
             # Recopilar ediciones (excluir filas marcadas para eliminar)
             cambios_batch = []
             for rn, linea in lineas_originales.items():
-                if st.session_state.get(f"del_row_{rn}"):
+                if st.session_state.get(_k_del(rn)):
                     continue  # Se elimina, no se edita
-                uid   = f"mod_{rn}"
+                uid   = _uid_fila(rn)
                 prod_n = st.session_state.get(f"{uid}_prod", linea["producto"])
                 cant_n = st.session_state.get(f"{uid}_cant", linea["cantidad"])
                 prec_n = st.session_state.get(f"{uid}_prec", linea["precio"])
@@ -508,7 +523,7 @@ def _modificar(todos):
 
             # Recopilar filas a eliminar
             filas_eliminar = [rn for rn in lineas_originales
-                              if st.session_state.get(f"del_row_{rn}")]
+                              if st.session_state.get(_k_del(rn))]
 
             # Recopilar líneas nuevas
             nuevas_batch = []
@@ -550,9 +565,16 @@ def _modificar(todos):
             # un pedido aparezca en otro (corrupción silenciosa).
             for unico in sel:
                 st.session_state.pop(f"mod_nuevas_{unico}", None)
+            # Incrementar la generación es lo que REALMENTE resetea los widgets:
+            # el pop de abajo no basta, porque en el rerun Streamlit reaplica los
+            # widget states que reenvía el navegador y las keys reaparecerían con
+            # el valor viejo — apuntando ya a otro row_num. El pop queda para no
+            # dejar keys de generaciones anteriores acumulándose en la sesión.
+            st.session_state["mod_gen"] = st.session_state.get("mod_gen", 0) + 1
             _prefijos_purgar = ("mod_", "del_row_", "mod_snap_")
             for _k in list(st.session_state.keys()):
-                if isinstance(_k, str) and _k.startswith(_prefijos_purgar):
+                if (isinstance(_k, str) and _k.startswith(_prefijos_purgar)
+                        and _k not in ("mod_gen", "mod_sel")):
                     st.session_state.pop(_k, None)
 
             partes = []
