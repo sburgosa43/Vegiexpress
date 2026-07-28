@@ -1,0 +1,30 @@
+# ── Bytecode de Python ────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ── Credenciales ──────────────────────────────────────────────────────────────
+# La cuenta de servicio de Google Sheets vive acá. NUNCA versionar.
+.streamlit/secrets.toml
+*.pem
+*.key
+service_account*.json
+
+# ── Entornos virtuales ────────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+
+# ── Herramientas ──────────────────────────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ── Sistema operativo / editores ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.swp
