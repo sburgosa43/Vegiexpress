@@ -75,20 +75,36 @@ def _wb():
     raise ConnectionError(f"No se pudo conectar a Google Sheets: {last_err}")
 
 
+@st.cache_resource(show_spinner=False)
+def _ws_cached(nombre: str):
+    """Handle del worksheet, cacheado por hoja.
+
+    Resolver el worksheet cuesta un viaje a la API (hay que traer la metadata
+    del spreadsheet) que antes se pagaba en CADA lectura. El handle se puede
+    cachear con seguridad: el refresh del token vive en las credenciales de
+    _gc(), no acá.
+
+    Nunca llamar directo — usar ws(), que agrega el retry. Y si se invalida
+    _gc, hay que invalidar esto también: ver clear_ws_cache().
+    """
+    return _wb().worksheet(HOJAS[nombre])
+
+
 def ws(nombre: str):
     """Retorna un worksheet por nombre clave, con retry."""
     last_err = None
     for attempt in range(3):
         try:
-            return _wb().worksheet(HOJAS[nombre])
-        except gspread.exceptions.APIError as e:
-            last_err = e
-            _gc.clear()
-            time.sleep(2 ** attempt)
+            return _ws_cached(nombre)
         except Exception as e:
             last_err = e
+            # El handle cacheado pudo quedar apuntando a un cliente muerto o a
+            # una hoja renombrada; se descarta todo para re-resolver.
+            clear_ws_cache()
+            if isinstance(e, KeyError):
+                break          # nombre de hoja inexistente: reintentar no sirve
             time.sleep(2 ** attempt)
-    raise ConnectionError(f"No se pudo acceder a '{HOJAS[nombre]}': {last_err}")
+    raise ConnectionError(f"No se pudo acceder a '{HOJAS.get(nombre, nombre)}': {last_err}")
 
 
 def get_all_rows(nombre: str) -> list[list]:
@@ -100,7 +116,7 @@ def get_all_rows(nombre: str) -> list[list]:
             return vals[1:] if vals else []
         except Exception as e:
             last_err = e
-            _gc.clear()
+            clear_ws_cache()
             time.sleep(2 ** attempt)
     raise ConnectionError(f"Error leyendo '{nombre}': {last_err}")
 
@@ -112,7 +128,7 @@ def get_all_records_ws(nombre: str) -> list[dict]:
             return ws(nombre).get_all_records()
         except Exception as e:
             if attempt < 2:
-                _gc.clear()
+                clear_ws_cache()
                 time.sleep(2 ** attempt)
     return []
 
@@ -125,7 +141,7 @@ def append_rows(nombre: str, rows: list[list]) -> None:
             return
         except Exception as e:
             if attempt < 2:
-                _gc.clear()
+                clear_ws_cache()
                 time.sleep(2 ** attempt)
             else:
                 raise
@@ -144,7 +160,7 @@ def update_cells(nombre: str, updates: list[dict]) -> None:
             return
         except Exception as e:
             if attempt < 2:
-                _gc.clear()
+                clear_ws_cache()
                 time.sleep(2 ** attempt)
             else:
                 raise
@@ -158,7 +174,7 @@ def update_cell(nombre: str, row: int, col: int, value) -> None:
             return
         except Exception as e:
             if attempt < 2:
-                _gc.clear()
+                clear_ws_cache()
                 time.sleep(2 ** attempt)
             else:
                 raise
@@ -174,7 +190,9 @@ def delete_rows(nombre: str, row_indices: list[int]) -> None:
                 break
             except Exception as e:
                 if attempt < 2:
-                    _gc.clear()
+                    # Invalidar ANTES de re-pedir el handle: si no, ws() devuelve
+                    # el mismo objeto cacheado que acaba de fallar.
+                    clear_ws_cache()
                     sheet = ws(nombre)
                     time.sleep(1)
                 else:
@@ -187,7 +205,13 @@ def cell_value(nombre: str, row: int, col: int):
 
 
 def clear_ws_cache():
-    """Limpia el caché para forzar reconexión."""
+    """Limpia el caché para forzar reconexión.
+
+    Limpia AMBOS niveles y en este orden: los worksheets cacheados guardan una
+    referencia al cliente de _gc(), así que limpiar solo _gc dejaría handles
+    apuntando a un cliente muerto.
+    """
+    _ws_cached.clear()
     _gc.clear()
 
 
@@ -212,4 +236,7 @@ def ensure_ws(nombre: str, headers: list, rows_iniciales: list = None) -> bool:
     if rows_iniciales:
         data.extend(rows_iniciales)
     nueva.update(f"A1", data, value_input_option="USER_ENTERED")
+    # La hoja acaba de nacer: invalidar para que ws(nombre) la re-resuelva en
+    # vez de arrastrar un intento fallido previo.
+    clear_ws_cache()
     return True
