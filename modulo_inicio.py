@@ -110,6 +110,10 @@ def _kpis() -> dict | None:
             gan_op  = sum(inc_op.values()) - gas_op
             flujo_neto = gan_op - gas_cs
         except Exception:
+            # Se deja en None a propósito: el render hace `if fn is not None`
+            # y omite la tarjeta. Preferible a mostrar una cifra financiera
+            # incompleta —los gastos de Casa podrían no haberse sumado— que
+            # se leería como buena.
             pass
 
         return {

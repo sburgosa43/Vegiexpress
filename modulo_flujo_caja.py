@@ -55,10 +55,10 @@ def _cargar_reglas() -> dict:
             r.append("")
         cliente = str(r[0]).strip().lower()
         try:    lag = int(float(r[1])) if r[1] != "" else 0
-        except: lag = 0
+        except (ValueError, TypeError): lag = 0
         isr = str(r[2]).strip().lower() in ("sí", "si", "yes", "true", "1")
         try:    desc = float(r[3]) if r[3] != "" else 0
-        except: desc = 0
+        except (ValueError, TypeError): desc = 0
         reglas[cliente] = {"lag": lag, "isr": isr, "desc": desc}
     return reglas
 

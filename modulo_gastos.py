@@ -63,7 +63,7 @@ def _proveedores():
 
 
 # ── Helpers numericos ─────────────────────────────────────────────────────────
-from utils import _sf, _si
+from utils import _sf, _si, _parse_fecha
 
 
 # ── Config I/O ────────────────────────────────────────────────────────────────
@@ -122,9 +122,9 @@ def _leer_gastos() -> list:
         rows = get_all_rows(_K_G)
         for i, row in enumerate(rows, start=2):
             while len(row) < 10: row.append("")
-            fecha = None
-            try: fecha = datetime.strptime(str(row[0]).strip(), "%d/%m/%Y").date()
-            except: pass
+            # Antes solo aceptaba %d/%m/%Y: un gasto con la fecha en otro
+            # formato quedaba con fecha None y se caía de los filtros sin aviso.
+            fecha = _parse_fecha(row[0])
             gastos.append({
                 "row_num":    i,
                 "fecha":      fecha,

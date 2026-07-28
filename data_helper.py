@@ -68,7 +68,7 @@ def cargar_productos(es_antigua: bool = False,
         if solo_catalogo and cotizar in ("no",): continue
 
         try: precio = _sf(row[col_p])
-        except: precio = 0.0
+        except (IndexError, ValueError, TypeError): precio = 0.0
         if solo_catalogo and precio <= 0: continue
 
         prods.append({
@@ -119,14 +119,14 @@ def _leer_tabla_precios(hoja: str) -> dict:
             if len(row) < 3: continue
             lista = str(row[0]).strip()
             prod  = str(row[1]).strip()
-            try:
-                precio = float(str(row[2]).replace(",","").strip() or 0)
-            except Exception:
-                continue
+            precio = _sf(row[2])           # _sf no lanza: la basura cae en 0
             if lista and prod and precio > 0:
                 result[(lista.lower(), prod.lower())] = precio
-    except Exception:
-        pass
+    except Exception as e:
+        # Igual que en leer_precios_capa: devolver {} en silencio hacía que un
+        # fallo de lectura pareciera "no hay precios especiales configurados".
+        st.warning(f"No se pudo leer la tabla de precios «{hoja}» ({e}). "
+                   "Se usarán los precios del catálogo general.")
     return result
 
 
@@ -252,14 +252,15 @@ def leer_precios_capa(hoja_key: str, lista: str) -> list[dict]:
         for row in rows:
             if len(row) < 3: continue
             if str(row[0]).strip().lower() != lista_l: continue
-            try:
-                precio = float(str(row[2]).replace(",","").strip() or 0)
-            except Exception:
-                continue
+            precio = _sf(row[2])          # _sf no lanza: la basura cae en 0
             if row[1].strip() and precio > 0:
                 result.append({"producto": row[1].strip(), "precio": precio})
-    except Exception:
-        pass
+    except Exception as e:
+        # Antes era `pass`. Un fallo de lectura devolvía [], indistinguible de
+        # "esta capa no tiene precios cargados" — que es justo lo que vuelve
+        # imposible saber por qué un listado aparece vacío en el cotizador.
+        st.warning(f"No se pudieron leer los precios de «{lista}» ({e}). "
+                   "Se usarán los precios del Listado General.")
     return result
 
 

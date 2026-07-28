@@ -122,7 +122,7 @@ def _editores_fragment(sel_prov, base_dfs, prod_map, todas_areas,
         area_costs = {}
         for i, row in base_df.iterrows():
             try:   _c = float(row["_costo"] or 0)
-            except: _c = 0.0
+            except (ValueError, TypeError, KeyError): _c = 0.0
             if _c <= 0:
                 continue
             # Demanda por área → costo atribuible (Opción A)

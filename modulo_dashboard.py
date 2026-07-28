@@ -54,8 +54,9 @@ def _periodos(hoy):
     año = hoy.year; sem = hoy.isocalendar()[1]; mes = hoy.month
     sant_n = sem - 1; sant_a = año
     if sant_n < 1: sant_n = 52; sant_a -= 1
+    # 29 de febrero no existe en un año no bisiesto → se cae al 28
     try:    mdp = date(año-1, hoy.month, hoy.day)
-    except: mdp = date(año-1, hoy.month, 28)
+    except ValueError: mdp = date(año-1, hoy.month, 28)
     return {
         "Sem Actual": lambda p: p["semana"]==sem  and p["año"]==año,
         "Sem Ant.":   lambda p: p["semana"]==sant_n and p["año"]==sant_a,
@@ -843,8 +844,9 @@ def _tab_shares(todos, clientes):
                 f = p["fecha"]
                 if periodo == "YTD":
                     # PYTD: mismo período del año anterior (no FY completo)
+                    # idem: 29/02 no existe en el año anterior no bisiesto
                     try: cutoff = hoy.replace(year=año_act - 1)
-                    except: cutoff = hoy.replace(year=año_act-1, day=28)
+                    except ValueError: cutoff = hoy.replace(year=año_act-1, day=28)
                     return f.year == año_act - 1 and f <= cutoff
                 if periodo == "Trimestre Actual":
                     return f.year == año_act - 1 and _quarter_num(f.month) == q_act

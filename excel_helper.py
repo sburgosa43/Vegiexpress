@@ -34,6 +34,26 @@ ZONAS_CONFIG = ["GT + Santiago", "Río", "Antigua + Chimal"]
 from utils import _sf, _si, _parse_fecha
 
 
+def _limpiar_cache(*funciones: str) -> None:
+    """Invalida cachés de data_helper después de escribir en la hoja.
+
+    El import es diferido a propósito: data_helper importa excel_helper a nivel
+    de módulo, así que hacerlo arriba sería un ciclo.
+
+    Un fallo acá NO se propaga —el dato ya quedó guardado y tumbar la operación
+    sería peor— pero tampoco pasa inadvertido. Antes era `except Exception:
+    pass`: si la invalidación fallaba, el cambio no aparecía hasta que vencía el
+    TTL de la caché (hasta 10 minutos) y parecía que no se había guardado.
+    """
+    try:
+        import data_helper as _dh
+        for f in funciones:
+            getattr(_dh, f).clear()
+    except Exception as e:
+        st.warning(f"El dato se guardó, pero no se pudo refrescar la caché "
+                   f"({e}). Si no ves el cambio reflejado, recargá la página.")
+
+
 # ── PEDIDOS ────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=300, max_entries=1, show_spinner=False)
 def leer_pedidos_op() -> list[dict]:
@@ -71,10 +91,10 @@ def leer_pedidos() -> list[dict]:
         total_final = round(precio_xl * cantidad, 2)
 
         try: semana_val = int(_sf(row[14])) or fecha.isocalendar()[1]
-        except: semana_val = fecha.isocalendar()[1]
+        except (IndexError, ValueError, TypeError): semana_val = fecha.isocalendar()[1]
 
         try: año_val = int(_sf(row[15])) or fecha.year
-        except: año_val = fecha.year
+        except (IndexError, ValueError, TypeError): año_val = fecha.year
 
         unico_val = str(row[27] or "").strip()
         if not unico_val and fecha and row[1]:
@@ -254,11 +274,7 @@ def _actualizar_precio_catalogo(precio_map: dict,
             update_cells(k_hoja, upd)
             total += len(upd)
     leer_productos_con_fila.clear()
-    try:
-        from data_helper import cargar_productos
-        cargar_productos.clear()
-    except Exception:
-        pass
+    _limpiar_cache("cargar_productos")
     if costo_map:
         _log_costo_actualizado({p: v for p, v in costo_map.items() if v > 0})
     return total
@@ -422,11 +438,7 @@ def agregar_cliente(data: dict) -> str:
         float(data.get("descuento_pct", 0) or 0),  # P
     ]
     append_rows(_K_CLI, [row])
-    try:
-        from data_helper import cargar_clientes
-        cargar_clientes.clear()
-    except Exception:
-        pass
+    _limpiar_cache("cargar_clientes")
     return codigo
 
 
@@ -458,23 +470,14 @@ def editar_cliente(row_num: int, data: dict) -> None:
     if upd:
         update_cells(_K_CLI, upd)
     # Invalidación correcta: clientes (no productos)
-    try:
-        from data_helper import cargar_clientes
-        cargar_clientes.clear()
-    except Exception:
-        pass
+    _limpiar_cache("cargar_clientes")
 
 
 def eliminar_cliente(row_num: int) -> None:
     delete_rows(_K_CLI, [row_num])
     # Limpieza dirigida: solo caches de productos (no todo el cache global)
     leer_productos_con_fila.clear()
-    try:
-        from data_helper import cargar_productos, get_proveedores
-        cargar_productos.clear()
-        get_proveedores.clear()
-    except Exception:
-        pass
+    _limpiar_cache("cargar_productos", "get_proveedores")
 
 
 # ── PRODUCTOS ──────────────────────────────────────────────────────────────────
@@ -537,12 +540,7 @@ def agregar_producto(data: dict, es_antigua: bool = False) -> None:
     append_rows(k, [row])
     # Limpieza dirigida: solo caches de productos (no todo el cache global)
     leer_productos_con_fila.clear()
-    try:
-        from data_helper import cargar_productos, get_proveedores
-        cargar_productos.clear()
-        get_proveedores.clear()
-    except Exception:
-        pass
+    _limpiar_cache("cargar_productos", "get_proveedores")
 
 
 def editar_producto(row_num: int, data: dict, es_antigua: bool = False) -> None:
@@ -559,12 +557,7 @@ def editar_producto(row_num: int, data: dict, es_antigua: bool = False) -> None:
         _log_costo_actualizado({data["nombre"]: _sf(data["costo"])})
     # Limpieza dirigida: solo caches de productos (no todo el cache global)
     leer_productos_con_fila.clear()
-    try:
-        from data_helper import cargar_productos, get_proveedores
-        cargar_productos.clear()
-        get_proveedores.clear()
-    except Exception:
-        pass
+    _limpiar_cache("cargar_productos", "get_proveedores")
 
 
 def editar_productos_batch(ediciones: list, es_antigua: bool = False) -> int:
@@ -600,16 +593,24 @@ def editar_productos_batch(ediciones: list, es_antigua: bool = False) -> int:
     leer_productos_con_fila.clear()
     try:
         from data_helper import refrescar_datos
-        refrescar_datos(pedidos=False, productos=True, clientes=False, precios=True)
-    except Exception:
-        pass
+        _errs = refrescar_datos(pedidos=False, productos=True,
+                                clientes=False, precios=True)
+        if _errs:
+            st.warning("Los precios se guardaron, pero no se pudo refrescar "
+                       f"parte de la caché: {'; '.join(_errs)}. Si no ves los "
+                       "cambios, recargá la página.")
+    except Exception as e:
+        st.warning(f"Los precios se guardaron, pero no se pudo refrescar la "
+                   f"caché ({e}). Si no ves los cambios, recargá la página.")
     # Marca de última edición de productos: los módulos que cachean el catálogo
     # en session_state (ej. Proveedores) la comparan para saber si su copia
     # quedó vieja y deben reconstruirla.
     try:
-        import time as _t, streamlit as _st
-        _st.session_state["_productos_edit_ts"] = _t.time()
+        import time as _t
+        st.session_state["_productos_edit_ts"] = _t.time()
     except Exception:
+        # Solo falla fuera de un contexto de Streamlit (script suelto, tests).
+        # Es una pista de UI: perderla no afecta el dato ya guardado.
         pass
     return len(ediciones)
 
@@ -619,12 +620,7 @@ def eliminar_producto(row_num: int, es_antigua: bool = False) -> None:
     delete_rows(k, [row_num])
     # Limpieza dirigida: solo caches de productos (no todo el cache global)
     leer_productos_con_fila.clear()
-    try:
-        from data_helper import cargar_productos, get_proveedores
-        cargar_productos.clear()
-        get_proveedores.clear()
-    except Exception:
-        pass
+    _limpiar_cache("cargar_productos", "get_proveedores")
 
 
 def guardar_para_cotizar_batch(cambios: dict, es_antigua: bool) -> None:
@@ -637,11 +633,7 @@ def guardar_para_cotizar_batch(cambios: dict, es_antigua: bool) -> None:
     if upd:
         update_cells(k, upd)
     leer_productos_con_fila.clear()
-    try:
-        from data_helper import cargar_productos
-        cargar_productos.clear()
-    except Exception:
-        pass
+    _limpiar_cache("cargar_productos")
 
 
 # ── METAS (Config sheet) ───────────────────────────────────────────────────────

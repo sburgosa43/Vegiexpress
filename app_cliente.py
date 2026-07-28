@@ -49,7 +49,7 @@ def _cargar_catalogo(es_antigua: bool):
         para_cot = str(row[col_para_cot] or "").strip().lower()
         if para_cot not in ("si", "sí", "yes", "1", "true"): continue
         try: precio = float(row[col_precio] or 0)
-        except: precio = 0.0
+        except (ValueError, TypeError): precio = 0.0
         if precio <= 0: continue
         prods.append({
             "nombre":   nombre,

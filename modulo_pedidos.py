@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from data_helper   import cargar_clientes, cargar_productos, cli_precio
 from excel_helper  import leer_productos_con_fila
 from order_helper  import guardar_pedidos_batch
+from utils         import _sf, _parse_fecha
 try:
     import openpyxl  # para leer archivos subidos
 except ImportError:
@@ -512,16 +513,12 @@ def _importar_pedidos():
             return lista[idx]
         return None
 
-    def _sf_imp(v):
-        try: return float(str(v).replace(",",".").strip() or 0)
-        except: return 0.0
-
-    def _parse_fecha_imp(v):
-        v = str(v).strip()
-        for fmt in ("%d/%m/%Y","%d-%m-%Y","%Y-%m-%d","%m/%d/%Y"):
-            try: return datetime.strptime(v, fmt).date()
-            except: pass
-        return None
+    # Antes había copias locales. _sf_imp trataba la coma como separador
+    # DECIMAL (replace(",", ".")), así que al importar un archivo "1,500"
+    # entraba como 1.5 en vez de 1500 — al revés de la convención de la hoja.
+    # _parse_fecha_imp solo duplicaba el parseo de fechas.
+    _sf_imp = _sf
+    _parse_fecha_imp = _parse_fecha
 
     # Construir tabla de trabajo con validación
     filas = []

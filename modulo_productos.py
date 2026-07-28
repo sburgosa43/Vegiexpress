@@ -29,9 +29,20 @@ TODAS_CAPAS   = (["Zona " + z for z in ZONAS_LISTAS] +
                  ["Cliente (individual)"])
 
 def _proveedores():
-    try:    return get_proveedores()
-    except: return ["CENMA","Patojas","El Huerto","Productor Directo",
-                    "Importado","Otro","Sin Proveedor"]
+    """Proveedores del catálogo, con lista de respaldo si la hoja no responde.
+
+    El respaldo evita que el formulario quede inutilizable, pero se avisa: si
+    falla en silencio, se asigna un proveedor de una lista fija y desactualizada
+    sin que nadie se entere.
+    """
+    try:
+        return get_proveedores()
+    except Exception as e:
+        st.warning(f"No se pudo leer la lista de proveedores ({e}). "
+                   "Se muestra una lista de respaldo, que puede estar "
+                   "desactualizada.")
+        return ["CENMA", "Patojas", "El Huerto", "Productor Directo",
+                "Importado", "Otro", "Sin Proveedor"]
 
 # ── Helpers de UI ─────────────────────────────────────────────────────────────
 from utils import _conf, _show_conf
