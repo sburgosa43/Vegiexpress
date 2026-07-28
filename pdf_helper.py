@@ -1157,6 +1157,148 @@ def generar_lista_compras_proveedor(prov: str, items: list,
     return buf.getvalue()
 
 
+def generar_reporte_compras(filas: list, agrupar_por: str,
+                            desde: "date", hasta: "date",
+                            filtros_txt: str = "",
+                            total_valor: float = 0.0,
+                            total_cant: float = 0.0,
+                            total_lineas: int = 0) -> bytes:
+    """
+    PDF A4 portrait B&W del reporte de valor comprado a costo.
+
+    filas: [{<agrupar_por>: str, "Valor a costo (Q)": float,
+             "Cantidad": float, "Líneas": int}, ...] — ya agregadas y ordenadas
+    por modulo_proveedores._agregar_compras. Acá NO se recalcula nada: solo se
+    maqueta, para que el PDF no pueda discrepar de lo que muestra la pantalla.
+
+    Paginación manual con encabezado y footer en cada página, igual que
+    generar_lista_compras_proveedor.
+    """
+    from reportlab.lib import colors as rc
+    from reportlab.platypus import PageBreak
+    from datetime import date as _date
+
+    buf = BytesIO()
+    ML = MR = 14*mm
+    MT = MB = 12*mm
+    PW, PH = A4
+    CW = PW - ML - MR
+
+    doc = SimpleDocTemplate(buf, pagesize=A4,
+                            leftMargin=ML, rightMargin=MR,
+                            topMargin=MT, bottomMargin=MB,
+                            title=f"Compras por {agrupar_por} · "
+                                  f"{desde:%d/%m/%Y}-{hasta:%d/%m/%Y}")
+    story = []
+    NEGRO = rc.black
+    HOY = _date.today().strftime("%d/%m/%Y")
+    ROWS_PER_PAGE = 40
+
+    def ts(name, **kw):
+        d = dict(fontSize=8, fontName="Helvetica", textColor=NEGRO, leading=10)
+        d.update(kw)
+        return ParagraphStyle(name, **d)
+
+    s_title = ts("rtit", fontSize=12, fontName="Helvetica-Bold", leading=14)
+    s_sub   = ts("rsub", fontSize=7.5, alignment=TA_RIGHT)
+    s_meta  = ts("rmeta", fontSize=7.5)
+    s_th    = ts("rth", fontSize=7.5, fontName="Helvetica-Bold",
+                 alignment=TA_CENTER)
+    s_th_l  = ts("rthl", fontSize=7.5, fontName="Helvetica-Bold")
+    s_td    = ts("rtd", fontSize=8)
+    s_td_r  = ts("rtdr", fontSize=8, alignment=TA_RIGHT)
+    s_tot_l = ts("rtotl", fontSize=8.5, fontName="Helvetica-Bold")
+    s_tot_r = ts("rtotr", fontSize=8.5, fontName="Helvetica-Bold",
+                 alignment=TA_RIGHT)
+    s_ft    = ParagraphStyle("rft", fontSize=6.5, fontName="Helvetica-Oblique",
+                             textColor=NEGRO, alignment=TA_CENTER, leading=8)
+
+    col_w = [CW * 0.46, CW * 0.20, CW * 0.18, CW * 0.16]
+
+    def header_row():
+        return [_p(agrupar_por,          s_th_l),
+                _p("Valor a costo (Q)",  s_th),
+                _p("Cantidad",           s_th),
+                _p("Líneas",             s_th)]
+
+    def data_row(f):
+        return [_p(f.get(agrupar_por, ""),                      s_td),
+                _p(f"{float(f.get('Valor a costo (Q)', 0)):,.2f}", s_td_r),
+                _p(f"{float(f.get('Cantidad', 0)):,.2f}",          s_td_r),
+                _p(f"{int(f.get('Líneas', 0)):,}",                 s_td_r)]
+
+    def total_row():
+        return [_p("TOTAL GENERAL",            s_tot_l),
+                _p(f"{total_valor:,.2f}",      s_tot_r),
+                _p(f"{total_cant:,.2f}",       s_tot_r),
+                _p(f"{total_lineas:,}",        s_tot_r)]
+
+    def table_style(con_total: bool):
+        est = [
+            ("FONTSIZE",      (0, 0), (-1, -1), 8),
+            ("LINEBELOW",     (0, 0), (-1, 0),  0.8, NEGRO),
+            ("BOX",           (0, 0), (-1, -1), 0.5, NEGRO),
+            ("INNERGRID",     (0, 0), (-1, -1), 0.25, NEGRO),
+            ("TOPPADDING",    (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 3),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 3),
+            ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ]
+        if con_total:
+            est.append(("LINEABOVE", (0, -1), (-1, -1), 0.8, NEGRO))
+        return TableStyle(est)
+
+    def page_header(pag, total_pag):
+        hdr = Table([[
+            _p("Valor comprado a costo", s_title),
+            _p(f"Generado {HOY}<br/>Página {pag} de {total_pag}", s_sub),
+        ]], colWidths=[CW * 0.62, CW * 0.38])
+        hdr.setStyle(TableStyle([
+            ("VALIGN",      (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        story.append(hdr)
+        story.append(HRFlowable(width="100%", thickness=0.8, color=NEGRO,
+                                spaceBefore=2, spaceAfter=3))
+        meta = (f"<b>Período:</b> {desde:%d/%m/%Y} a {hasta:%d/%m/%Y} "
+                f"&nbsp;·&nbsp; <b>Agrupado por:</b> {agrupar_por}")
+        if filtros_txt:
+            meta += f"<br/><b>Filtros:</b> {filtros_txt}"
+        story.append(_p(meta, s_meta))
+        story.append(Spacer(1, 3*mm))
+
+    def page_footer():
+        story.append(_p("Σ(Costo × Cantidad) sobre líneas de pedido reales · "
+                        "VeggiExpress", s_ft))
+
+    trozos = [filas[i:i + ROWS_PER_PAGE]
+              for i in range(0, len(filas), ROWS_PER_PAGE)] or [[]]
+    total_pag = len(trozos)
+
+    for i, trozo in enumerate(trozos):
+        if i:
+            story.append(PageBreak())
+        page_header(i + 1, total_pag)
+
+        rows = [header_row()] + [data_row(f) for f in trozo]
+        ultima = (i == total_pag - 1)
+        if ultima:
+            rows.append(total_row())
+        tbl = Table(rows, colWidths=col_w, splitByRow=False)
+        tbl.setStyle(table_style(ultima))
+        story.append(tbl)
+
+        story.append(Spacer(1, 3*mm))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=NEGRO,
+                                spaceAfter=1))
+        page_footer()
+
+    doc.build(story)
+    return buf.getvalue()
+
+
 def generar_listado_checklist(clientes_grupos: list,
                                area_label: str,
                                semana: int, año: int) -> bytes:

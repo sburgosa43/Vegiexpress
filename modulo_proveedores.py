@@ -673,14 +673,40 @@ def _tab_reportes():
         st.caption("⚠️ 'Sin área' son clientes cuyo codigo_lugar no está en "
                    "ZONAS_MAP — revisalos en el catálogo de Clientes.")
 
+    # Texto de los filtros aplicados: va al PDF para que un reporte impreso
+    # nunca sea ambiguo sobre qué recorte representa.
+    _partes = []
+    for _lbl, _vals in (("Área", sel_area), ("Grupo", sel_grupo),
+                        ("Proveedor", sel_prov), ("Cliente", sel_cli),
+                        ("Producto", sel_prod)):
+        if _vals:
+            _partes.append(f"{_lbl}: {', '.join(_vals)}")
+    filtros_txt = " · ".join(_partes) or "sin filtros (todo el período)"
+
+    b1, b2 = st.columns(2)
     csv_df = pd.concat([df, pd.DataFrame([{
         agrupar: "TOTAL", "Valor a costo (Q)": round(tot_v, 2),
         "Cantidad": round(tot_c, 2), "Líneas": tot_n}])], ignore_index=True)
-    st.download_button(
+    b1.download_button(
         "📥 Descargar CSV",
         data=csv_df.to_csv(index=False).encode("utf-8-sig"),
         file_name=f"compras_{agrupar.lower()}_{desde:%Y%m%d}_{hasta:%Y%m%d}.csv",
-        mime="text/csv", key="rep_csv")
+        mime="text/csv", key="rep_csv", use_container_width=True)
+
+    with b2:
+        if st.button("🖨 Preparar impresión", key="rep_pdf",
+                     use_container_width=True):
+            import streamlit.components.v1 as components
+            from pdf_helper import (generar_reporte_compras,
+                                    boton_imprimir_html as _btn_imp_rep)
+            with st.spinner("Generando PDF..."):
+                pdf = generar_reporte_compras(
+                    df.to_dict("records"), agrupar, desde, hasta,
+                    filtros_txt=filtros_txt, total_valor=tot_v,
+                    total_cant=tot_c, total_lineas=tot_n)
+            components.html(_btn_imp_rep(pdf, "repcompras",
+                                         label="🖨 Abrir e imprimir"),
+                            height=60)
 
 
 def mostrar():
