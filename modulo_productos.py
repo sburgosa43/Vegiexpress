@@ -176,66 +176,76 @@ def _tab_nuevo():
 
 
 # ── TAB 2: Actualizar Producto ────────────────────────────────────────────────
-def _propagar_precios_pedidos(ediciones: list):
-    """Fase 3 — Propaga los precios nuevos a los pedidos de la SEMANA EN CURSO,
-    de hoy en adelante. Los pedidos anteriores conservan su precio histórico.
+def _semana_en_curso(hoy=None) -> tuple:
+    """(lunes, domingo) de la semana en curso — la semana ISO, como rango.
 
-    Regla de negocio: al cambiar el precio de un producto HOY, los pedidos
-    creados/a entregar de hoy en adelante (dentro de la semana en curso) toman
-    el precio nuevo. Los pedidos con fecha anterior a hoy NO se tocan.
+    Se expresa en fechas y no como (nro_semana, año) porque ese par se rompe en
+    el cambio de año: la columna Semana guardada combina semana ISO con año
+    CALENDARIO, así que el 31/12 y el 01/01 de la MISMA semana ISO quedan con
+    años distintos y comparar por número deja media semana afuera.
     """
-    from datetime import date
-    from excel_helper import leer_pedidos, _sf
-    from gsheets import update_cells
+    from datetime import date, timedelta
+    hoy = hoy or date.today()
+    lunes = hoy - timedelta(days=hoy.weekday())
+    return lunes, lunes + timedelta(days=6)
+
+
+def _propagar_precios_pedidos(ediciones: list) -> int:
+    """Propaga el COSTO nuevo a los pedidos de la SEMANA EN CURSO.
+
+    Regla: al cambiar el costo de un producto, TODAS las líneas de pedido de
+    ese producto con fecha dentro de la semana en curso (lunes a domingo)
+    quedan con el costo nuevo — incluidas las de días anteriores de esa misma
+    semana. Antes se excluían las de fecha < hoy, así que un pedido del lunes
+    nunca veía un cambio de costo hecho el miércoles.
+
+    El PRECIO DE VENTA no se toca: cada línea puede tener un precio negociado
+    por cliente/grupo/zona (ver data_helper.cli_precio), y pisarlo con el
+    precio general del catálogo destruiría esa negociación. Los derivados se
+    recalculan con el precio que YA tenía cada línea.
+
+    Devuelve la cantidad de líneas de pedido actualizadas.
+    """
+    from excel_helper import leer_pedidos
+    from gsheets      import update_cells
     from order_helper import _calcular
 
-    hoy = date.today()
-    sem_actual = hoy.isocalendar()[1]
-    año_actual = hoy.year
-
-    # Mapa producto → precio nuevo
-    nuevos_precios = {}
+    # producto → costo nuevo del catálogo
+    nuevos_costos = {}
     for ed in ediciones:
-        nombre = ed["data"].get("nombre", "")
-        nuevos_precios[nombre.strip().lower()] = {
-            "precio": float(ed["data"].get("precio") or 0),
-            "costo":  float(ed["data"].get("costo") or 0),
-        }
-    if not nuevos_precios:
+        nombre = str(ed["data"].get("nombre", "")).strip()
+        if nombre:
+            nuevos_costos[nombre.lower()] = float(ed["data"].get("costo") or 0)
+    if not nuevos_costos:
         return 0
 
-    pedidos = leer_pedidos()
-    updates = []
+    lunes, domingo = _semana_en_curso()
+    updates   = []
     afectados = 0
-    for p in pedidos:
-        if p.get("status") == "Cancelado":
-            continue
-        prod_l = p.get("producto", "").strip().lower()
-        if prod_l not in nuevos_precios:
+
+    for p in leer_pedidos():
+        prod_l = str(p.get("producto", "")).strip().lower()
+        if prod_l not in nuevos_costos:
             continue
         fecha = p.get("fecha")
-        if not fecha:
-            continue
-        # Solo pedidos de HOY en adelante Y dentro de la semana en curso
-        if fecha < hoy:
-            continue
-        if fecha.isocalendar()[1] != sem_actual or fecha.year != año_actual:
+        if not fecha or not (lunes <= fecha <= domingo):
             continue
 
-        np = nuevos_precios[prod_l]
-        precio_nuevo = np["precio"]
-        costo_nuevo  = np["costo"]
+        costo_nuevo  = nuevos_costos[prod_l]
+        precio_linea = float(p.get("precio") or 0)   # el de la LÍNEA, no el del catálogo
         cant = float(p.get("cantidad") or 0)
         rn   = p["row_num"]
-        fin  = _calcular(precio_nuevo, costo_nuevo, cant)
-        # Columnas: E=precio, F=costo, G=total, H=total_costo, I=margen_q, J=margen_pct
+        fin  = _calcular(precio_linea, costo_nuevo, cant)
+
+        # E (precio) NO se escribe a propósito — ver docstring.
+        # F=costo, G=total, H=totalCosto, I=margenQ, J=margen%, K=IVA
         updates += [
-            {"range": f"E{rn}", "values": [[precio_nuevo]]},
             {"range": f"F{rn}", "values": [[costo_nuevo]]},
             {"range": f"G{rn}", "values": [[fin["total"]]]},
             {"range": f"H{rn}", "values": [[fin["total_costo"]]]},
             {"range": f"I{rn}", "values": [[fin["margen_q"]]]},
             {"range": f"J{rn}", "values": [[fin["margen_pct"]]]},
+            {"range": f"K{rn}", "values": [[fin["iva"]]]},
         ]
         afectados += 1
 
@@ -243,9 +253,15 @@ def _propagar_precios_pedidos(ediciones: list):
         update_cells("pedidos", updates)
         try:
             from data_helper import refrescar_datos
-            refrescar_datos(pedidos=True, productos=False, clientes=False, precios=True)
-        except Exception:
-            pass
+            _errs = refrescar_datos(pedidos=True, productos=False,
+                                    clientes=False, precios=True)
+            if _errs:
+                st.warning("Los pedidos se actualizaron, pero no se pudo "
+                           f"refrescar parte de la caché: {'; '.join(_errs)}")
+        except Exception as e:
+            st.warning(f"Los pedidos se actualizaron, pero no se pudo refrescar "
+                       f"la caché ({e}). Recargá la página para verlos.")
+
     return afectados
 
 
@@ -366,12 +382,20 @@ def _tab_actualizar(es_antigua: bool = False):
                     # Cascada de costo a productos hijos
                     for nombre, c_new in cascadas:
                         _cascade_parent(nombre, c_new, todos)
-                    # Propagar precios a pedidos de la semana en curso (Fase 3)
-                    _propagar_precios_pedidos(ediciones)
+                    # Propagar el costo a los pedidos de la semana en curso
+                    n_lineas = _propagar_precios_pedidos(ediciones)
                 except Exception as e:
                     st.error(f"❌ Error al guardar: {type(e).__name__}: {e}")
                     st.stop()
-            _conf("prod_upd", f"✅ {n} producto(s) actualizados y reflejados.")
+            # El conteo real, no un "y reflejados" que aparecía igual con 0.
+            if n_lineas:
+                _conf("prod_upd",
+                      f"✅ {n} producto(s) actualizados · {n_lineas} línea(s) de "
+                      f"pedido de esta semana quedaron con el costo nuevo.")
+            else:
+                _conf("prod_upd",
+                      f"✅ {n} producto(s) actualizados · no había líneas de "
+                      f"pedido de esta semana para actualizar.")
             st.rerun()
 
     # ── Edición completa (expander) ───────────────────────────────────────────
