@@ -20,6 +20,7 @@ PRUEBAS = [
     "test_gsheets_cache.py",
     "test_propagacion_costo.py",
     "test_rutas_costo.py",
+    "test_reporte_compras.py",
 ]
 
 

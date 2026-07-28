@@ -7,7 +7,7 @@ import streamlit as st
 from config import excluido_proveedores as _excluido_cfg
 _excluido = _excluido_cfg  # alias local
 import pandas as pd
-from datetime import date
+from datetime import date, timedelta
 from excel_helper import leer_pedidos_op as leer_pedidos
 from data_helper  import cargar_productos, cargar_clientes
 from pdf_helper   import generar_lista_compras_proveedor
@@ -471,6 +471,218 @@ def _recolectar_compras(sel_prov, base_dfs, prod_map, todas_areas):
     return compras
 
 
+# ── REPORTE DE COMPRAS (solo lectura) ─────────────────────────────────────────
+# Nada de acá escribe: agrega Σ(costo × cantidad) sobre las líneas de pedido
+# existentes, usando el costo YA guardado en cada línea. No depende de la hoja
+# ComprasHistorico.
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _mapa_clientes_rep() -> dict:
+    """nombre_lower → {'area': str, 'grupo': str}.
+
+    El área sale de codigo_lugar contra ZONAS_MAP de config: es el único mapa
+    que cubre L05/L06, y como cargar_clientes pone "L05" por defecto, usar los
+    mapas locales del módulo (AREAS_PROV) mandaría la mayoría de los clientes
+    a "Otro". El grupo es cliente["grupo"] tal cual — el mismo campo que usa
+    la cascada de precios contra la hoja PreciosGrupo.
+    """
+    from config import ZONAS_MAP
+    cod_a_area = {cod: nom for nom, cods in ZONAS_MAP.items() for cod in cods}
+    out = {}
+    for c in cargar_clientes():
+        nom = str(c.get("nombre", "") or "").strip()
+        if not nom:
+            continue
+        cod = str(c.get("codigo_lugar", "") or "").strip()
+        out[nom.lower()] = {
+            "area":  cod_a_area.get(cod, "Sin área"),
+            "grupo": str(c.get("grupo", "") or "").strip() or "Sin grupo",
+        }
+    return out
+
+
+def _rango_atajo(atajo: str, hoy: date) -> tuple:
+    """(desde, hasta) de cada atajo. 'Esta semana' reutiliza la definición
+    compartida de order_helper, para no tener dos criterios de semana."""
+    if atajo == "Esta semana":
+        from order_helper import semana_en_curso
+        return semana_en_curso(hoy)
+    if atajo == "Este mes":
+        ini = hoy.replace(day=1)
+        return ini, (ini + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    if atajo == "Mes pasado":
+        fin_ant = hoy.replace(day=1) - timedelta(days=1)
+        return fin_ant.replace(day=1), fin_ant
+    return hoy - timedelta(days=30), hoy       # Personalizado: default 30 días
+
+
+_REP_CLAVE = {
+    "Área":      lambda l: l["area"],
+    "Cliente":   lambda l: l["cliente"],
+    "Grupo":     lambda l: l["grupo"],
+    "Proveedor": lambda l: l["proveedor"],
+    "Producto":  lambda l: l["producto"],
+    "Semana":    lambda l: f"{l['año']}-S{int(l['semana'] or 0):02d}",
+    "Mes":       lambda l: l["fecha"].strftime("%Y-%m"),
+}
+
+
+def _lineas_reporte(desde: date, hasta: date):
+    """Líneas del rango, enriquecidas con área y grupo.
+
+    Generador a propósito: recorre el resultado ya cacheado de leer_pedidos_op
+    sin materializar una copia filtrada del histórico.
+    """
+    mapa = _mapa_clientes_rep()
+    for p in leer_pedidos():            # leer_pedidos_op — 12 meses, cacheado
+        f = p.get("fecha")
+        if not f or not (desde <= f <= hasta):
+            continue
+        if p.get("status") == "Cancelado":
+            continue
+        cli = str(p.get("cliente", "") or "").strip()
+        if not cli or _excluido(cli):
+            continue
+        info = mapa.get(cli.lower(), {"area": "Sin área", "grupo": "Sin grupo"})
+        yield {
+            "area":      info["area"],
+            "grupo":     info["grupo"],
+            "cliente":   cli,
+            "proveedor": str(p.get("proveedor", "") or "").strip() or "Sin proveedor",
+            "producto":  str(p.get("producto", "") or "").strip(),
+            "semana":    p.get("semana"),
+            "año":       p.get("año"),
+            "fecha":     f,
+            "cantidad":  float(p.get("cantidad") or 0),
+            "costo":     float(p.get("costo") or 0),
+        }
+
+
+@st.cache_data(ttl=300, max_entries=4, show_spinner=False)
+def _opciones_reporte(desde: date, hasta: date) -> dict:
+    """Valores presentes en el rango, para poblar los multiselect."""
+    ac, gr, cl, pv, pr = set(), set(), set(), set(), set()
+    for l in _lineas_reporte(desde, hasta):
+        ac.add(l["area"]); gr.add(l["grupo"]); cl.add(l["cliente"])
+        pv.add(l["proveedor"]); pr.add(l["producto"])
+    return {"areas": sorted(ac), "grupos": sorted(gr), "clientes": sorted(cl),
+            "proveedores": sorted(pv), "productos": sorted(pr)}
+
+
+@st.cache_data(ttl=300, max_entries=8, show_spinner=False)
+def _agregar_compras(desde: date, hasta: date, areas: tuple, grupos: tuple,
+                     clientes: tuple, provs: tuple, prods: tuple,
+                     agrupar_por: str) -> pd.DataFrame:
+    """Σ(costo × cantidad) agrupado por la dimensión elegida.
+
+    Recibe solo primitivas y devuelve el DataFrame ya agregado — nunca la
+    lista cruda, para que el caché no retenga el histórico de pedidos.
+    """
+    clave = _REP_CLAVE[agrupar_por]
+    acc = {}
+    for l in _lineas_reporte(desde, hasta):
+        if areas    and l["area"]      not in areas:    continue
+        if grupos   and l["grupo"]     not in grupos:   continue
+        if clientes and l["cliente"]   not in clientes: continue
+        if provs    and l["proveedor"] not in provs:    continue
+        if prods    and l["producto"]  not in prods:    continue
+        a = acc.setdefault(clave(l), {"v": 0.0, "c": 0.0, "n": 0})
+        a["v"] += l["costo"] * l["cantidad"]
+        a["c"] += l["cantidad"]
+        a["n"] += 1
+    df = pd.DataFrame([{agrupar_por: k,
+                        "Valor a costo (Q)": round(v["v"], 2),
+                        "Cantidad": round(v["c"], 2),
+                        "Líneas": v["n"]} for k, v in acc.items()])
+    if not df.empty:
+        df = df.sort_values("Valor a costo (Q)", ascending=False,
+                            ignore_index=True)
+    return df
+
+
+@_fragment
+def _tab_reportes():
+    """Valor comprado a costo — SOLO LECTURA sobre los pedidos existentes."""
+    hoy = date.today()
+
+    st.markdown("#### 📊 Valor comprado a costo")
+    st.caption("Σ(Costo × Cantidad) sobre las líneas de pedido reales. Usa el "
+               "costo guardado en cada línea; no recalcula nada ni depende de "
+               "ComprasHistorico.")
+
+    a1, a2, a3 = st.columns([2, 1.2, 1.2])
+    atajo = a1.radio("Rango", ["Esta semana", "Este mes", "Mes pasado",
+                               "Personalizado"], horizontal=True,
+                     key="rep_atajo")
+    d_def, h_def = _rango_atajo(atajo, hoy)
+    if atajo == "Personalizado":
+        desde = a2.date_input("Desde", value=d_def, key="rep_desde")
+        hasta = a3.date_input("Hasta", value=h_def, key="rep_hasta")
+    else:
+        desde, hasta = d_def, h_def
+        a2.markdown(f"<small>Desde<br><b>{desde:%d/%m/%Y}</b></small>",
+                    unsafe_allow_html=True)
+        a3.markdown(f"<small>Hasta<br><b>{hasta:%d/%m/%Y}</b></small>",
+                    unsafe_allow_html=True)
+
+    if desde > hasta:
+        st.error("El 'Desde' es posterior al 'Hasta'.")
+        return
+
+    # leer_pedidos_op solo trae 12 meses. Se recorta y se avisa en vez de pasar
+    # a leer_pedidos, que carga el histórico completo sin tope de entradas —
+    # la app ya tuvo caídas por memoria en Streamlit Cloud.
+    limite = hoy - timedelta(days=365)
+    if desde < limite:
+        st.warning(f"El reporte cubre los últimos 12 meses. El rango se "
+                   f"recorta desde el {limite:%d/%m/%Y}.")
+        desde = limite
+
+    op = _opciones_reporte(desde, hasta)
+    f1, f2, f3 = st.columns(3)
+    sel_area  = f1.multiselect("Área",      op["areas"],       key="rep_area")
+    sel_grupo = f2.multiselect("Grupo",     op["grupos"],      key="rep_grupo")
+    sel_prov  = f3.multiselect("Proveedor", op["proveedores"], key="rep_prov")
+    f4, f5, f6 = st.columns(3)
+    sel_cli  = f4.multiselect("Cliente",  op["clientes"],  key="rep_cli")
+    sel_prod = f5.multiselect("Producto", op["productos"], key="rep_prod")
+    agrupar  = f6.selectbox("Agrupar por", list(_REP_CLAVE), key="rep_agrup")
+
+    df = _agregar_compras(desde, hasta, tuple(sel_area), tuple(sel_grupo),
+                          tuple(sel_cli), tuple(sel_prov), tuple(sel_prod),
+                          agrupar)
+
+    if df.empty:
+        st.info("Sin líneas de pedido para esos filtros.")
+        return
+
+    tot_v = float(df["Valor a costo (Q)"].sum())
+    tot_c = float(df["Cantidad"].sum())
+    tot_n = int(df["Líneas"].sum())
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Valor comprado a costo", f"Q{tot_v:,.2f}")
+    m2.metric("Cantidad total",         f"{tot_c:,.2f}")
+    m3.metric("Líneas de pedido",       f"{tot_n:,}")
+
+    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.caption(f"**Total general: Q{tot_v:,.2f}** · {len(df)} "
+               f"{agrupar.lower()}(s) · {desde:%d/%m/%Y} a {hasta:%d/%m/%Y}")
+
+    if agrupar == "Área" and (df["Área"] == "Sin área").any():
+        st.caption("⚠️ 'Sin área' son clientes cuyo codigo_lugar no está en "
+                   "ZONAS_MAP — revisalos en el catálogo de Clientes.")
+
+    csv_df = pd.concat([df, pd.DataFrame([{
+        agrupar: "TOTAL", "Valor a costo (Q)": round(tot_v, 2),
+        "Cantidad": round(tot_c, 2), "Líneas": tot_n}])], ignore_index=True)
+    st.download_button(
+        "📥 Descargar CSV",
+        data=csv_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"compras_{agrupar.lower()}_{desde:%Y%m%d}_{hasta:%Y%m%d}.csv",
+        mime="text/csv", key="rep_csv")
+
+
 def mostrar():
     st.markdown("## 🛒 Compras a Proveedores")
     if st.button("🏠 Inicio", key="btn_home_prov", type="secondary"):
@@ -741,12 +953,15 @@ def mostrar():
             f"partidos en más de una fila en A Pedir: {_det}. "
             f"Corregilo en 🔧 Mantenimiento → Unidades inconsistentes.")
 
-    tab_apedir, tab_resumen, tab_area, tab_costo, tab_patojas = st.tabs(
+    tab_apedir, tab_resumen, tab_area, tab_costo, tab_patojas, tab_rep = st.tabs(
         ["📦 A Pedir", "📊 Resumen por Tipo", "📍 Por Área",
-         "💰 Costo por Área", "👷 Patojas"])
+         "💰 Costo por Área", "👷 Patojas", "📊 Reportes"])
 
     with tab_area:
         _tab_por_area(semana, año, prod_map)
+
+    with tab_rep:
+        _tab_reportes()
 
     # ─────────────────────────────────────────────────────────────────────────
     with tab_resumen:
