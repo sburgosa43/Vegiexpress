@@ -84,7 +84,7 @@ import pandas as pd                                        # noqa: E402
 from config import ZONAS_MAP, excluido_proveedores         # noqa: E402
 
 _QUIERO = {"_mapa_clientes_rep", "_rango_atajo", "_lineas_reporte",
-           "_opciones_reporte", "_agregar_compras"}
+           "_opciones_reporte", "_agregar_compras", "_agregar_detalle"}
 _src = open(os.path.join(RAIZ, "modulo_proveedores.py"), encoding="utf-8").read()
 _mod = ast.parse(_src)
 _ns = {
@@ -180,7 +180,33 @@ r.check("Wilson" not in op["clientes"], "Wilson tampoco aparece en los filtros")
 r.check(sorted(op["proveedores"]) == ["CENMA", "Patojas"],
         f"proveedores del rango: {op['proveedores']}")
 
-print("\n=== 8. Cancelados fuera ===")
+print("\n=== 8. Detalle de segundo nivel (ver también los productos) ===")
+_detalle = _ns["_agregar_detalle"]
+dd = _detalle(SEM_INI, SEM_FIN, *TODO, "Área", "Producto")
+r.check(abs(float(dd["Valor a costo (Q)"].sum()) - 117.0) < 1e-9,
+        f"el detalle suma el mismo total: Q{float(dd['Valor a costo (Q)'].sum()):.2f}")
+
+ant = dd[dd["Área"] == "🔖 Antigua & Chimal"]
+r.check(abs(float(ant["Valor a costo (Q)"].sum()) - 62.0) < 1e-9,
+        "el detalle de Antigua suma su subtotal (Q62)")
+r.check(sorted(ant["Producto"]) == ["Lechuga", "Tomate"],
+        f"Antigua se abre en {sorted(ant['Producto'])}")
+_lech = ant[ant["Producto"] == "Lechuga"]["Valor a costo (Q)"].iloc[0]
+r.check(abs(float(_lech) - 50.0) < 1e-9, f"Antigua/Lechuga = Q{float(_lech):.2f}")
+
+df_g = _agregar(SEM_INI, SEM_FIN, *TODO, "Área")
+for _g in df_g["Área"]:
+    _sub = float(dd[dd["Área"] == _g]["Valor a costo (Q)"].sum())
+    _tot = float(df_g[df_g["Área"] == _g]["Valor a costo (Q)"].iloc[0])
+    r.check(abs(_sub - _tot) < 1e-9,
+            f"'{_g}': el detalle (Q{_sub:.2f}) cuadra con su fila (Q{_tot:.2f})")
+
+r.check(abs(float(_detalle(SEM_INI, SEM_FIN, ("🏠 Hogares",), (), (), (), (),
+                           "Área", "Producto")["Valor a costo (Q)"].sum())
+            - 10.0) < 1e-9,
+        "los filtros también aplican al detalle")
+
+print("\n=== 9. Cancelados fuera ===")
 PEDIDOS_CANC = excel_helper.leer_pedidos_op()
 PEDIDOS_CANC[0]["status"] = "Cancelado"
 excel_helper.leer_pedidos_op = lambda: PEDIDOS_CANC

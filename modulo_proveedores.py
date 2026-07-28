@@ -600,6 +600,39 @@ def _agregar_compras(desde: date, hasta: date, areas: tuple, grupos: tuple,
     return df
 
 
+@st.cache_data(ttl=300, max_entries=8, show_spinner=False)
+def _agregar_detalle(desde: date, hasta: date, areas: tuple, grupos: tuple,
+                     clientes: tuple, provs: tuple, prods: tuple,
+                     agrupar_por: str, detalle_por: str) -> pd.DataFrame:
+    """Igual que _agregar_compras pero abriendo cada grupo en un segundo nivel.
+
+    Devuelve una fila por (grupo, detalle) — por ejemplo (Área, Producto) —
+    para poder ver de qué se compone cada grupo sin cambiar de agrupador.
+    """
+    clave_g = _REP_CLAVE[agrupar_por]
+    clave_d = _REP_CLAVE[detalle_por]
+    acc = {}
+    for l in _lineas_reporte(desde, hasta):
+        if areas    and l["area"]      not in areas:    continue
+        if grupos   and l["grupo"]     not in grupos:   continue
+        if clientes and l["cliente"]   not in clientes: continue
+        if provs    and l["proveedor"] not in provs:    continue
+        if prods    and l["producto"]  not in prods:    continue
+        k = (clave_g(l), clave_d(l))
+        a = acc.setdefault(k, {"v": 0.0, "c": 0.0, "n": 0})
+        a["v"] += l["costo"] * l["cantidad"]
+        a["c"] += l["cantidad"]
+        a["n"] += 1
+    df = pd.DataFrame([{agrupar_por: g, detalle_por: d,
+                        "Valor a costo (Q)": round(v["v"], 2),
+                        "Cantidad": round(v["c"], 2),
+                        "Líneas": v["n"]} for (g, d), v in acc.items()])
+    if not df.empty:
+        df = df.sort_values("Valor a costo (Q)", ascending=False,
+                            ignore_index=True)
+    return df
+
+
 @_fragment
 def _tab_reportes():
     """Valor comprado a costo — SOLO LECTURA sobre los pedidos existentes."""
@@ -648,6 +681,16 @@ def _tab_reportes():
     sel_prod = f5.multiselect("Producto", op["productos"], key="rep_prod")
     agrupar  = f6.selectbox("Agrupar por", list(_REP_CLAVE), key="rep_agrup")
 
+    # Segundo nivel: de qué se compone cada grupo. Por defecto Producto, que es
+    # la pregunta habitual ("Antigua son Q62, ¿pero de qué productos?").
+    _op_det = ["(sin detalle)"] + [d for d in _REP_CLAVE if d != agrupar]
+    detalle = st.selectbox(
+        "Ver detalle por", _op_det,
+        index=_op_det.index("Producto") if "Producto" in _op_det else 0,
+        key="rep_detalle",
+        help="Abre cada fila para ver de qué se compone, sin perder el "
+             "agrupamiento principal.")
+
     df = _agregar_compras(desde, hasta, tuple(sel_area), tuple(sel_grupo),
                           tuple(sel_cli), tuple(sel_prov), tuple(sel_prod),
                           agrupar)
@@ -673,6 +716,25 @@ def _tab_reportes():
         st.caption("⚠️ 'Sin área' son clientes cuyo codigo_lugar no está en "
                    "ZONAS_MAP — revisalos en el catálogo de Clientes.")
 
+    # ── Segundo nivel: de qué se compone cada grupo ──────────────────────────
+    df_det = None
+    if detalle != "(sin detalle)":
+        df_det = _agregar_detalle(desde, hasta, tuple(sel_area),
+                                  tuple(sel_grupo), tuple(sel_cli),
+                                  tuple(sel_prov), tuple(sel_prod),
+                                  agrupar, detalle)
+        st.markdown(f"**Detalle por {detalle.lower()}**")
+        for _g in df[agrupar]:
+            _sub = df_det[df_det[agrupar] == _g]
+            if _sub.empty:
+                continue
+            _v = float(_sub["Valor a costo (Q)"].sum())
+            with st.expander(f"{_g} — Q{_v:,.2f} · {len(_sub)} "
+                             f"{detalle.lower()}(s)"):
+                st.dataframe(_sub[[detalle, "Valor a costo (Q)",
+                                   "Cantidad", "Líneas"]],
+                             use_container_width=True, hide_index=True)
+
     # Texto de los filtros aplicados: va al PDF para que un reporte impreso
     # nunca sea ambiguo sobre qué recorte representa.
     _partes = []
@@ -683,9 +745,30 @@ def _tab_reportes():
             _partes.append(f"{_lbl}: {', '.join(_vals)}")
     filtros_txt = " · ".join(_partes) or "sin filtros (todo el período)"
 
+    # Filas para CSV y PDF. Con detalle activo se intercala cada grupo con sus
+    # componentes, indentados, para que el papel y el CSV muestren lo mismo que
+    # los desplegables de pantalla.
+    if df_det is None:
+        filas_exp = df.to_dict("records")
+        col_label = agrupar
+    else:
+        col_label = f"{agrupar} / {detalle}"
+        filas_exp = []
+        for _r in df.to_dict("records"):
+            _g = _r[agrupar]
+            filas_exp.append({col_label: _g,
+                              "Valor a costo (Q)": _r["Valor a costo (Q)"],
+                              "Cantidad": _r["Cantidad"],
+                              "Líneas": _r["Líneas"]})
+            for _d in df_det[df_det[agrupar] == _g].to_dict("records"):
+                filas_exp.append({col_label: f"    · {_d[detalle]}",
+                                  "Valor a costo (Q)": _d["Valor a costo (Q)"],
+                                  "Cantidad": _d["Cantidad"],
+                                  "Líneas": _d["Líneas"]})
+
     b1, b2 = st.columns(2)
-    csv_df = pd.concat([df, pd.DataFrame([{
-        agrupar: "TOTAL", "Valor a costo (Q)": round(tot_v, 2),
+    csv_df = pd.concat([pd.DataFrame(filas_exp), pd.DataFrame([{
+        col_label: "TOTAL", "Valor a costo (Q)": round(tot_v, 2),
         "Cantidad": round(tot_c, 2), "Líneas": tot_n}])], ignore_index=True)
     b1.download_button(
         "📥 Descargar CSV",
@@ -701,7 +784,7 @@ def _tab_reportes():
                                     boton_imprimir_html as _btn_imp_rep)
             with st.spinner("Generando PDF..."):
                 pdf = generar_reporte_compras(
-                    df.to_dict("records"), agrupar, desde, hasta,
+                    filas_exp, col_label, desde, hasta,
                     filtros_txt=filtros_txt, total_valor=tot_v,
                     total_cant=tot_c, total_lineas=tot_n)
             components.html(_btn_imp_rep(pdf, "repcompras",
