@@ -305,7 +305,9 @@ def _tab_correccion():
     st.warning(f"**{len(cambios)}** producto(s) con cambios")
 
     g1, g2 = st.columns([1, 1])
-    upd_ped = g1.checkbox("Actualizar lineas de pedidos semana actual",
+    # "seleccionada", no "actual": esta pestaña trabaja sobre la semana que se
+    # elige arriba —para eso existe— y la etiqueta anterior decia lo contrario.
+    upd_ped = g1.checkbox("Actualizar lineas de pedidos de la semana seleccionada",
                            value=True, key="mc3_upd_ped")
 
     if st.button(f"Guardar {len(cambios)} cambio(s)", type="primary",
@@ -335,9 +337,14 @@ def _tab_correccion():
                                                actualizar_catalogo=False)
                 n_ped = res.get("filas_pedidos", 0)
 
+        # El aviso se condiciona a que se HAYA pedido actualizar pedidos, no a
+        # que haya habido: si pediste propagar y no se toco ninguna linea,
+        # tenes que enterarte en vez de leer un exito a secas.
         msg = f"{n_cat} precio(s) actualizados en **{nivel}**"
-        if n_ped:
-            msg += f" + {n_ped} linea(s) de pedidos semana {semana}"
+        if upd_ped:
+            msg += (f" + {n_ped} linea(s) de pedidos de la semana {semana}"
+                    if n_ped else
+                    f" · sin lineas de pedidos en la semana {semana} para actualizar")
         st.success(msg)
 
         # Lo que realmente resetea la tabla es la generación nueva; el pop solo

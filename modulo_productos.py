@@ -371,9 +371,9 @@ def _tab_actualizar(es_antigua: bool = False):
                         _n = propagar_costo_semana(
                             {str(datos["nombre"]).strip().lower():
                              float(datos.get("costo") or 0)})
-                        if _n:
-                            _msg += (f" · {_n} línea(s) de pedido de esta semana "
-                                     f"con el costo nuevo")
+                        _msg += (f" · {_n} línea(s) de pedido de esta semana "
+                                 f"con el costo nuevo" if _n else
+                                 " · sin pedidos de esta semana para propagar")
                         _cascade_parent(datos["nombre"],
                                         float(datos["costo"]), todos)
                     _conf("prod_upd", _msg)
@@ -434,9 +434,9 @@ def _cascade_parent(nombre: str, costo_nuevo: float, todos: list):
             from order_helper import propagar_costo_semana
             n_lineas = propagar_costo_semana(costos_nuevos)
         msg = f"Costos de {len(hijos)} hijo(s) actualizados."
-        if n_lineas:
-            msg += (f" {n_lineas} línea(s) de pedido de esta semana quedaron "
-                    f"con el costo nuevo.")
+        msg += (f" {n_lineas} línea(s) de pedido de esta semana quedaron "
+                f"con el costo nuevo." if n_lineas else
+                " Sin pedidos de esta semana para propagar.")
         st.success(msg)
 
 
