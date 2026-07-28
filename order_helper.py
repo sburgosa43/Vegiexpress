@@ -2,7 +2,7 @@
 order_helper.py — Guardar y editar pedidos via Google Sheets.
 """
 import streamlit as st
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from gsheets import append_rows, update_cells, get_all_rows
 from excel_helper import leer_pedidos, leer_pedidos_op, DIAS_ES, MESES_N, _sf
 from config import margen_neto_q, margen_neto_frac, iva_incluido
@@ -39,6 +39,96 @@ def _calcular(precio: float, costo: float, cant: float) -> dict:
         "iva":         round(iva_incluido(precio) * cant, 4),
         "isr":         0,
     }
+
+
+# ── Escritura coherente de líneas de pedido ───────────────────────────────────
+# Layout de Pedidos: E=Precio F=Costo G=Total H=TotalCosto I=MargenQ J=Margen%
+# K=IVA. Estas funciones son la fuente ÚNICA de cómo queda escrita una línea
+# cuando cambia su costo o su precio. Todas las rutas que tocan pedidos pasan
+# por acá, así ninguna puede volver a dejar la fila incoherente consigo misma.
+
+def semana_en_curso(hoy: date = None) -> tuple:
+    """(lunes, domingo) de la semana en curso — la semana ISO, como rango.
+
+    Se expresa en fechas y no como (nro_semana, año) porque ese par se rompe en
+    el cambio de año: la columna Semana guardada combina semana ISO con año
+    CALENDARIO, así que el 31/12 y el 01/01 de la MISMA semana ISO quedan con
+    años distintos y comparar por número deja media semana afuera.
+    """
+    hoy = hoy or date.today()
+    lunes = hoy - timedelta(days=hoy.weekday())
+    return lunes, lunes + timedelta(days=6)
+
+
+def celdas_linea(row_num: int, cantidad: float, precio: float, costo: float,
+                 *, escribir_precio: bool = False) -> list:
+    """Updates de UNA línea de pedido, con todos los derivados coherentes.
+
+    `precio` y `costo` son los valores que van a QUEDAR en la fila; el llamador
+    ya resolvió cuál corresponde. E solo se escribe si escribir_precio=True —
+    por defecto no, para no pisar precios negociados por cliente/grupo/zona
+    (ver data_helper.cli_precio). F, G, H, I, J y K se recalculan siempre sobre
+    esos dos valores, que es lo que garantiza que la fila cierre consigo misma.
+    """
+    fin = _calcular(precio, costo, cantidad)
+    ups = []
+    if escribir_precio:
+        ups.append({"range": f"E{row_num}", "values": [[precio]]})
+    ups += [
+        {"range": f"F{row_num}", "values": [[costo]]},
+        {"range": f"G{row_num}", "values": [[fin["total"]]]},
+        {"range": f"H{row_num}", "values": [[fin["total_costo"]]]},
+        {"range": f"I{row_num}", "values": [[fin["margen_q"]]]},
+        {"range": f"J{row_num}", "values": [[fin["margen_pct"]]]},
+        {"range": f"K{row_num}", "values": [[fin["iva"]]]},
+    ]
+    return ups
+
+
+def propagar_costo_semana(nuevos_costos: dict, hoy: date = None) -> int:
+    """Aplica el costo nuevo a TODAS las líneas de la semana en curso.
+
+    nuevos_costos: {nombre_producto_en_minúsculas: costo}. Todas las líneas de
+    esos productos con fecha entre lunes y domingo de la semana en curso quedan
+    con el costo nuevo, incluidas las de días anteriores de esa misma semana.
+
+    El precio de venta NO se toca; los derivados se recalculan con el precio
+    que ya tenía cada línea.
+
+    Devuelve la cantidad de líneas actualizadas.
+    """
+    if not nuevos_costos:
+        return 0
+
+    lunes, domingo = semana_en_curso(hoy)
+    updates, afectados = [], 0
+
+    for p in leer_pedidos():
+        prod_l = str(p.get("producto", "")).strip().lower()
+        if prod_l not in nuevos_costos:
+            continue
+        fecha = p.get("fecha")
+        if not fecha or not (lunes <= fecha <= domingo):
+            continue
+        updates += celdas_linea(
+            p["row_num"], float(p.get("cantidad") or 0),
+            float(p.get("precio") or 0),              # el de la LÍNEA
+            float(nuevos_costos[prod_l]))
+        afectados += 1
+
+    if updates:
+        update_cells("pedidos", updates)
+        try:
+            from data_helper import refrescar_datos
+            _errs = refrescar_datos(pedidos=True, productos=False,
+                                    clientes=False, precios=True)
+            if _errs:
+                st.warning("Los pedidos se actualizaron, pero no se pudo "
+                           f"refrescar parte de la caché: {'; '.join(_errs)}")
+        except Exception as e:
+            st.warning(f"Los pedidos se actualizaron, pero no se pudo refrescar "
+                       f"la caché ({e}). Recargá la página para verlos.")
+    return afectados
 
 
 def _codigo_cliente(nombre: str) -> str:

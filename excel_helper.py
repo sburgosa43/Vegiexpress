@@ -369,26 +369,41 @@ def leer_productos_semana(semana: int, año: int) -> list:
 
 def actualizar_precio_semana(cambios: list, semana: int, año: int,
                                 actualizar_catalogo: bool = True) -> dict:
+    # Import diferido: order_helper importa este módulo (ciclo si va arriba).
+    from order_helper import celdas_linea
+
     todos      = leer_pedidos()
     precio_map = {c["producto"]: _sf(c["precio_nuevo"]) for c in cambios
                   if c.get("p_cambia")}
     costo_map  = {c["producto"]: _sf(c["costo_nuevo"])  for c in cambios
                   if c.get("c_cambia")}
-    # Para filas de pedidos actualizar siempre precio y costo
     prod_all   = {c["producto"] for c in cambios}
 
+    # A diferencia de la propagación de costo (order_helper.propagar_costo_semana),
+    # acá la semana la elige el usuario en pantalla —esta pestaña existe para
+    # corregir semanas pasadas— y el precio SÍ se escribe, porque en los niveles
+    # Zona y Grupo es lo único editable. Lo que se comparte es celdas_linea(),
+    # que recalcula los derivados: antes se escribían E y F sueltas y G, H, I, J
+    # y K quedaban con los valores viejos.
     upd = []
+    filas_ped = 0
     for p in todos:
         prod = p["producto"]
         if prod not in prod_all: continue
         if p["semana"] != semana or p["año"] != año: continue
-        rn = p["row_num"]
-        if prod in precio_map:
-            upd.append({"range": f"E{rn}", "values": [[precio_map[prod]]]})
-        if prod in costo_map and costo_map[prod] > 0:
-            upd.append({"range": f"F{rn}", "values": [[costo_map[prod]]]})
 
-    filas_ped = len(upd)
+        p_nuevo = precio_map.get(prod)
+        c_nuevo = costo_map.get(prod)
+        escribir_precio = p_nuevo is not None
+        precio_final = p_nuevo if escribir_precio else _sf(p.get("precio"))
+        # El costo 0 no se escribe (comportamiento previo): se conserva el suyo.
+        costo_final  = (c_nuevo if (c_nuevo is not None and c_nuevo > 0)
+                        else _sf(p.get("costo")))
+
+        upd += celdas_linea(p["row_num"], _sf(p.get("cantidad")),
+                            precio_final, costo_final,
+                            escribir_precio=escribir_precio)
+        filas_ped += 1
     prods_cat = 0
     if upd:
         update_cells(_K_PED, upd)
