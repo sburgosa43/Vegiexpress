@@ -29,9 +29,9 @@ CANALES = {
 
 # ID del Sheet de respuestas del formulario actual (legado — Hogares por defecto)
 FORM_SHEET_ID  = CANALES["hogares"]["form_sheet_id"]
-_HOG_SEL_KEY  = "hog_form_seleccion"   # clave de session_state
-_HOG_INIT_KEY = "hog_form_init"
-_HOG_VER_KEY  = "hog_form_ver"
+# Las claves hog_form_seleccion / _init / _ver ya no existen: la selección de
+# productos vivía en session_state y se perdía, que era la causa del bug. Ahora
+# la fuente de verdad es el propio formulario (ver _tab_form_editable).
 
 # Columnas no-producto del formulario (se ignoran al buscar productos)
 _SKIP_COLS = {
@@ -311,172 +311,238 @@ def _importar_pedido(resp: dict, fecha_ent: date,
 
 
 # ── UI principal ───────────────────────────────────────────────────────────────
-def _tab_formulario():
-    """Tab para crear/sincronizar el formulario Google Forms."""
+def _tab_form_editable(canal: str, fn_productos, tipo_cantidad: str,
+                       titulo_ui: str, sub_ui: str, pref: str):
+    """Gestión del formulario Google Forms — común a Hogares y Hoteles.
+
+    El FORMULARIO es la fuente de verdad de qué productos hay. Se lee, se
+    edita en una tabla y se publican solo los cambios.
+
+    Antes la selección vivía en session_state y, si la lectura del formulario
+    fallaba, se marcaba TODO el catálogo — por eso al actualizar aparecían
+    productos que nunca se habían elegido. Acá un fallo de lectura es un error
+    visible y no toca nada.
+    """
     import pandas as pd
-    from forms_helper import (crear_formulario, sincronizar_formulario,
-                               get_form_id, _productos_hogares,
-                               leer_productos_en_form)
+    from forms_helper import (get_form_id, _save_form_id, leer_items_form,
+                              aplicar_cambios_form)
 
-    st.markdown("#### Formulario Google Forms — Hogares")
-    st.caption("Seleccioná los productos que querés incluir, "
-               "luego generá o sincronizá el formulario.")
+    K_ITEMS = f"{pref}_items"      # lectura del formulario
+    K_FID   = f"{pref}_fid"        # form_id de esa lectura
+    K_GEN   = f"{pref}_gen"        # generación de la tabla editable
 
-    # ── Estado activo ─────────────────────────────────────────────────────────
-    form_id = get_form_id()
+    st.markdown(f"#### {titulo_ui}")
+    st.caption(sub_ui)
+
+    form_id = get_form_id(canal)
+
+    # ── Formulario activo ────────────────────────────────────────────────────
     if form_id:
-        form_url = f"https://docs.google.com/forms/d/{form_id}/viewform"
-        col_a, col_b, col_c = st.columns([3, 0.8, 0.8])
-        col_a.success(f"✅ Formulario activo — "
-                      f"[Link para familias]({form_url})")
-        if col_b.button("📋 Link", key="hog_copy_link"):
-            st.write(f"`{form_url}`")
-        if col_c.button("🔀 Cambiar", key="hog_change_form",
-                        help="Configurar un formulario diferente"):
-            from forms_helper import _save_form_id
-            _save_form_id("")
-            st.session_state.pop(_HOG_INIT_KEY, None)
+        url = f"https://docs.google.com/forms/d/{form_id}/viewform"
+        c1, c2 = st.columns([4, 1])
+        c1.success(f"✅ Formulario activo — [Abrir]({url})")
+        if c2.button("🔀 Cambiar", key=f"{pref}_cambiar",
+                     help="Configurar otro formulario"):
+            _save_form_id("", canal)
+            for _k in (K_ITEMS, K_FID):
+                st.session_state.pop(_k, None)
+            st.rerun()
+    else:
+        st.info("📋 Ingresá el ID del formulario. Está en la URL: "
+                "`docs.google.com/forms/d/`**[ID]**`/edit` · Compartilo con "
+                "`rio-veggi-app@rio-veggi-app.iam.gserviceaccount.com` "
+                "como **Editor**.")
+
+    fid_input = st.text_input("ID del formulario", value=form_id or "",
+                              placeholder="1FAIpQLSe...", key=f"{pref}_fid_in")
+    fid = fid_input.strip()
+
+    if st.button("📖 Leer formulario", key=f"{pref}_leer", type="primary",
+                 disabled=not fid,
+                 help="Lee los productos que HOY tiene el formulario."):
+        try:
+            with st.spinner("Leyendo el formulario..."):
+                st.session_state[K_ITEMS] = leer_items_form(fid)
+            st.session_state[K_FID] = fid
+            st.session_state[K_GEN] = st.session_state.get(K_GEN, 0) + 1
+            _save_form_id(fid, canal)
+            st.rerun()
+        except Exception as e:
+            # NO caer en "seleccionar todo el catálogo": si no se puede leer,
+            # se avisa y se deja el formulario intacto.
+            st.error(f"No pude leer el formulario: {e}\n\n"
+                     "Revisá que el ID sea correcto y que la cuenta de "
+                     "servicio tenga permiso de **Editor**. No se modificó "
+                     "nada.")
+            return
+
+    datos = st.session_state.get(K_ITEMS)
+    if not datos or st.session_state.get(K_FID) != fid:
+        st.info("Apretá **📖 Leer formulario** para traer los productos que "
+                "tiene actualmente.")
+        return
+
+    # ── Precios del catálogo, para comparar ──────────────────────────────────
+    cat = {p["nombre"].strip().lower(): p for p in fn_productos()}
+
+    filas = []
+    for it in datos["ok"]:
+        c = cat.get(it["nombre"].strip().lower())
+        p_cat = float(c["precio"]) if c else None
+        filas.append({
+            "Producto":        it["nombre"],
+            "Unidad":          it["unidad"],
+            "Precio form":     float(it["precio"]),
+            "Precio catálogo": p_cat,
+            "Quitar":          False,
+        })
+
+    if not filas:
+        st.warning("El formulario no tiene productos que se puedan "
+                   "interpretar. Revisá el bloque de abajo antes de tocar nada.")
+
+    n_dif = sum(1 for f in filas if f["Precio catálogo"] is not None
+                and abs(f["Precio catálogo"] - f["Precio form"]) > 0.001)
+    n_sin = sum(1 for f in filas if f["Precio catálogo"] is None)
+
+    st.markdown(f"##### {len(filas)} producto(s) en el formulario")
+    if n_dif:
+        st.caption(f"⚠️ **{n_dif}** con precio distinto al del catálogo.")
+    if n_sin:
+        st.caption(f"ℹ️ **{n_sin}** ya no están en el catálogo — se muestran "
+                   f"igual, con el precio de catálogo vacío. No se descartan.")
+
+    gen = st.session_state.get(K_GEN, 0)
+    edit = st.data_editor(
+        pd.DataFrame(filas), key=f"{pref}_tabla_g{gen}",
+        use_container_width=True, hide_index=True, num_rows="dynamic",
+        column_config={
+            "Producto":        st.column_config.TextColumn(required=True),
+            "Unidad":          st.column_config.TextColumn(
+                                   help="Ej: Lb, Red, Und. Puede ir vacía."),
+            "Precio form":     st.column_config.NumberColumn(
+                                   format="Q%.2f", min_value=0.0, step=0.25),
+            "Precio catálogo": st.column_config.NumberColumn(
+                                   format="Q%.2f", disabled=True,
+                                   help="Solo referencia; no se edita acá."),
+            "Quitar":          st.column_config.CheckboxColumn(
+                                   help="Se borra del formulario al guardar."),
+        })
+
+    if n_dif:
+        if st.button("💲 Traer los precios del catálogo", key=f"{pref}_traer",
+                     help="Copia el precio del catálogo a la columna "
+                          "'Precio form' de los que difieren."):
+            for f in filas:
+                if f["Precio catálogo"] is not None:
+                    f["Precio form"] = f["Precio catálogo"]
+            st.session_state[K_ITEMS] = {
+                "ok": [{**it, "precio": f["Precio form"]}
+                       for it, f in zip(datos["ok"], filas)],
+                "raro": datos["raro"]}
+            st.session_state[K_GEN] = gen + 1
             st.rerun()
 
-    # ── Selector de productos ────────────────────────────────────────────────
-    todos = _productos_hogares()
-    nombres_todos = [p["nombre"] for p in todos]
+    # ── Lo que no se pudo interpretar ────────────────────────────────────────
+    if datos["raro"]:
+        st.divider()
+        st.warning(f"⚠️ No pude leer {len(datos['raro'])} línea(s) del "
+                   f"formulario. **No las toqué ni las borré** — revisalas a "
+                   f"mano en el formulario si corresponde.")
+        st.dataframe(pd.DataFrame([{"Título en el formulario": r["titulo"]}
+                                   for r in datos["raro"]]),
+                     hide_index=True, use_container_width=True)
 
-    # Inicializar con todos seleccionados la primera vez
-    if _HOG_INIT_KEY not in st.session_state:
-        if form_id:
-            try:
-                from forms_helper import leer_productos_en_form as _lpf2
-                en_form_init = _lpf2(form_id)
-                st.session_state[_HOG_SEL_KEY] = {
-                    n for n in en_form_init if n in set(nombres_todos)}
-            except Exception:
-                # 404 o sin acceso — empezar con todos seleccionados
-                st.session_state[_HOG_SEL_KEY] = set(nombres_todos)
-        else:
-            st.session_state[_HOG_SEL_KEY] = set(nombres_todos)
-        st.session_state[_HOG_INIT_KEY] = True
-    ver = st.session_state.get(_HOG_VER_KEY, 0)
-
-    st.markdown("##### Productos a incluir en el formulario")
-
-    # Botón para recargar selección desde el formulario actual
-    if form_id:
-        if st.button("🔄 Recargar lista desde el formulario actual",
-                     key="hog_reload_form"):
-            try:
-                from forms_helper import leer_productos_en_form as _lpf
-                en_form = _lpf(form_id)
-                st.session_state[_HOG_SEL_KEY] = {
-                    n for n in en_form if n in set(nombres_todos)}
-                st.session_state[_HOG_VER_KEY] = ver + 1
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error leyendo el formulario: {e}")
-
-    # Filtros para la tabla de referencia
-    col_f1, col_f2 = st.columns(2)
-    seg_f = col_f1.selectbox("Segmento", ["Todos"] +
-                              sorted({p["segmento"] for p in todos}),
-                              key="hog_seg_filter")
-    txt_f = col_f2.text_input("Buscar", placeholder="nombre...",
-                               key="hog_txt_filter")
-
-    # Tabla de referencia (read-only) — precios visibles
-    prods_vis = [p for p in todos
-                 if (seg_f == "Todos" or p["segmento"] == seg_f) and
-                    (not txt_f or txt_f.lower() in p["nombre"].lower())]
-
-    sel_actual = st.session_state[_HOG_SEL_KEY]
-
-    ref_df = pd.DataFrame([{
-        "Estado":   "📋 En formulario" if p["nombre"] in sel_actual
-                    else "➕ No incluido",
-        "Segmento": p["segmento"],
-        "Producto": p["nombre"],
-        "Unidad":   p["unidad"],
-        "Q":        p["precio"],
-    } for p in prods_vis])
-
-    if not ref_df.empty:
-        st.dataframe(ref_df, hide_index=True, use_container_width=True,
-                     height=min(320, 60 + len(ref_df)*35))
-
-    st.caption(f"↑ Vista filtrada — {len(sel_actual)} de {len(todos)} "
-               f"productos seleccionados en total.")
-
-    # ── Multiselect (fuente de verdad confiable) ──────────────────────────────
-    # Usamos multiselect en un expander para no ocupar tanto espacio
-    with st.expander("✏️ Editar selección de productos", expanded=False):
-        st.caption("Buscá y agregá/quitá productos. "
-                   "Los botones de abajo marcan/desmarcan todo.")
-
-        sel_nueva = st.multiselect(
-            "Productos incluidos en el formulario",
-            options=nombres_todos,
-            default=[n for n in nombres_todos if n in sel_actual],
-            key=f"hog_multiselect_{ver}",   # version para forzar reset
-            label_visibility="collapsed",
-        )
-        st.session_state[_HOG_SEL_KEY] = set(sel_nueva)
-
-        bc1, bc2 = st.columns(2)
-        if bc1.button("☑ Marcar todos", key="hog_sel_all"):
-            st.session_state[_HOG_SEL_KEY] = set(nombres_todos)
-            st.session_state[_HOG_VER_KEY]      = ver + 1
-            st.rerun()
-        if bc2.button("☐ Desmarcar todos", key="hog_des_all"):
-            st.session_state[_HOG_SEL_KEY] = set()
-            st.session_state[_HOG_VER_KEY]      = ver + 1
-            st.rerun()
-
-    n_sel = len(st.session_state[_HOG_SEL_KEY])
-    st.caption(f"{n_sel} de {len(todos)} productos seleccionados.")
-
-    # ── Título y acciones ─────────────────────────────────────────────────────
+    # ── Guardar ──────────────────────────────────────────────────────────────
     st.divider()
-    st.markdown("##### Actualizar formulario")
-    st.caption("La app actualiza tu formulario EXISTENTE con los productos "
-               "seleccionados y sus precios actuales del catálogo. "
-               "El link para las familias **no cambia**.")
+    orig = {it["nombre"].strip().lower(): it for it in datos["ok"]}
+    edit_rows = edit.to_dict("records")
 
-    # Campo para ingresar / cambiar el ID del formulario
-    if not form_id:
-        st.info("📋 Ingresá el ID del formulario que querés usar. "
-                "Lo encontrás en la URL: `docs.google.com/forms/d/`**[ID]**`/edit`  ·  "
-                "Compartilo con `rio-veggi-app@rio-veggi-app.iam.gserviceaccount.com` "
-                "como **Editor** antes de actualizar.")
-    fid_input = st.text_input(
-        "ID del formulario",
-        value=form_id or "",
-        placeholder="1FAIpQLSe...",
-        key="hog_form_id_input",
-        label_visibility="collapsed" if form_id else "visible",
-    )
+    actualizar, agregar, quitar = [], [], []
+    vistos = set()
+    for r in edit_rows:
+        nom = str(r.get("Producto") or "").strip()
+        if not nom:
+            continue
+        k = nom.lower()
+        vistos.add(k)
+        und = str(r.get("Unidad") or "").strip()
+        try:
+            pre = float(r.get("Precio form") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pre <= 0:
+            continue
+        it = orig.get(k)
+        if r.get("Quitar"):
+            if it:
+                quitar.append({"item_id": it["item_id"], "index": it["index"]})
+            continue
+        if it is None:
+            agregar.append({"nombre": nom, "unidad": und, "precio": pre})
+        elif (abs(it["precio"] - pre) > 0.001
+              or it["unidad"].strip() != und
+              or it["nombre"].strip() != nom):
+            actualizar.append({"item_id": it["item_id"], "index": it["index"],
+                               "nombre": nom, "unidad": und, "precio": pre})
 
-    prods_sel = [p for p in todos
-                 if p["nombre"] in st.session_state.get(_HOG_SEL_KEY, set())]
+    # Filas borradas de la tabla (no marcadas, directamente eliminadas)
+    for k, it in orig.items():
+        if k not in vistos:
+            quitar.append({"item_id": it["item_id"], "index": it["index"]})
 
-    if st.button("🔄 Actualizar formulario con precios y productos actuales",
-                 type="primary",
-                 key="hog_actualizar_form",
-                 disabled=not fid_input.strip() or not prods_sel):
-        with st.spinner(f"Actualizando {len(prods_sel)} productos en el formulario..."):
-            try:
-                from forms_helper import actualizar_formulario
-                res = actualizar_formulario(fid_input.strip(), productos=prods_sel)
-                st.success(
-                    f"✅ {res['eliminados']} preguntas antiguas eliminadas · "
-                    f"{res['agregados']} productos agregados con precios actuales.")
-                st.markdown(
-                    f"**🔗 Link para familias:** "
-                    f"[{res['form_url']}]({res['form_url']})")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
-                st.caption("Verificá que el formulario esté compartido con "
-                           "rio-veggi-app@rio-veggi-app.iam.gserviceaccount.com "
-                           "como Editor.")
+    n_cambios = len(actualizar) + len(agregar) + len(quitar)
+    if not n_cambios:
+        st.info("Sin cambios respecto de lo que hay hoy en el formulario.")
+        return
+
+    partes = []
+    if actualizar: partes.append(f"{len(actualizar)} actualizar")
+    if agregar:    partes.append(f"{len(agregar)} agregar")
+    if quitar:     partes.append(f"{len(quitar)} quitar")
+    st.warning(f"**{' · '.join(partes)}** — el resto del formulario no se toca.")
+
+    if st.button(f"💾 Aplicar {n_cambios} cambio(s) al formulario",
+                 type="primary", key=f"{pref}_guardar"):
+        try:
+            with st.spinner("Actualizando el formulario..."):
+                res = aplicar_cambios_form(fid, actualizar, agregar, quitar,
+                                           tipo_cantidad=tipo_cantidad)
+                st.session_state[K_ITEMS] = leer_items_form(fid)
+                st.session_state[K_GEN] = gen + 1
+            st.success(f"✅ {res['actualizados']} actualizado(s) · "
+                       f"{res['agregados']} agregado(s) · "
+                       f"{res['quitados']} quitado(s). "
+                       f"El link no cambió.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error al actualizar: {e}")
+
+
+def _tab_formulario():
+    """Formulario de Hogares."""
+    from forms_helper import _productos_hogares
+    _tab_form_editable(
+        canal="hogares", fn_productos=_productos_hogares,
+        tipo_cantidad="dropdown",
+        titulo_ui="🏠 Formulario Google Forms — Hogares",
+        sub_ui="Lee el formulario que ya existe, te muestra sus productos y "
+               "aplica solo los cambios que hagas. El link para las familias "
+               "no cambia.",
+        pref="hogf")
+
+
+def _tab_formulario_hoteles():
+    """Formulario de Hoteles."""
+    from forms_helper import _productos_hoteles
+    _tab_form_editable(
+        canal="hoteles", fn_productos=_productos_hoteles,
+        tipo_cantidad="numerico",
+        titulo_ui="🏨 Formulario Google Forms — Hoteles",
+        sub_ui="Lee el formulario que ya existe, te muestra sus productos y "
+               "aplica solo los cambios que hagas. Precios del catálogo "
+               "general (Listado Productos).",
+        pref="hotf")
 
 
 def _analisis_top_hoteles():
@@ -601,198 +667,6 @@ def _analisis_top_hoteles():
     st.caption("💡 Con la columna **Cant. típica** y **Rango** podés decidir si "
                "en el formulario ponés un desplegable con las cantidades más "
                "comunes, o un campo numérico libre.")
-
-
-def _tab_formulario_hoteles():
-    """Gestión del formulario Google Forms de Hoteles: seleccionar productos y
-    sincronizar el formulario con los precios actuales del catálogo general."""
-    import pandas as pd
-    from forms_helper import (get_form_id, _productos_hoteles,
-                               actualizar_formulario, leer_productos_en_form)
-
-    # Claves de session_state propias del canal hoteles
-    SEL_KEY  = "hot_form_seleccion"
-    INIT_KEY = "hot_form_init"
-    VER_KEY  = "hot_form_ver"
-
-    st.markdown("#### 🏨 Formulario Google Forms — Hoteles")
-    st.caption("Seleccioná los productos que querés incluir y sincronizá el "
-               "formulario con los precios actuales del catálogo general "
-               "(Listado Productos).")
-
-    # ── Estado del formulario activo ──────────────────────────────────────────
-    form_id = get_form_id("hoteles")
-    if form_id:
-        form_url = f"https://docs.google.com/forms/d/{form_id}/viewform"
-        col_a, col_b, col_c = st.columns([3, 0.8, 0.8])
-        col_a.success(f"✅ Formulario activo — [Link para hoteles]({form_url})")
-        if col_b.button("📋 Link", key="hot_copy_link"):
-            st.write(f"`{form_url}`")
-        if col_c.button("🔀 Cambiar", key="hot_change_form",
-                        help="Configurar un formulario diferente"):
-            from forms_helper import _save_form_id
-            _save_form_id("", "hoteles")
-            st.session_state.pop(INIT_KEY, None)
-            st.rerun()
-
-    # ── Selector de productos ─────────────────────────────────────────────────
-    todos = _productos_hoteles()
-    nombres_todos = [p["nombre"] for p in todos]
-
-    if not todos:
-        st.warning("No hay productos con precio en el catálogo general.")
-        return
-
-    # Inicializar selección
-    if INIT_KEY not in st.session_state:
-        if form_id:
-            try:
-                en_form_init = leer_productos_en_form(form_id)
-                st.session_state[SEL_KEY] = {
-                    n for n in en_form_init if n in set(nombres_todos)}
-            except Exception:
-                st.session_state[SEL_KEY] = set(nombres_todos)
-        else:
-            st.session_state[SEL_KEY] = set(nombres_todos)
-        st.session_state[INIT_KEY] = True
-    ver = st.session_state.get(VER_KEY, 0)
-
-    st.markdown("##### Productos a incluir en el formulario")
-    st.caption("💡 Usá la pestaña **📊 Top Hoteles** para decidir qué productos "
-               "conviene ofrecer según lo más vendido.")
-
-    if form_id:
-        if st.button("🔄 Recargar lista desde el formulario actual",
-                     key="hot_reload_form"):
-            try:
-                en_form = leer_productos_en_form(form_id)
-                st.session_state[SEL_KEY] = {
-                    n for n in en_form if n in set(nombres_todos)}
-                st.session_state[VER_KEY] = ver + 1
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error leyendo el formulario: {e}")
-
-    # Filtros de referencia
-    col_f1, col_f2 = st.columns(2)
-    seg_f = col_f1.selectbox("Segmento", ["Todos"] +
-                              sorted({p["segmento"] for p in todos}),
-                              key="hot_seg_filter")
-    txt_f = col_f2.text_input("Buscar", placeholder="nombre...",
-                               key="hot_txt_filter")
-
-    prods_vis = [p for p in todos
-                 if (seg_f == "Todos" or p["segmento"] == seg_f) and
-                    (not txt_f or txt_f.lower() in p["nombre"].lower())]
-
-    sel_actual = st.session_state[SEL_KEY]
-
-    ref_df = pd.DataFrame([{
-        "Estado":   "📋 En formulario" if p["nombre"] in sel_actual
-                    else "➕ No incluido",
-        "Segmento": p["segmento"],
-        "Producto": p["nombre"],
-        "Unidad":   p["unidad"],
-        "Q":        p["precio"],
-    } for p in prods_vis])
-
-    if not ref_df.empty:
-        st.dataframe(ref_df, hide_index=True, use_container_width=True,
-                     height=min(320, 60 + len(ref_df)*35))
-
-    st.caption(f"↑ Vista filtrada — {len(sel_actual)} de {len(todos)} "
-               f"productos seleccionados en total.")
-
-    # Editor de selección
-    with st.expander("✏️ Editar selección de productos", expanded=False):
-        sel_nueva = st.multiselect(
-            "Productos incluidos en el formulario",
-            options=nombres_todos,
-            default=[n for n in nombres_todos if n in sel_actual],
-            key=f"hot_multiselect_{ver}",
-            label_visibility="collapsed",
-        )
-        st.session_state[SEL_KEY] = set(sel_nueva)
-
-        bc1, bc2 = st.columns(2)
-        if bc1.button("☑ Marcar todos", key="hot_sel_all"):
-            st.session_state[SEL_KEY] = set(nombres_todos)
-            st.session_state[VER_KEY] = ver + 1
-            st.rerun()
-        if bc2.button("☐ Desmarcar todos", key="hot_des_all"):
-            st.session_state[SEL_KEY] = set()
-            st.session_state[VER_KEY] = ver + 1
-            st.rerun()
-
-    n_sel = len(st.session_state[SEL_KEY])
-    st.caption(f"{n_sel} de {len(todos)} productos seleccionados.")
-
-    # ── Sincronizar formulario ────────────────────────────────────────────────
-    st.divider()
-    st.markdown("##### Actualizar formulario")
-    st.caption("La app actualiza tu formulario EXISTENTE con los productos "
-               "seleccionados y sus precios actuales del catálogo. "
-               "El link para los hoteles **no cambia**.")
-
-    if not form_id:
-        st.info("📋 Ingresá el ID del formulario de hoteles. Lo encontrás en la "
-                "URL: `docs.google.com/forms/d/`**[ID]**`/edit`  ·  "
-                "Compartilo con la cuenta de servicio como **Editor** antes de "
-                "actualizar.")
-    fid_input = st.text_input(
-        "ID del formulario de hoteles",
-        value=form_id or "",
-        placeholder="1FAIpQLSe...",
-        key="hot_form_id_input",
-        label_visibility="collapsed" if form_id else "visible",
-    )
-
-    prods_sel = [p for p in todos
-                 if p["nombre"] in st.session_state.get(SEL_KEY, set())]
-
-    if st.button("🔄 Actualizar formulario de hoteles con precios actuales",
-                 type="primary", key="hot_actualizar_form",
-                 disabled=not fid_input.strip() or not prods_sel):
-        with st.spinner(f"Actualizando {len(prods_sel)} productos..."):
-            try:
-                res = actualizar_formulario(fid_input.strip(),
-                                            productos=prods_sel,
-                                            tipo_cantidad="numerico")
-                # Guardar el form_id del canal hoteles
-                from forms_helper import _save_form_id
-                _save_form_id(fid_input.strip(), "hoteles")
-                st.success(
-                    f"✅ {res['eliminados']} preguntas antiguas eliminadas · "
-                    f"{res['agregados']} productos agregados con precios actuales.")
-                st.markdown(
-                    f"**🔗 Link para hoteles:** "
-                    f"[{res['form_url']}]({res['form_url']})")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
-                st.caption("Verificá que el formulario esté compartido con la "
-                           "cuenta de servicio como Editor.")
-
-
-# ── Pedidos pegados desde WhatsApp ────────────────────────────────────────────
-# Unidades reconocidas en el texto (singular y plural, con abreviaturas)
-_WA_UNIDADES = {
-    "caja": "caja", "cajas": "caja",
-    "manojo": "manojo", "manojos": "manojo",
-    "onz": "onz", "onza": "onz", "onzas": "onz", "oz": "onz",
-    "lb": "lb", "lbs": "lb", "libra": "lb", "libras": "lb",
-    "bolsa": "bolsa", "bolsas": "bolsa",
-    "bandeja": "bandeja", "bandejas": "bandeja",
-    "docena": "docena", "docenas": "docena",
-    "unidad": "unidad", "unidades": "unidad", "u": "unidad", "un": "unidad",
-    "qq": "qq", "quintal": "qq", "quintales": "qq",
-    "kg": "kg", "kilo": "kg", "kilos": "kg",
-    "saco": "saco", "sacos": "saco",
-    "red": "red", "redes": "red",
-    "cubeta": "cubeta", "cubetas": "cubeta",
-    "bote": "bote", "botes": "bote",
-    "libreta": "libreta", "libretas": "libreta",
-}
 
 
 def _parsear_texto_whatsapp(texto: str) -> list[dict]:

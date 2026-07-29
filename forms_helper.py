@@ -119,20 +119,179 @@ def _productos_hoteles() -> list[dict]:
     return sorted(result, key=lambda x: (x["segmento"], x["nombre"]))
 
 
-# ── Leer productos en formulario actual ──────────────────────────────────────
-def leer_productos_en_form(form_id: str) -> set:
-    import re as _re
+# ── Lectura del formulario como fuente de verdad ─────────────────────────────
+# En el formulario, CADA PRODUCTO ES UNA PREGUNTA y el dato vive en su título:
+#     "{nombre} ({unidad}) - Q.{precio}"        ej: "Ajo (Red) - Q.6.50"
+# El desplegable que hay dentro de cada pregunta es la CANTIDAD (1-6), no una
+# lista de productos.
+#
+# El patrón es tolerante a propósito: la unidad es opcional (hay títulos como
+# "Cilantro - Q.3.00"), acepta guion normal/medio/largo, y Q. / Q / Q espacio.
+# Lo que no calza NO se fuerza ni se descarta: se devuelve aparte para que lo
+# revise una persona.
+import re as _re
+
+_PAT_ITEM = _re.compile(
+    r"^\s*(?P<nombre>.+?)"                       # nombre
+    r"(?:\s*\((?P<unidad>[^()]*)\))?"            # (unidad) — opcional
+    r"\s*[-–—]\s*"                     # - – —
+    r"Q\s*\.?\s*(?P<precio>[\d.,]+)\s*$"         # Q.6.50 / Q 6,50 / Q6.50
+)
+
+# Formas de precio que se aceptan sin adivinar. Cualquier otra cosa va a
+# "raro": preferimos avisar antes que interpretar mal un número de dinero.
+_PRE_PUNTO = _re.compile(r"^\d+\.\d{1,2}$")           # 6.50   (el que escribe la app)
+_PRE_MILES = _re.compile(r"^\d{1,3}(?:,\d{3})+\.\d{1,2}$")  # 1,250.00
+_PRE_COMA  = _re.compile(r"^\d+,\d{1,2}$")            # 6,50   (coma decimal)
+_PRE_ENTERO = _re.compile(r"^\d+$")                   # 6
+
+
+def _precio_desde_texto(txt: str):
+    """Precio como float, o None si el formato es ambiguo.
+
+    No usa _sf a propósito: acá la coma es ambigua ("6,50" es 6.50 pero
+    "1,250" es mil doscientos cincuenta) y en dinero preferimos devolver None
+    y pedir revisión manual antes que elegir mal.
+    """
+    t = (txt or "").strip()
+    if _PRE_PUNTO.match(t) or _PRE_ENTERO.match(t):
+        return float(t)
+    if _PRE_MILES.match(t):
+        return float(t.replace(",", ""))
+    if _PRE_COMA.match(t):
+        return float(t.replace(",", "."))
+    return None
+
+
+def parsear_titulo(titulo: str):
+    """{'nombre','unidad','precio'} del título de una pregunta, o None."""
+    m = _PAT_ITEM.match(titulo or "")
+    if not m:
+        return None
+    precio = _precio_desde_texto(m.group("precio"))
+    if precio is None:
+        return None
+    return {"nombre": (m.group("nombre") or "").strip(),
+            "unidad": (m.group("unidad") or "").strip(),
+            "precio": precio}
+
+
+def titulo_de(nombre: str, unidad: str, precio: float) -> str:
+    """Título de la pregunta. Único lugar donde se arma el formato."""
+    und = f" ({unidad.strip()})" if str(unidad or "").strip() else ""
+    return f"{str(nombre).strip()}{und} - Q.{float(precio):.2f}"
+
+
+def leer_items_form(form_id: str) -> dict:
+    """Lee el formulario y devuelve sus productos.
+
+    {"ok":   [{item_id, index, nombre, unidad, precio, titulo}, ...],
+     "raro": [{item_id, index, titulo}, ...]}
+
+    "raro" son las preguntas que parecen de producto pero cuyo título no se
+    pudo interpretar. NO se descartan en silencio: la UI las muestra aparte.
+
+    Lanza la excepción de la API si el formulario no se puede leer. El
+    llamador NO debe convertir ese fallo en "seleccionar todo el catálogo",
+    que era justamente lo que hacía perder la lista.
+    """
     svc  = _forms_svc()
     form = svc.forms().get(formId=form_id).execute()
-    _pat = _re.compile(r"^(.+?)\s*\(.+?\)\s*[-\u2013]\s*Q[.\s]*[\d.,]+")
-    nombres = set()
-    for item in form.get("items", []):
+
+    # Títulos que son parte de la estructura, no productos.
+    _ESTRUCTURA = ("productos extra", "para finalizar")
+    _PREF_CONF  = ("mi pedido está listo", "mi pedido esta listo")
+
+    ok, raro = [], []
+    for idx, item in enumerate(form.get("items", [])):
         if "questionItem" not in item:
+            continue                       # page breaks, texto, etc.
+        titulo = item.get("title", "") or ""
+        t = titulo.lower().strip()
+        if t in _ESTRUCTURA or any(t.startswith(p) for p in _PREF_CONF):
             continue
-        m = _pat.match(item.get("title", ""))
-        if m:
-            nombres.add(m.group(1).strip())
-    return nombres
+        base = {"item_id": item.get("itemId", ""), "index": idx,
+                "titulo": titulo}
+        datos = parsear_titulo(titulo)
+        if datos:
+            ok.append({**base, **datos})
+        else:
+            raro.append(base)
+    return {"ok": ok, "raro": raro}
+
+
+# ── Actualización quirúrgica ─────────────────────────────────────────────────
+def aplicar_cambios_form(form_id: str,
+                         actualizar: list = None,
+                         agregar:    list = None,
+                         quitar:     list = None,
+                         tipo_cantidad: str = "dropdown") -> dict:
+    """Aplica solo los cambios pedidos, sin reconstruir el formulario.
+
+    actualizar: [{"item_id", "index", "nombre", "unidad", "precio"}]
+    agregar:    [{"nombre", "unidad", "precio"}]
+    quitar:     [{"item_id", "index"}]
+
+    Se hace en este orden porque los índices se desplazan: primero los
+    updates (los índices siguen válidos), después los borrados de mayor a
+    menor índice, y al final los agregados.
+
+    Actualizar en el lugar preserva el questionId de cada pregunta. Eso
+    importa más de lo que parece: las respuestas se mapean por questionId
+    (ver leer_respuestas_api), así que borrar y recrear deja las respuestas
+    históricas apuntando a preguntas que ya no existen.
+    """
+    import time
+    svc = _forms_svc()
+    actualizar = actualizar or []
+    agregar    = agregar    or []
+    quitar     = quitar     or []
+    reqs = []
+
+    # 1. Updates — solo el título, que es donde vive nombre/unidad/precio.
+    for it in actualizar:
+        reqs.append({"updateItem": {
+            "item": {"itemId": it["item_id"],
+                     "title": titulo_de(it["nombre"], it.get("unidad", ""),
+                                        it["precio"])},
+            "location":   {"index": it["index"]},
+            "updateMask": "title",
+        }})
+
+    # 2. Borrados, de mayor a menor índice.
+    for it in sorted(quitar, key=lambda x: x["index"], reverse=True):
+        reqs.append({"deleteItem": {"location": {"index": it["index"]}}})
+
+    # 3. Agregados al final (antes de nada más re-leemos el tamaño).
+    if agregar:
+        form = svc.forms().get(formId=form_id).execute()
+        pos  = len(form.get("items", [])) - len(quitar)
+        for p in agregar:
+            if tipo_cantidad == "numerico":
+                pregunta = {"required": False,
+                            "textQuestion": {"paragraph": False}}
+            else:
+                pregunta = {"required": False,
+                            "choiceQuestion": {
+                                "type": "DROP_DOWN",
+                                "options": [{"value": str(i)}
+                                            for i in range(1, 7)]}}
+            reqs.append({"createItem": {
+                "item": {"title": titulo_de(p["nombre"], p.get("unidad", ""),
+                                            p["precio"]),
+                         "questionItem": {"question": pregunta}},
+                "location": {"index": pos},
+            }})
+            pos += 1
+
+    for i in range(0, len(reqs), 50):
+        svc.forms().batchUpdate(
+            formId=form_id, body={"requests": reqs[i:i + 50]}).execute()
+        time.sleep(0.5)
+
+    return {"actualizados": len(actualizar), "agregados": len(agregar),
+            "quitados": len(quitar), "requests": len(reqs),
+            "form_url": f"https://docs.google.com/forms/d/{form_id}/viewform"}
 
 
 # ── Actualizar formulario (con secciones por segmento y dropdowns 1-6) ────────
