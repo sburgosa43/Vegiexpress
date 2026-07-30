@@ -98,11 +98,25 @@ def _editores_fragment(sel_prov, base_dfs, prod_map, todas_areas,
                 col_cfg[an] = st.column_config.NumberColumn(
                     an, disabled=True, width="small", format="%.2f")
 
+        # ── "A Comprar" persistido POR PRODUCTO ──────────────────────────────
+        # Antes solo se escribía en base_df. Con filtro de áreas, base_df es una
+        # copia temporal (ver base_dfs_f) que se rearma en cada rerun, así que
+        # las cantidades se perdían y el PDF no las veía nunca. Este mapa vive
+        # en session_state y está indexado por producto, no por posición de
+        # fila, así que sobrevive a cambiar el filtro y a los reruns.
+        K_COMPRAR = f"apedir_comprar_{semana}_{año}"
+        mapa_comprar = st.session_state.setdefault(K_COMPRAR, {})
+
         # ── Snapshot estable (dentro del fragmento no hay interferencias) ──
         ed_key  = f"de_{prov}_{semana}_{año}_{reset_n}"
         src_key = f"src_{ed_key}"
         if ed_key not in st.session_state or src_key not in st.session_state:
-            st.session_state[src_key] = base_df[vis_cols].copy()
+            _src = base_df[vis_cols].copy()
+            if "A Comprar" in _src.columns:
+                _src["A Comprar"] = [
+                    mapa_comprar.get((prov, str(_p)), "")
+                    for _p in _src["Producto"]]
+            st.session_state[src_key] = _src
 
         edited = st.data_editor(
             st.session_state[src_key],
@@ -113,9 +127,17 @@ def _editores_fragment(sel_prov, base_dfs, prod_map, todas_areas,
             key=ed_key,
         )
 
-        # Persistencia unidireccional editor → base_df (session_state)
+        # Persistencia editor → base_df (vista actual) Y → mapa por producto,
+        # que es el que sobrevive al filtro y del que lee el PDF.
         if "A Comprar" in edited.columns:
             base_df["A Comprar"] = edited["A Comprar"].values
+            for _p, _v in zip(edited["Producto"], edited["A Comprar"]):
+                _mk  = (prov, str(_p))
+                _val = str(_v or "").strip()
+                if _val:
+                    mapa_comprar[_mk] = _val
+                else:
+                    mapa_comprar.pop(_mk, None)
 
         # ── Costo por área (demanda × costo, siempre visible) ───────────────
         est_prov   = 0.0
@@ -136,6 +158,60 @@ def _editores_fragment(sel_prov, base_dfs, prod_map, todas_areas,
             ok, pend, n = _val_comprar(val)
             if ok and not pend:
                 est_prov += n * _c
+
+        # ── PDF de ESTE proveedor, con la vista y las cantidades actuales ─────
+        # Va dentro del fragmento a propósito: acá afuera no volvía a correr al
+        # editar (el fragmento aísla el rerun), así que el botón quedaba
+        # deshabilitado con "Ingresá cantidades primero" aunque ya estuvieran.
+        _items_pdf, _items_full = [], []
+        for _, _row in base_df.iterrows():
+            _base = {"producto": _row["Producto"],
+                     "unidad":   _row.get("Unidad", ""),
+                     "cantidad": float(_row.get(total_col, 0) or 0)}
+            # Solo las áreas de la vista filtrada: el PDF debe mostrar lo que
+            # se ve en pantalla, no las tres áreas siempre.
+            for _a in todas_areas:
+                _base[_a] = float(_row[_a] or 0) if _a in _row.index else 0.0
+            _items_full.append({**_base, "a_comprar": ""})
+            _ok, _pend, _n = _val_comprar(
+                mapa_comprar.get((prov, str(_row["Producto"])), ""))
+            if _ok:
+                _items_pdf.append({**_base,
+                                   "a_comprar": "P" if _pend else f"{_n:g}"})
+
+        _nomf = "".join(ch for ch in prov if ch.isalnum() or ch == "_")
+        _cl, _cf, _cp, _cd = st.columns([2.2, 0.9, 0.9, 0.9])
+        _cl.markdown(f"<div style='padding-top:6px;font-size:.82rem'>"
+                     f"{len(_items_pdf)} línea(s) con cantidad</div>",
+                     unsafe_allow_html=True)
+        if _items_full:
+            _cf.download_button(
+                "📋 Lista", data=generar_lista_compras_proveedor(
+                    prov, _items_full, semana, año),
+                file_name=f"Lista_{_nomf}_S{semana}.pdf",
+                mime="application/pdf",
+                key=f"pdff_{prov}_{semana}_{año}_{reset_n}",
+                help="Lista completa con A Comprar vacío para anotar a mano",
+                use_container_width=True)
+        if _items_pdf:
+            _pdf = generar_lista_compras_proveedor(prov, _items_pdf,
+                                                   semana, año)
+            import streamlit.components.v1 as _cpv2
+            from pdf_helper import boton_imprimir_html as _btn_ap
+            with _cp:
+                _cpv2.html(_btn_ap(_pdf, f"ap_{_nomf}_{semana}_{año}",
+                                   "🖨️ Imprimir", "#2D7A2D"), height=44)
+            _cd.download_button(
+                "📥 PDF", data=_pdf,
+                file_name=f"Compras_{_nomf}_Sem{semana}_{año}.pdf",
+                mime="application/pdf", type="primary",
+                key=f"dlf_{prov}_{semana}_{año}_{reset_n}",
+                use_container_width=True)
+        else:
+            _cd.button("📥 PDF", disabled=True,
+                       key=f"dlfd_{prov}_{semana}_{año}_{reset_n}",
+                       help="Ingresá cantidades en la columna A Comprar",
+                       use_container_width=True)
 
         if area_costs or est_prov > 0:
             area_parts = " &nbsp;·&nbsp; ".join(
@@ -433,10 +509,20 @@ def _tab_costo_area(base_dfs: dict, prod_map: dict, todas_areas: list,
         st.info("No hay demanda registrada en las áreas seleccionadas.")
 
 
-def _recolectar_compras(sel_prov, base_dfs, prod_map, todas_areas):
+def _recolectar_compras(sel_prov, base_dfs, prod_map, todas_areas,
+                        semana=None, año=None):
     """Recolecta las líneas con 'A Comprar' > 0 de los proveedores seleccionados
     (compra neta — Patojas ya está separado y no aparece acá). Para cada línea
-    arma cantidad, costo unitario y la demanda por área (para el reparto)."""
+    arma cantidad, costo unitario y la demanda por área (para el reparto).
+
+    Las cantidades se toman del mapa persistido por producto, no de la columna
+    del DataFrame: con filtro de áreas ese DataFrame es una copia temporal y el
+    valor depende de que el editor haya corrido antes en el mismo pase.
+    """
+    mapa = {}
+    if semana is not None and año is not None:
+        mapa = st.session_state.get(f"apedir_comprar_{semana}_{año}", {})
+
     compras = []
     for prov in sel_prov:
         if "SIN PROVEEDOR" in prov:
@@ -445,7 +531,9 @@ def _recolectar_compras(sel_prov, base_dfs, prod_map, todas_areas):
         if df is None or df.empty:
             continue
         for _, row in df.iterrows():
-            ok, pend, cant = _val_comprar(row.get("A Comprar", ""))
+            _v = mapa.get((prov, str(row.get("Producto", ""))),
+                          row.get("A Comprar", ""))
+            ok, pend, cant = _val_comprar(_v)
             if not ok or cant <= 0:
                 continue   # solo líneas con cantidad numérica a comprar
             prod = row.get("Producto", "")
@@ -1178,7 +1266,7 @@ def mostrar():
                        "en definitivo para el histórico con costo por área.")
 
             _armar_compras = _recolectar_compras(sel_prov, base_dfs_f, prod_map,
-                                                 areas_pedido)
+                                                 areas_pedido, semana, año)
 
             cg1, cg2 = st.columns(2)
             with cg1:
@@ -1284,83 +1372,10 @@ Imprimir: Ctrl+P (o Compartir → Imprimir en el teléfono)</p>
                 help="Abrilo en el navegador y usa Ctrl+P para imprimir o guardar")
 
             st.divider()
-            st.markdown("**📄 Descargar PDF por proveedor:**")
-            st.caption("📋 Lista = todas las líneas (A Comprar vacío) · "
-                       "📄 PDF = solo líneas con valor ingresado.")
-
-            for prov in sel_prov:
-                if prov not in base_dfs: continue
-
-                items_pdf      = []   # solo lineas con valor (PDF actual)
-                items_completa = []   # TODAS las lineas, A Comprar vacio (para anotar a mano)
-                for i, row in base_dfs[prov].iterrows():
-                    base_item = {
-                        "producto":  row["Producto"],
-                        "unidad":    row["Unidad"],
-                        "cantidad":  float(row["Total"]),
-                    }
-                    for _a in ["Antigua","Río","Hogares"]:
-                        base_item[_a] = float(row[_a]) if _a in row.index else 0.0
-
-                    items_completa.append({**base_item, "a_comprar": ""})
-
-                    val = str(row.get("A Comprar", "") or "")
-                    ok, pend, n = _val_comprar(val)
-                    if ok:
-                        items_pdf.append({**base_item,
-                                          "a_comprar": "P" if pend else f"{n:g}"})
-
-                import base64
-                import streamlit.components.v1 as _cpv
-                col_lbl, col_full, col_p, col_d = st.columns([2.4, 0.9, 0.8, 0.8])
-
-                # PDF Lista Completa: todas las lineas, columna A Comprar vacia
-                if items_completa:
-                    try:
-                        pdf_full = generar_lista_compras_proveedor(
-                            prov, items_completa, semana, año)
-                        nomf = "".join(ch for ch in prov
-                                       if ch.isalnum() or ch == "_")
-                        col_full.download_button(
-                            "📋 Lista", data=pdf_full,
-                            file_name=f"Lista_{nomf}_S{semana}.pdf",
-                            mime="application/pdf",
-                            key=f"pdf_full_{prov}_{semana}_{año}",
-                            help="Lista completa con A Comprar vacio para anotar a mano",
-                            use_container_width=True)
-                    except Exception:
-                        pass
-                col_lbl.markdown(
-                    f"<div style='padding-top:6px'>📦 <b>{prov}</b> "
-                    f"— {len(items_pdf)} línea(s)</div>",
-                    unsafe_allow_html=True)
-
-                if items_pdf:
-                    try:
-                        pdf_bytes = generar_lista_compras_proveedor(
-                            prov, items_pdf, semana, año)
-                        nom = "".join(ch for ch in prov
-                                      if ch.isalnum() or ch == "_")
-                        from pdf_helper import boton_imprimir_html as _btn_imp
-                        with col_p:
-                            _cpv.html(
-                                _btn_imp(pdf_bytes, f"prov_{nom}_{semana}_{año}",
-                                         "🖨️ Imprimir", "#2D7A2D"),
-                                height=44)
-                        col_d.download_button(
-                            "📥 PDF", data=pdf_bytes,
-                            file_name=f"Compras_{nom}_Sem{semana}_{año}.pdf",
-                            mime="application/pdf",
-                            key=f"dl_{prov}_{semana}_{año}",
-                            type="primary",
-                            use_container_width=True)
-                    except Exception as e:
-                        col_d.error(f"Error: {e}")
-                else:
-                    col_d.button("📥 PDF", disabled=True,
-                                   key=f"dl_dis_{prov}_{semana}_{año}",
-                                   help="Ingresá cantidades primero",
-                                   use_container_width=True)
+            # Los botones de PDF por proveedor viven ahora DENTRO del
+            # fragmento del editor (junto a cada tabla): acá afuera no volvían
+            # a correr al editar, así que el botón quedaba deshabilitado con
+            # "Ingresá cantidades primero" aunque ya estuvieran ingresadas.
 
 
     # ══ TAB COSTO POR ÁREA ══════════════════════════════════════════════════
