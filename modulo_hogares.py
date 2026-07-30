@@ -669,6 +669,27 @@ def _analisis_top_hoteles():
                "comunes, o un campo numérico libre.")
 
 
+# ── Pedidos pegados desde WhatsApp ────────────────────────────────────────────
+# Unidades reconocidas en el texto (singular y plural, con abreviaturas)
+_WA_UNIDADES = {
+    "caja": "caja", "cajas": "caja",
+    "manojo": "manojo", "manojos": "manojo",
+    "onz": "onz", "onza": "onz", "onzas": "onz", "oz": "onz",
+    "lb": "lb", "lbs": "lb", "libra": "lb", "libras": "lb",
+    "bolsa": "bolsa", "bolsas": "bolsa",
+    "bandeja": "bandeja", "bandejas": "bandeja",
+    "docena": "docena", "docenas": "docena",
+    "unidad": "unidad", "unidades": "unidad", "u": "unidad", "un": "unidad",
+    "qq": "qq", "quintal": "qq", "quintales": "qq",
+    "kg": "kg", "kilo": "kg", "kilos": "kg",
+    "saco": "saco", "sacos": "saco",
+    "red": "red", "redes": "red",
+    "cubeta": "cubeta", "cubetas": "cubeta",
+    "bote": "bote", "botes": "bote",
+    "libreta": "libreta", "libretas": "libreta",
+}
+
+
 def _parsear_texto_whatsapp(texto: str) -> list[dict]:
     """Convierte un listado libre (pegado de WhatsApp) en líneas estructuradas.
 

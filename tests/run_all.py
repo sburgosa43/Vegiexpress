@@ -17,6 +17,7 @@ import sys
 AQUI = os.path.dirname(os.path.abspath(__file__))
 
 PRUEBAS = [
+    "test_nombres_definidos.py",
     "test_gsheets_cache.py",
     "test_propagacion_costo.py",
     "test_rutas_costo.py",
