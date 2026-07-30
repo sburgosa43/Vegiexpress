@@ -87,7 +87,7 @@ r.check(cols == ["E", "F", "G", "H", "I", "J", "K"], f"con precio -> {cols}")
 
 print("\n=== B. Ruta de costo (Productos, edición completa, hijos) ===")
 ESCRITO.clear()
-n = propagar_costo_semana({"lechuga": 6.0}, hoy=HOY)
+n = propagar_costo_semana({"lechuga": 6.0}, hoy=HOY)["lineas"]
 pf = por_fila(ESCRITO)
 r.check(n == 2, f"toca 2 líneas de la semana en curso (devolvió {n})")
 r.check(sorted(pf) == [10, 12], f"filas {sorted(pf)} (la 20 es de otra semana)")

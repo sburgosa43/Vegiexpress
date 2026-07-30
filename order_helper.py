@@ -85,23 +85,46 @@ def celdas_linea(row_num: int, cantidad: float, precio: float, costo: float,
     return ups
 
 
-def propagar_costo_semana(nuevos_costos: dict, hoy: date = None) -> int:
-    """Aplica el costo nuevo a TODAS las líneas de la semana en curso.
+def propagar_costo_semana(nuevos_costos: dict, hoy: date = None,
+                          nuevos_precios: dict = None) -> dict:
+    """Aplica el costo (y opcionalmente el precio) a las líneas de la semana.
 
-    nuevos_costos: {nombre_producto_en_minúsculas: costo}. Todas las líneas de
-    esos productos con fecha entre lunes y domingo de la semana en curso quedan
-    con el costo nuevo, incluidas las de días anteriores de esa misma semana.
+    nuevos_costos:  {producto_lower: costo_nuevo}
+    nuevos_precios: {producto_lower: precio_general_nuevo} — opcional
 
-    El precio de venta NO se toca; los derivados se recalculan con el precio
-    que ya tenía cada línea.
+    Todas las líneas de esos productos con fecha entre lunes y domingo de la
+    semana en curso quedan con el costo nuevo, incluidas las de días anteriores
+    de esa misma semana.
 
-    Devuelve la cantidad de líneas actualizadas.
+    Sobre el PRECIO: `nuevos_precios` son precios del LISTADO GENERAL (los que
+    edita Productos → Actualizar Precios). Se reescriben solo en las líneas cuyo
+    precio sale de ese listado. Las líneas de clientes con precio propio de
+    cliente, grupo o zona —los que se editan en Lista de Precios Especiales— no
+    se tocan: su precio lo manda su propia lista.
+
+    Para decidirlo se consulta la fuente real con data_helper.cli_precio, que es
+    la misma cascada que usa la app al cargar un pedido; no se comparan valores,
+    que daría un falso positivo cuando un precio especial coincide con el
+    general.
+
+    Los derivados (total, total_costo, márgenes, IVA) se recalculan siempre con
+    el precio que queda en la fila.
+
+    Devuelve {"lineas": int, "precios": int, "especiales": int}.
     """
     if not nuevos_costos:
-        return 0
+        return {"lineas": 0, "precios": 0, "especiales": 0}
 
+    nuevos_precios = nuevos_precios or {}
     lunes, domingo = semana_en_curso(hoy)
-    updates, afectados = [], 0
+    updates, afectados, con_precio, especiales = [], 0, 0, 0
+
+    # Mapa de clientes una sola vez, para resolver la cascada de precios.
+    clientes_map = {}
+    if nuevos_precios:
+        from data_helper import cargar_clientes
+        clientes_map = {str(c.get("nombre", "")).strip().lower(): c
+                        for c in cargar_clientes()}
 
     for p in leer_pedidos():
         prod_l = str(p.get("producto", "")).strip().lower()
@@ -110,10 +133,27 @@ def propagar_costo_semana(nuevos_costos: dict, hoy: date = None) -> int:
         fecha = p.get("fecha")
         if not fecha or not (lunes <= fecha <= domingo):
             continue
+
+        precio_linea = float(p.get("precio") or 0)
+        precio_final, escribir_precio = precio_linea, False
+        if prod_l in nuevos_precios:
+            from data_helper import cli_precio
+            cli = clientes_map.get(str(p.get("cliente", "")).strip().lower())
+            try:
+                _, fuente = cli_precio(cli or {}, p.get("producto", ""))
+            except Exception:
+                fuente = "general"
+            if fuente == "general":
+                precio_final, escribir_precio = nuevos_precios[prod_l], True
+                con_precio += 1
+            else:
+                # Precio de cliente/grupo/zona: lo manda su propia lista.
+                especiales += 1
+
         updates += celdas_linea(
             p["row_num"], float(p.get("cantidad") or 0),
-            float(p.get("precio") or 0),              # el de la LÍNEA
-            float(nuevos_costos[prod_l]))
+            precio_final, float(nuevos_costos[prod_l]),
+            escribir_precio=escribir_precio)
         afectados += 1
 
     if updates:
@@ -128,7 +168,8 @@ def propagar_costo_semana(nuevos_costos: dict, hoy: date = None) -> int:
         except Exception as e:
             st.warning(f"Los pedidos se actualizaron, pero no se pudo refrescar "
                        f"la caché ({e}). Recargá la página para verlos.")
-    return afectados
+    return {"lineas": afectados, "precios": con_precio,
+            "especiales": especiales}
 
 
 def _codigo_cliente(nombre: str) -> str:

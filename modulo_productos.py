@@ -176,23 +176,39 @@ def _tab_nuevo():
 
 
 # ── TAB 2: Actualizar Producto ────────────────────────────────────────────────
-def _propagar_precios_pedidos(ediciones: list) -> int:
-    """Propaga el COSTO nuevo a los pedidos de la SEMANA EN CURSO.
+def _propagar_precios_pedidos(ediciones: list) -> dict:
+    """Propaga costo y precio del catálogo a los pedidos de la SEMANA EN CURSO.
 
-    La regla y la escritura viven en order_helper.propagar_costo_semana, que
-    es la ruta compartida por todos los caminos que cambian costos. Acá solo
-    se traduce la lista de ediciones del catálogo a {producto: costo}.
+    La regla y la escritura viven en order_helper.propagar_costo_semana, que es
+    la ruta compartida por todos los caminos que cambian costos. Acá solo se
+    traduce la lista de ediciones a los dos mapas que espera.
 
-    Devuelve la cantidad de líneas de pedido actualizadas.
+    Esta pestaña edita el LISTADO GENERAL, así que el precio nuevo se manda
+    para que se propague a las líneas cuyo precio sale de ese listado. Las de
+    clientes con precio de cliente/grupo/zona no se tocan: esos se editan en
+    Lista de Precios Especiales y su propia lista manda.
+
+    Sin esto, un cambio de precio no llegaba a Envíos ni Facturación, que se
+    calculan sobre el precio.
+
+    Devuelve {"lineas": int, "precios": int, "especiales": int}.
     """
     from order_helper import propagar_costo_semana
 
-    nuevos_costos = {}
+    nuevos_costos, nuevos_precios = {}, {}
     for ed in ediciones:
         nombre = str(ed["data"].get("nombre", "")).strip()
-        if nombre:
-            nuevos_costos[nombre.lower()] = float(ed["data"].get("costo") or 0)
-    return propagar_costo_semana(nuevos_costos)
+        if not nombre:
+            continue
+        k = nombre.lower()
+        nuevos_costos[k] = float(ed["data"].get("costo") or 0)
+        p_ant = float(ed.get("precio_ant") or 0)
+        p_nue = float(ed["data"].get("precio") or 0)
+        # Hace falta conocer el precio ANTERIOR para afirmar que cambió. Si el
+        # llamador no lo pasa, no se propaga precio: solo costo.
+        if p_ant > 0 and p_nue > 0 and abs(p_nue - p_ant) > 0.001:
+            nuevos_precios[k] = p_nue
+    return propagar_costo_semana(nuevos_costos, nuevos_precios=nuevos_precios)
 
 
 def _tab_actualizar(es_antigua: bool = False):
@@ -298,6 +314,10 @@ def _tab_actualizar(es_antigua: bool = False):
                 ediciones.append({
                     "row_num": p["row_num"],
                     "data": {**p, "costo": c_new, "precio": p_new},
+                    # El precio viejo del catálogo: la propagación lo necesita
+                    # para distinguir las líneas que lo usaban de las que
+                    # tienen precio negociado.
+                    "precio_ant": ps_orig,
                 })
                 if abs(c_new - cs_orig) > 0.001:
                     cascadas.append((p["nombre"], c_new))
@@ -313,15 +333,22 @@ def _tab_actualizar(es_antigua: bool = False):
                     for nombre, c_new in cascadas:
                         _cascade_parent(nombre, c_new, todos)
                     # Propagar el costo a los pedidos de la semana en curso
-                    n_lineas = _propagar_precios_pedidos(ediciones)
+                    _res = _propagar_precios_pedidos(ediciones)
+                    n_lineas = _res["lineas"]
+                    n_precios = _res["precios"]
                 except Exception as e:
                     st.error(f"❌ Error al guardar: {type(e).__name__}: {e}")
                     st.stop()
             # El conteo real, no un "y reflejados" que aparecía igual con 0.
             if n_lineas:
-                _conf("prod_upd",
-                      f"✅ {n} producto(s) actualizados · {n_lineas} línea(s) de "
-                      f"pedido de esta semana quedaron con el costo nuevo.")
+                _msg = (f"✅ {n} producto(s) actualizados · {n_lineas} línea(s) "
+                        f"de pedido de esta semana con el costo nuevo")
+                if n_precios:
+                    _msg += f" · {n_precios} también con el precio nuevo"
+                if _res.get("especiales"):
+                    _msg += (f" · {_res['especiales']} con precio de "
+                             f"cliente/grupo/zona quedaron intactas")
+                _conf("prod_upd", _msg + ".")
             else:
                 _conf("prod_upd",
                       f"✅ {n} producto(s) actualizados · no había líneas de "
@@ -368,9 +395,15 @@ def _tab_actualizar(es_antigua: bool = False):
                         # Este camino no propagaba nada: el costo cambiaba en el
                         # catálogo y los pedidos de la semana quedaban viejos.
                         from order_helper import propagar_costo_semana
+                        _k = str(datos["nombre"]).strip().lower()
+                        _p_ant = float(prod.get("precio") or 0)
+                        _p_nue = float(datos.get("precio") or 0)
+                        _pr = ({_k: _p_nue}
+                               if _p_nue > 0 and abs(_p_nue - _p_ant) > 0.001
+                               else None)
                         _n = propagar_costo_semana(
-                            {str(datos["nombre"]).strip().lower():
-                             float(datos.get("costo") or 0)})
+                            {_k: float(datos.get("costo") or 0)},
+                            nuevos_precios=_pr)["lineas"]
                         _msg += (f" · {_n} línea(s) de pedido de esta semana "
                                  f"con el costo nuevo" if _n else
                                  " · sin pedidos de esta semana para propagar")
@@ -432,7 +465,7 @@ def _cascade_parent(nombre: str, costo_nuevo: float, todos: list):
                 costos_nuevos[str(h["nombre"]).strip().lower()] = float(nuevo_c or 0)
             # Los hijos tampoco propagaban: su costo cambiaba solo en el catálogo.
             from order_helper import propagar_costo_semana
-            n_lineas = propagar_costo_semana(costos_nuevos)
+            n_lineas = propagar_costo_semana(costos_nuevos)["lineas"]
         msg = f"Costos de {len(hijos)} hijo(s) actualizados."
         msg += (f" {n_lineas} línea(s) de pedido de esta semana quedaron "
                 f"con el costo nuevo." if n_lineas else

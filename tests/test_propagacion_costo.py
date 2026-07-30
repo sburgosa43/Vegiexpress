@@ -25,14 +25,15 @@ HOY = date(2026, 7, 29)
 PEDIDOS = [
     # lunes, con precio NEGOCIADO 9.50 (el del catálogo es 8.00)
     {"row_num": 10, "producto": "Lechuga", "fecha": date(2026, 7, 27),
-     "precio": 9.50, "costo": 5.0, "cantidad": 10, "status": "Pendiente"},
+     "precio": 9.50, "costo": 5.0, "cantidad": 10, "status": "Pendiente",
+     "cliente": "Hotelito"},          # precio de ZONA: el general no la alcanza
     {"row_num": 11, "producto": "Lechuga", "fecha": date(2026, 7, 28),
-     "precio": 8.00, "costo": 5.0, "cantidad": 4, "status": "Pendiente"},
+     "precio": 8.00, "costo": 5.0, "cantidad": 4, "status": "Pendiente", "cliente": "Nanajuana"},
     {"row_num": 12, "producto": "Lechuga", "fecha": HOY,
-     "precio": 8.00, "costo": 5.0, "cantidad": 2, "status": ""},
+     "precio": 8.00, "costo": 5.0, "cantidad": 2, "status": "", "cliente": "Nanajuana"},
     # domingo: último día de la semana, entra
     {"row_num": 13, "producto": "Lechuga", "fecha": date(2026, 8, 2),
-     "precio": 8.00, "costo": 5.0, "cantidad": 1, "status": "Pendiente"},
+     "precio": 8.00, "costo": 5.0, "cantidad": 1, "status": "Pendiente", "cliente": "Nanajuana"},
     # domingo anterior: semana pasada, NO entra
     {"row_num": 14, "producto": "Lechuga", "fecha": date(2026, 7, 26),
      "precio": 8.00, "costo": 5.0, "cantidad": 7, "status": "Pendiente"},
@@ -44,7 +45,7 @@ PEDIDOS = [
      "precio": 6.00, "costo": 3.0, "cantidad": 5, "status": "Pendiente"},
     # estado escrito a mano: entra igual, ya no se filtra por estado
     {"row_num": 17, "producto": "Lechuga", "fecha": date(2026, 7, 27),
-     "precio": 8.00, "costo": 5.0, "cantidad": 6, "status": "Entregado"},
+     "precio": 8.00, "costo": 5.0, "cantidad": 6, "status": "Entregado", "cliente": "Nanajuana"},
 ]
 
 ESCRITO = []
@@ -67,6 +68,15 @@ sys.modules["gsheets"] = gsheets
 
 data_helper = types.ModuleType("data_helper")
 data_helper.refrescar_datos = lambda **k: []
+# Clientes y cascada de precios: la propagación consulta la FUENTE del precio
+# de cada línea para decidir si el precio general la alcanza.
+CLIENTES = [{"nombre": "Nanajuana", "codigo_lugar": "L05", "grupo": ""},
+            {"nombre": "Hotelito",  "codigo_lugar": "L03", "grupo": ""}]
+FUENTE = {"hotelito": "zona"}          # el resto usa el precio general
+data_helper.cargar_clientes = lambda: [dict(c) for c in CLIENTES]
+data_helper.cli_precio = lambda cli, prod: (
+    0.0, FUENTE.get(str((cli or {}).get("nombre", "")).strip().lower(),
+                    "general"))
 sys.modules["data_helper"] = data_helper
 
 # order_helper REAL: ahí vive la regla compartida
@@ -87,8 +97,9 @@ r = Reporte()
 print(f"=== Hoy = miércoles {HOY}; semana = {semana_en_curso(HOY)} ===\n")
 
 # El costo de la Lechuga pasa de 5.00 a 6.00; el precio del catálogo es 8.00.
-n = _propagar([{"row_num": 1,
-                "data": {"nombre": "Lechuga", "costo": 6.0, "precio": 8.0}}])
+_res = _propagar([{"row_num": 1,
+                   "data": {"nombre": "Lechuga", "costo": 6.0, "precio": 8.0}}])
+n = _res["lineas"]
 pf = por_fila(ESCRITO)
 
 print("=== 1. Alcance: qué filas se tocaron ===")
@@ -116,6 +127,26 @@ r.check("K" in pf[10], "se escribe el IVA (K), que antes quedaba viejo")
 
 print("\n=== 3. El conteo que alimenta el mensaje ===")
 r.check(n == 5, f"devuelve {n} líneas actualizadas (esperado 5)")
-r.check(_propagar([]) == 0, "sin ediciones devuelve 0")
+r.check(_propagar([])["lineas"] == 0, "sin ediciones devuelve 0 líneas")
+
+print("\n=== 4. El precio general SÍ se propaga, respetando los especiales ===")
+ESCRITO.clear()
+_res2 = _propagar([{"row_num": 1, "precio_ant": 8.0,
+                    "data": {"nombre": "Lechuga", "costo": 6.0, "precio": 11.0}}])
+pf2 = por_fila(ESCRITO)
+r.check(_res2["precios"] == 4,
+        f"4 líneas con precio general reciben el nuevo ({_res2['precios']})")
+r.check(_res2["especiales"] == 1,
+        f"1 línea con precio de zona queda intacta ({_res2['especiales']})")
+r.check("E" not in pf2[10],
+        "fila 10 (Hotelito, precio de ZONA): NO se le escribe el precio")
+r.check(abs(pf2[10]["G"] - 95.0) < 1e-9,
+        f"fila 10 conserva su total con 9.50 -> {pf2[10]['G']}")
+r.check(pf2[11].get("E") == 11.0,
+        f"fila 11 (precio general): pasa a 11.00 -> {pf2[11].get('E')}")
+r.check(abs(pf2[11]["G"] - 44.0) < 1e-9,
+        f"fila 11: total recalculado 11.00 x 4 -> {pf2[11]['G']}")
+r.check(abs(pf2[11]["K"] - round(_calcular(11.0, 6.0, 4)["iva"], 4)) < 1e-6,
+        "fila 11: el IVA se recalcula con el precio nuevo (llega a facturación)")
 
 r.salir()
