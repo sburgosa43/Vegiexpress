@@ -395,6 +395,12 @@ def mostrar():
     resumen    = " · ".join(f"{z}: {len(v)}" for z, v in por_zona.items() if v)
     st.markdown(f"{total_peds} pedidos — {resumen}")
 
+    # Recalculo de la semana en curso — antes de las pestañas para que se vea
+    # desde cualquier zona. Siempre toca la semana actual, no la seleccionada.
+    from order_helper import widget_recalcular_semana
+    widget_recalcular_semana("recalc_envios")
+    st.divider()
+
     # Tabs por zona
     # Add Listados as extra tab
     tab_labels = [f"{z} ({len(por_zona[z])})" for z in ZONAS_ENVIO] + ["📋 Listados", "🖨️ Impresión Masiva"]

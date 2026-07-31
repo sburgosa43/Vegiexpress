@@ -225,6 +225,147 @@ def propagar_precio_nivel(producto: str, precio_nuevo: float,
     return afectados
 
 
+# ── Recálculo de la semana en curso ───────────────────────────────────────────
+# Reaplica a los pedidos de esta semana el precio que hoy manda la cascada
+# (cliente → grupo → zona → general) y el costo del catálogo. Es el "martillo
+# grande": a diferencia de la propagación, que solo toca lo que acabás de
+# cambiar, esto revisa TODAS las líneas de la semana.
+#
+# Por eso va siempre con vista previa: no hay forma de distinguir un precio
+# tecleado a mano —una negociación puntual— de un precio viejo. Los dos son
+# un número que no coincide con la lista, y el recálculo los pisaría igual.
+
+def calcular_diferencias_semana(hoy: date = None) -> list:
+    """Qué cambiaría al recalcular la semana en curso. NO escribe nada.
+
+    Devuelve una fila por línea que difiere, con el valor actual, el nuevo y
+    de qué nivel de la cascada sale el precio.
+    """
+    from data_helper import cargar_clientes, cli_precio
+    from excel_helper import leer_productos_con_fila
+
+    clientes = {str(c.get("nombre", "")).strip().lower(): c
+                for c in cargar_clientes()}
+    costos = {str(p.get("nombre", "")).strip().lower(): float(p.get("costo") or 0)
+              for p in leer_productos_con_fila(es_antigua=False)}
+
+    lunes, domingo = semana_en_curso(hoy)
+    difs = []
+
+    for p in leer_pedidos():
+        fecha = p.get("fecha")
+        if not fecha or not (lunes <= fecha <= domingo):
+            continue
+        if str(p.get("status", "")).strip().lower() == "cancelado":
+            continue
+
+        prod = str(p.get("producto", "")).strip()
+        if not prod:
+            continue
+        cli = clientes.get(str(p.get("cliente", "")).strip().lower())
+
+        precio_act = float(p.get("precio") or 0)
+        costo_act  = float(p.get("costo") or 0)
+        try:
+            precio_nue, fuente = cli_precio(cli or {}, prod)
+        except Exception:
+            precio_nue, fuente = 0.0, "general"
+        costo_nue = costos.get(prod.lower(), costo_act)
+
+        # Un precio 0 de la cascada significa "no lo pude resolver": se deja
+        # el de la línea en vez de ponerlo en cero.
+        if precio_nue <= 0:
+            precio_nue, fuente = precio_act, "sin cambio"
+
+        if (abs(precio_nue - precio_act) < 0.001
+                and abs(costo_nue - costo_act) < 0.001):
+            continue
+
+        difs.append({
+            "row_num":  p["row_num"],
+            "Cliente":  p.get("cliente", ""),
+            "Producto": prod,
+            "Cantidad": float(p.get("cantidad") or 0),
+            "Precio actual": round(precio_act, 2),
+            "Precio nuevo":  round(precio_nue, 2),
+            "Origen precio": fuente,
+            "Costo actual":  round(costo_act, 2),
+            "Costo nuevo":   round(costo_nue, 2),
+        })
+    return difs
+
+
+def aplicar_diferencias(difs: list) -> int:
+    """Escribe las diferencias calculadas. Devuelve la cantidad de líneas."""
+    if not difs:
+        return 0
+    updates = []
+    for d in difs:
+        updates += celdas_linea(d["row_num"], d["Cantidad"],
+                                d["Precio nuevo"], d["Costo nuevo"],
+                                escribir_precio=True)
+    update_cells("pedidos", updates)
+    try:
+        from data_helper import refrescar_datos
+        refrescar_datos(pedidos=True, productos=False,
+                        clientes=False, precios=True)
+    except Exception as e:
+        st.warning(f"Los pedidos se actualizaron, pero no se pudo refrescar "
+                   f"la caché ({e}). Recargá la página para verlos.")
+    return len(difs)
+
+
+def widget_recalcular_semana(key: str) -> None:
+    """Botón + vista previa + confirmación. `key` debe ser único por pantalla.
+
+    Siempre trabaja sobre la SEMANA EN CURSO, sin importar qué semana esté
+    seleccionada en la pantalla que lo invoca: el historial no se toca. Por eso
+    el rango va escrito en el texto, para que no haya ambigüedad.
+    """
+    import pandas as pd
+
+    lunes, domingo = semana_en_curso()
+    k_dif = f"{key}_difs"
+
+    c1, c2 = st.columns([3, 1])
+    c1.markdown(
+        f"**Recalcular los precios para la semana actual** "
+        f"<span style='color:#666;font-size:.85rem'>"
+        f"({lunes:%d/%m} al {domingo:%d/%m})</span>",
+        unsafe_allow_html=True)
+    if c2.button("Recalcular", key=f"{key}_btn", use_container_width=True,
+                 help="Reaplica el precio de la cascada y el costo del "
+                      "catálogo. Muestra qué cambiaría antes de escribir."):
+        with st.spinner("Revisando los pedidos de la semana..."):
+            st.session_state[k_dif] = calcular_diferencias_semana()
+
+    difs = st.session_state.get(k_dif)
+    if difs is None:
+        return
+    if not difs:
+        st.success("Todo al día: los pedidos de esta semana ya tienen los "
+                   "precios y costos vigentes.")
+        return
+
+    st.warning(f"**{len(difs)} línea(s) cambiarían.** Revisá antes de aplicar: "
+               "un precio puesto a mano que no salga de ninguna lista también "
+               "se reemplazaría.")
+    st.dataframe(pd.DataFrame(difs).drop(columns=["row_num"]),
+                 use_container_width=True, hide_index=True)
+
+    b1, b2 = st.columns(2)
+    if b1.button(f"✅ Aplicar {len(difs)} cambio(s)", type="primary",
+                 key=f"{key}_ok", use_container_width=True):
+        with st.spinner("Actualizando pedidos..."):
+            n = aplicar_diferencias(difs)
+        st.session_state.pop(k_dif, None)
+        st.success(f"{n} línea(s) de pedido actualizadas.")
+        st.rerun()
+    if b2.button("Cancelar", key=f"{key}_no", use_container_width=True):
+        st.session_state.pop(k_dif, None)
+        st.rerun()
+
+
 def _codigo_cliente(nombre: str) -> str:
     rows = get_all_rows("clientes")
     for row in rows:

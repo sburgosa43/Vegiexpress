@@ -718,6 +718,11 @@ def _tab_remision(todos: list):
 
 def _ajuste_precios():
     """Actualiza precios de productos en pedidos de la semana actual + catálogo."""
+    # Recalculo de la semana en curso — misma herramienta que en Productos.
+    from order_helper import widget_recalcular_semana
+    widget_recalcular_semana("recalc_gestion")
+    st.divider()
+
     _show_conf("ajuste")
     import pandas as pd
     from datetime import date

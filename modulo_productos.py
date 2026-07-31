@@ -355,6 +355,12 @@ def _tab_actualizar(es_antigua: bool = False):
                       f"pedido de esta semana para actualizar.")
             st.rerun()
 
+    # Recalculo manual: al guardar ya se propaga lo que cambiaste, pero esto
+    # reaplica TODO por si alguna vez no se aplicó.
+    st.divider()
+    from order_helper import widget_recalcular_semana
+    widget_recalcular_semana(f"recalc_upd_{lbl}")
+
     # ── Edición completa (expander) ───────────────────────────────────────────
     st.divider()
     with st.expander("✏️ Edición completa — nombre, proveedor, unidad, parent...",
@@ -605,6 +611,11 @@ def _tab_listas():
                    if _na else
                    " · sin pedidos de esta semana para actualizar."))
             st.rerun()
+
+
+    st.divider()
+    from order_helper import widget_recalcular_semana
+    widget_recalcular_semana("recalc_listas")
 
 
 # ── TAB 5: Validación (ya existía) ────────────────────────────────────────────
