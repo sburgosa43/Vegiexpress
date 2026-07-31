@@ -25,6 +25,7 @@ PRUEBAS = [
     "test_reporte_compras_pdf.py",
     "test_forms_items.py",
     "test_apedir_comprar.py",
+    "test_listado_empaque.py",
 ]
 
 

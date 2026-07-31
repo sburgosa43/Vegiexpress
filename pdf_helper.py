@@ -1312,7 +1312,7 @@ def generar_listado_checklist(clientes_grupos: list,
     """
     from reportlab.lib.pagesizes   import A4
     from reportlab.lib             import colors as rc
-    from reportlab.platypus        import KeepTogether, FrameBreak
+    from reportlab.platypus        import KeepTogether
     from reportlab.platypus.doctemplate import (BaseDocTemplate,
                                                  PageTemplate, Frame)
     from reportlab.pdfbase         import pdfmetrics
@@ -1387,30 +1387,47 @@ def generar_listado_checklist(clientes_grupos: list,
         t.setStyle(BASE_STYLE)
         return t
 
-    # ── Máximo de filas por bloque ─────────────────────────────────────────────
-    CAP = 48
+    # ── Construir story ───────────────────────────────────────────────────────
+    # Se deja que ReportLab reparta: llena la columna izquierda, sigue en la
+    # derecha y recién ahí pasa de página. KeepTogether basta para que un
+    # cliente no se parta entre columnas.
+    #
+    # Antes había además un contador manual de altura que emitía FrameBreak.
+    # Ese contador solo se reiniciaba en los saltos que emitía él mismo, pero
+    # ReportLab también salta por su cuenta cuando algo no entra — y en esos
+    # casos el contador seguía sumando. Al quedar desincronizado disparaba
+    # saltos con la columna real casi vacía: en el listado de la semana 31
+    # dejaba ~121 filas de espacio libre en 3 páginas, una columna entera casi
+    # sin usar.
+    def _bloques_que_entran(rows):
+        """Parte las filas de un cliente en bloques que quepan en una columna.
 
-    # ── Construir story midiendo alturas para forzar salto de columna ──────────
-    # Medimos cuánto se llenó la columna. Cuando un pedido no cabe en lo que
-    # resta, FrameBreak lo manda COMPLETO a la otra columna (no se desborda).
+        Se mide la altura real en vez de usar un tope fijo de filas: un nombre
+        largo ocupa dos renglones, así que un mismo número de filas puede
+        entrar o no según el contenido.
+        """
+        if not rows:
+            return []
+        tbl = make_mini_table(rows)
+        if tbl.wrap(HW, FH)[1] <= FH:
+            return [tbl]                       # el caso normal: entra entero
+        bloques, actual = [], []
+        for r in rows:
+            tentativo = actual + [r]
+            if (len(tentativo) > 1
+                    and make_mini_table(tentativo).wrap(HW, FH)[1] > FH):
+                bloques.append(make_mini_table(actual))
+                actual = [r]
+            else:
+                actual = tentativo
+        if actual:
+            bloques.append(make_mini_table(actual))
+        return bloques
+
     story = []
-    _usado = [0.0]
-    _EPS = 2 * mm
-
-    def _emitir(tbl):
-        _w, _h = tbl.wrap(HW, FH)
-        if _usado[0] > 0 and (_usado[0] + _h) > (FH - _EPS):
-            story.append(FrameBreak())
-            _usado[0] = 0.0
-        story.append(KeepTogether(tbl))
-        _usado[0] += _h
-
     for nombre, rows in clientes_grupos:
-        if len(rows) <= CAP:
-            _emitir(make_mini_table(rows))
-        else:
-            for _ini in range(0, len(rows), CAP):
-                _emitir(make_mini_table(rows[_ini:_ini + CAP]))
+        for tbl in _bloques_que_entran(rows):
+            story.append(KeepTogether(tbl))
 
     # ── Callback: header por página ───────────────────────────────────────────
     today = date.today().strftime("%d/%m/%Y")
