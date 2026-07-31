@@ -172,6 +172,59 @@ def propagar_costo_semana(nuevos_costos: dict, hoy: date = None,
             "especiales": especiales}
 
 
+def propagar_precio_nivel(producto: str, precio_nuevo: float,
+                          hoja_key: str, lista: str, hoy: date = None) -> int:
+    """Aplica un precio de zona/grupo/cliente a los pedidos de la SEMANA EN CURSO.
+
+    Solo toca las líneas de ese producto cuyos clientes pertenecen al nivel
+    editado: cambiar el precio de Zona Hogares no debe alterar el pedido de un
+    cliente que cotiza por el precio general o por otra zona.
+
+    NO toca semanas pasadas: el historial ya facturado se deja como está.
+
+    Devuelve la cantidad de líneas actualizadas.
+    """
+    from config import cliente_en_nivel
+
+    prod_l = str(producto or "").strip().lower()
+    if not prod_l or float(precio_nuevo or 0) <= 0:
+        return 0
+
+    from data_helper import cargar_clientes
+    clientes = {str(c.get("nombre", "")).strip().lower(): c
+                for c in cargar_clientes()}
+
+    lunes, domingo = semana_en_curso(hoy)
+    updates, afectados = [], 0
+
+    for p in leer_pedidos():
+        if str(p.get("producto", "")).strip().lower() != prod_l:
+            continue
+        fecha = p.get("fecha")
+        if not fecha or not (lunes <= fecha <= domingo):
+            continue
+        cli = clientes.get(str(p.get("cliente", "")).strip().lower())
+        if not cli or not cliente_en_nivel(cli, hoja_key, lista):
+            continue
+        updates += celdas_linea(
+            p["row_num"], float(p.get("cantidad") or 0),
+            float(precio_nuevo),
+            float(p.get("costo") or 0),        # el costo de la línea no cambia
+            escribir_precio=True)
+        afectados += 1
+
+    if updates:
+        update_cells("pedidos", updates)
+        try:
+            from data_helper import refrescar_datos
+            refrescar_datos(pedidos=True, productos=False,
+                            clientes=False, precios=True)
+        except Exception as e:
+            st.warning(f"Los pedidos se actualizaron, pero no se pudo refrescar "
+                       f"la caché ({e}). Recargá la página para verlos.")
+    return afectados
+
+
 def _codigo_cliente(nombre: str) -> str:
     rows = get_all_rows("clientes")
     for row in rows:

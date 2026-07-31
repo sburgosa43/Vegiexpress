@@ -333,8 +333,12 @@ def _tab_correccion():
                     n_cat += 1
 
             if upd_ped:
+                # Se pasa el nivel editado para que, si es Zona o Grupo, solo
+                # se toquen las lineas de clientes de ese nivel.
                 res = actualizar_precio_semana(cambios, semana, anio,
-                                               actualizar_catalogo=False)
+                                               actualizar_catalogo=False,
+                                               hoja_nivel=hoja_nivel,
+                                               lista_nivel=lista_nivel)
                 n_ped = res.get("filas_pedidos", 0)
 
         # El aviso se condiciona a que se HAYA pedido actualizar pedidos, no a

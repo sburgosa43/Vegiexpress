@@ -368,7 +368,16 @@ def leer_productos_semana(semana: int, año: int) -> list:
 
 
 def actualizar_precio_semana(cambios: list, semana: int, año: int,
-                                actualizar_catalogo: bool = True) -> dict:
+                                actualizar_catalogo: bool = True,
+                                hoja_nivel: str = None,
+                                lista_nivel: str = None) -> dict:
+    """Aplica los cambios a los pedidos de la semana indicada.
+
+    hoja_nivel/lista_nivel: si se está editando una lista de precios de
+    zona/grupo/cliente, acotan la escritura a los clientes de ese nivel. Sin
+    ellos se tocan todas las líneas del producto en esa semana (que es lo
+    correcto solo cuando el nivel editado es el General).
+    """
     # Import diferido: order_helper importa este módulo (ciclo si va arriba).
     from order_helper import celdas_linea
 
@@ -385,12 +394,26 @@ def actualizar_precio_semana(cambios: list, semana: int, año: int,
     # Zona y Grupo es lo único editable. Lo que se comparte es celdas_linea(),
     # que recalcula los derivados: antes se escribían E y F sueltas y G, H, I, J
     # y K quedaban con los valores viejos.
+    # Si se está editando un nivel (Zona/Grupo), solo se tocan las líneas de
+    # clientes de ESE nivel. Sin esto, corregir el precio de Zona Hogares se lo
+    # reescribía a todos los clientes con ese producto en la semana, incluidos
+    # los que cotizan por el precio general o por otra zona.
+    _en_nivel = None
+    if hoja_nivel and lista_nivel:
+        from config import cliente_en_nivel as _cen
+        from data_helper import cargar_clientes as _cc
+        _clis = {str(c.get("nombre", "")).strip().lower(): c for c in _cc()}
+        def _en_nivel(nombre_cli):
+            c = _clis.get(str(nombre_cli or "").strip().lower())
+            return bool(c) and _cen(c, hoja_nivel, lista_nivel)
+
     upd = []
     filas_ped = 0
     for p in todos:
         prod = p["producto"]
         if prod not in prod_all: continue
         if p["semana"] != semana or p["año"] != año: continue
+        if _en_nivel and not _en_nivel(p.get("cliente", "")): continue
 
         p_nuevo = precio_map.get(prod)
         c_nuevo = costo_map.get(prod)

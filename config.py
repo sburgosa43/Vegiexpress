@@ -65,6 +65,45 @@ def excluido_proveedores(nombre: str) -> bool:
     n = nombre.lower()
     return any(x in n for x in EXCLUIR_PROVEEDORES)
 
+# ── Listas de precios: a qué clientes alcanza cada nivel ──────────────────────
+# La cascada de precios (data_helper.cli_precio) resuelve cliente → grupo →
+# zona → general. Estas dos piezas definen QUÉ CLIENTES alcanza cada lista, y
+# viven acá porque las usan dos cosas distintas: la cascada al cotizar, y la
+# propagación de un cambio de precio a los pedidos de la semana. Con una copia
+# en cada lado, un cambio de zona se aplicaría a clientes equivocados.
+
+ZONA_LISTA_CODIGOS = {
+    "antigua": ("L03", "L04"),
+    "hogares": ("L20",),
+}
+
+
+def zona_lista_de(codigo_lugar: str) -> str | None:
+    """Nombre de la lista de PreciosZona que le toca a un codigo_lugar."""
+    cod = str(codigo_lugar or "").strip()
+    for lista, codigos in ZONA_LISTA_CODIGOS.items():
+        if cod in codigos:
+            return lista
+    return None
+
+
+def cliente_en_nivel(cliente: dict, hoja_key: str, lista: str) -> bool:
+    """¿La lista de precios `lista` de `hoja_key` alcanza a este cliente?
+
+    hoja_key: 'precioszona' | 'preciosgrupo' | 'preciosclient'
+    """
+    l = str(lista or "").strip().lower()
+    if not l:
+        return False
+    if hoja_key == "precioszona":
+        return zona_lista_de(cliente.get("codigo_lugar", "")) == l
+    if hoja_key == "preciosgrupo":
+        return str(cliente.get("grupo", "") or "").strip().lower() == l
+    if hoja_key == "preciosclient":
+        return str(cliente.get("nombre", "") or "").strip().lower() == l
+    return False
+
+
 # ── Reglas ISR ────────────────────────────────────────────────────────────────
 ISR_UMBRAL = 2800.0          # Factura mínima para aplicar ISR
 

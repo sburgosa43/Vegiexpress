@@ -143,12 +143,10 @@ def cli_precio(cliente: dict, producto_nombre: str) -> tuple[float, str]:
     grupo      = str(cliente.get("grupo", "") or "").strip()
     nombre_cli = str(cliente.get("nombre", "") or "").strip()
 
-    # Zona key para PreciosZona
-    zona_key = None
-    if cod == "L20":
-        zona_key = "hogares"
-    elif cod in ("L03", "L04"):
-        zona_key = "antigua"
+    # Zona key para PreciosZona — la correspondencia vive en config para que la
+    # propagación de precios a pedidos use exactamente el mismo criterio.
+    from config import zona_lista_de
+    zona_key = zona_lista_de(cod)
 
     tab_cli  = _leer_tabla_precios("preciosclient")
     tab_grp  = _leer_tabla_precios("preciosgrupo")

@@ -503,6 +503,17 @@ def _tab_catalogo():
 
 # ── TAB 4: Listas de Precios ──────────────────────────────────────────────────
 def _tab_listas():
+    def _propagar_nivel(hoja, lista, producto, precio):
+        """Aplica el precio a los pedidos de la SEMANA EN CURSO de los clientes
+        de ese nivel. No toca semanas pasadas: el historial queda como está."""
+        try:
+            from order_helper import propagar_precio_nivel
+            return propagar_precio_nivel(producto, precio, hoja, lista)
+        except Exception as e:
+            st.warning(f"El precio se guardó, pero no se pudo aplicar a los "
+                       f"pedidos de esta semana ({e}).")
+            return 0
+
     st.markdown("#### Listas de Precios Especiales")
     st.caption("Precio General al lado del especial para comparar. "
                "Los productos sin fila en esta lista usan el precio General.")
@@ -551,7 +562,12 @@ def _tab_listas():
                                help="Guardar"):
                 guardar_precio_especial(hoja, lista, f["producto"], nuevo_p)
                 limpiar_cache_precios()
-                st.success(f"Q{nuevo_p:.2f} guardado para {f['producto']}.")
+                _n = _propagar_nivel(hoja, lista, f["producto"], nuevo_p)
+                st.success(
+                    f"Q{nuevo_p:.2f} guardado para {f['producto']}."
+                    + (f" · {_n} línea(s) de pedido de esta semana actualizadas."
+                       if _n else
+                       " · sin pedidos de esta semana para actualizar."))
                 st.rerun()
             if col_del.button("🗑️", key=f"lp_d_{lista}_{f['producto']}",
                               help="Quitar de esta lista"):
@@ -581,8 +597,13 @@ def _tab_listas():
         else:
             guardar_precio_especial(hoja, lista, prod_add, precio_add)
             limpiar_cache_precios()
-            st.success(f"'{prod_add}' ({gen_map.get(prod_add.lower(),{}).get('unidad','')}) "
-                       f"agregado a {lista} con Q{precio_add:.2f}.")
+            _na = _propagar_nivel(hoja, lista, prod_add, precio_add)
+            st.success(
+                f"'{prod_add}' ({gen_map.get(prod_add.lower(),{}).get('unidad','')}) "
+                f"agregado a {lista} con Q{precio_add:.2f}."
+                + (f" · {_na} línea(s) de pedido de esta semana actualizadas."
+                   if _na else
+                   " · sin pedidos de esta semana para actualizar."))
             st.rerun()
 
 
