@@ -366,6 +366,79 @@ def widget_recalcular_semana(key: str) -> None:
         st.rerun()
 
 
+# ── Cambio masivo de costos en el historial ───────────────────────────────────
+# A diferencia de todo lo demás, esto SÍ toca semanas pasadas. Existe para
+# corregir costos mal cargados, y está pensado sobre todo para productos de
+# PROCESO, cuyo costo es estable porque sale de una receta. En producto fresco
+# el costo varía cada semana: sobrescribir el histórico ahí borraría el costo
+# real de esa semana en vez de corregir un error.
+
+def diferencias_costo_historico(costos: dict, desde: date, hasta: date) -> list:
+    """Qué líneas cambiarían al aplicar `costos` en el rango. NO escribe nada.
+
+    costos: {nombre_producto_en_minúsculas: costo_a_aplicar}
+
+    Devuelve una fila por línea que difiere, con el margen actual y el que
+    quedaría, para que el impacto se vea antes de escribir.
+    """
+    if not costos or not desde or not hasta or desde > hasta:
+        return []
+    from config import margen_neto_q
+
+    difs = []
+    for p in leer_pedidos():
+        fecha = p.get("fecha")
+        if not fecha or not (desde <= fecha <= hasta):
+            continue
+        if str(p.get("status", "")).strip().lower() == "cancelado":
+            continue
+        prod_l = str(p.get("producto", "")).strip().lower()
+        if prod_l not in costos:
+            continue
+
+        costo_act = float(p.get("costo") or 0)
+        costo_nue = float(costos[prod_l])
+        if abs(costo_nue - costo_act) < 0.001:
+            continue
+
+        precio = float(p.get("precio") or 0)
+        cant   = float(p.get("cantidad") or 0)
+        difs.append({
+            "row_num":  p["row_num"],
+            "Fecha":    fecha.strftime("%d/%m/%Y"),
+            "Semana":   p.get("semana"),
+            "Cliente":  p.get("cliente", ""),
+            "Producto": p.get("producto", ""),
+            "Cantidad": cant,
+            "Precio":   round(precio, 2),
+            "Costo actual": round(costo_act, 2),
+            "Costo nuevo":  round(costo_nue, 2),
+            "Margen actual": round(margen_neto_q(costo_act, precio) * cant, 2),
+            "Margen nuevo":  round(margen_neto_q(costo_nue, precio) * cant, 2),
+        })
+    difs.sort(key=lambda d: (d["Producto"], d["Fecha"]))
+    return difs
+
+
+def aplicar_costo_historico(difs: list) -> int:
+    """Escribe las diferencias de costo. El PRECIO de cada línea no se toca."""
+    if not difs:
+        return 0
+    updates = []
+    for d in difs:
+        updates += celdas_linea(d["row_num"], d["Cantidad"],
+                                d["Precio"], d["Costo nuevo"])
+    update_cells("pedidos", updates)
+    try:
+        from data_helper import refrescar_datos
+        refrescar_datos(pedidos=True, productos=False,
+                        clientes=False, precios=True)
+    except Exception as e:
+        st.warning(f"Los pedidos se actualizaron, pero no se pudo refrescar "
+                   f"la caché ({e}). Recargá la página para verlos.")
+    return len(difs)
+
+
 def _codigo_cliente(nombre: str) -> str:
     rows = get_all_rows("clientes")
     for row in rows:

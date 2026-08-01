@@ -28,6 +28,7 @@ PRUEBAS = [
     "test_listado_empaque.py",
     "test_precio_nivel.py",
     "test_recalculo_semana.py",
+    "test_costo_historico.py",
 ]
 
 

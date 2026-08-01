@@ -618,6 +618,123 @@ def _tab_listas():
     widget_recalcular_semana("recalc_listas")
 
 
+def _tab_costos_masivo():
+    """Aplica un costo al HISTORIAL de pedidos, en el rango de fechas elegido.
+
+    Es la única herramienta que toca semanas pasadas: todo lo demás está acotado
+    a la semana en curso a propósito. Existe para corregir costos mal cargados,
+    y por eso arranca filtrando productos de PROCESO, cuyo costo sale de una
+    receta y es estable. En producto fresco el costo varía cada semana, así que
+    sobrescribir el histórico borraría el costo real de esa semana en vez de
+    corregir un error.
+    """
+    from datetime import date, timedelta
+    from order_helper import (diferencias_costo_historico,
+                              aplicar_costo_historico, semana_en_curso)
+
+    st.markdown("#### Actualizar Costos Masivo")
+    st.caption("Aplica un costo a los pedidos YA INGRESADOS del rango que "
+               "elijas. Pensado para corregir costos mal cargados en productos "
+               "de proceso, cuyo costo es estable.")
+    st.warning("⚠️ Esto modifica pedidos de semanas pasadas, incluidas las ya "
+               "facturadas. **No hay deshacer**: si algo sale mal, la única "
+               "salida es restaurar el Sheet desde el historial de versiones "
+               "de Google. Revisá la vista previa antes de aplicar.")
+
+    todos = leer_productos_con_fila(es_antigua=False)
+    tipos = sorted({str(p.get("tipo_producto", "") or "").strip()
+                    for p in todos if str(p.get("tipo_producto", "") or "").strip()})
+
+    # ── Qué productos ────────────────────────────────────────────────────────
+    f1, f2 = st.columns([1, 2])
+    tipo_sel = f1.multiselect(
+        "Tipo de producto", tipos,
+        default=[t for t in tipos if t.lower() == "proceso"],
+        key="cm_tipos",
+        help="Arranca en Proceso porque su costo es estable. Podés cambiarlo, "
+             "pero en producto fresco el costo real varía cada semana.")
+
+    candidatos = [p for p in todos
+                  if not tipo_sel
+                  or str(p.get("tipo_producto", "") or "").strip() in tipo_sel]
+    nombres = sorted(p["nombre"] for p in candidatos)
+    prods_sel = f2.multiselect("Productos a actualizar", nombres,
+                               key="cm_prods",
+                               placeholder="Elegí uno o más productos...")
+
+    if not prods_sel:
+        st.info("Seleccioná al menos un producto.")
+        return
+
+    # ── Qué costo aplicar ────────────────────────────────────────────────────
+    st.markdown("**Costo a aplicar** — por defecto el del catálogo; podés "
+                "cambiarlo si el correcto es otro.")
+    cat = {p["nombre"]: p for p in candidatos}
+    costos = {}
+    for i, nom in enumerate(prods_sel):
+        c1, c2, c3 = st.columns([2.5, 1, 1])
+        c1.markdown(f"<div style='padding-top:8px'>{nom}</div>",
+                    unsafe_allow_html=True)
+        _cat = float(cat.get(nom, {}).get("costo", 0) or 0)
+        c2.markdown(f"<div style='padding-top:8px;color:#666;font-size:.85rem'>"
+                    f"catálogo: Q{_cat:.2f}</div>", unsafe_allow_html=True)
+        costos[nom.strip().lower()] = c3.number_input(
+            "Costo Q", value=_cat, min_value=0.0, step=0.25,
+            key=f"cm_costo_{i}", label_visibility="collapsed")
+
+    # ── Rango de fechas ──────────────────────────────────────────────────────
+    lunes, domingo = semana_en_curso()
+    d1, d2 = st.columns(2)
+    desde = d1.date_input("Desde", value=lunes, key="cm_desde")
+    hasta = d2.date_input("Hasta", value=domingo, key="cm_hasta")
+    if desde > hasta:
+        st.error("El 'Desde' es posterior al 'Hasta'.")
+        return
+    if desde < lunes:
+        st.caption(f"⚠️ El rango incluye semanas anteriores a la actual "
+                   f"({desde:%d/%m/%Y} → {hasta:%d/%m/%Y}).")
+
+    # ── Vista previa ─────────────────────────────────────────────────────────
+    K = "cm_difs"
+    if st.button("🔍 Ver qué cambiaría", key="cm_ver", type="primary"):
+        with st.spinner("Revisando pedidos del rango..."):
+            st.session_state[K] = diferencias_costo_historico(
+                costos, desde, hasta)
+
+    difs = st.session_state.get(K)
+    if difs is None:
+        return
+    if not difs:
+        st.success("Ninguna línea cambiaría: los pedidos del rango ya tienen "
+                   "esos costos.")
+        return
+
+    _ma = sum(d["Margen actual"] for d in difs)
+    _mn = sum(d["Margen nuevo"] for d in difs)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Líneas a modificar", f"{len(difs):,}")
+    m2.metric("Margen actual",  f"Q{_ma:,.2f}")
+    m3.metric("Margen después", f"Q{_mn:,.2f}", delta=f"Q{_mn - _ma:,.2f}")
+
+    st.dataframe(pd.DataFrame(difs).drop(columns=["row_num"]),
+                 use_container_width=True, hide_index=True)
+    st.caption(f"Rango: {desde:%d/%m/%Y} a {hasta:%d/%m/%Y} · "
+               f"el precio de cada línea NO se modifica, solo el costo y los "
+               f"derivados.")
+
+    b1, b2 = st.columns(2)
+    if b1.button(f"✅ Aplicar a {len(difs)} línea(s)", type="primary",
+                 key="cm_ok", use_container_width=True):
+        with st.spinner("Actualizando pedidos..."):
+            n = aplicar_costo_historico(difs)
+        st.session_state.pop(K, None)
+        st.success(f"{n} línea(s) actualizadas.")
+        st.rerun()
+    if b2.button("Cancelar", key="cm_no", use_container_width=True):
+        st.session_state.pop(K, None)
+        st.rerun()
+
+
 # ── TAB 5: Validación (ya existía) ────────────────────────────────────────────
 def _tab_validacion():
     import unicodedata
@@ -708,14 +825,16 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    tab_upd, tab_np, tab_cat, tab_lp, tab_val = st.tabs([
+    tab_upd, tab_cm, tab_np, tab_cat, tab_lp, tab_val = st.tabs([
         "✏️ Actualizar Precios",
+        "🧮 Actualizar Costos Masivo",
         "➕ Nuevo Producto",
         "📋 Ver Catálogo",
         "🏷️ Lista de Precios Especiales",
         "🔍 Validación",
     ])
     with tab_upd: _tab_actualizar(es_antigua=False)
+    with tab_cm:  _tab_costos_masivo()
     with tab_np:  _tab_nuevo()
     with tab_cat: _tab_catalogo()
     with tab_lp:  _tab_listas()
