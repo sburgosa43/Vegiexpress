@@ -1659,28 +1659,44 @@ def boton_imprimir_html(pdf_bytes: bytes, fn_id: str,
                 .replace("LABEL", label))
 
 
-# ── REPORTE DE MÁRGENES (Control de Márgenes) ─────────────────────────────────
-def generar_reporte_margenes(filas: list, desde: "date", hasta: "date",
-                             filtros_txt: str = "",
-                             tot: dict = None) -> bytes:
+# ── REPORTES TABULARES ────────────────────────────────────────────────────────
+# Un solo maquetador para todos los reportes de la app. Antes cada reporte traía
+# su propia copia de ~140 líneas de paginación, encabezado y footer; con dos
+# copias ya empezaban a divergir en detalles (alto de fila, tamaño de fuente).
+#
+# Regla: acá NO se calcula nada. Recibe las celdas YA formateadas como texto y
+# solo las acomoda, para que el papel no pueda discrepar de la pantalla.
+
+def generar_pdf_reporte(titulo: str, encabezados: list, filas: list,
+                        desde: "date", hasta: "date", *,
+                        filtros_txt: str = "",
+                        fila_total: list = None,
+                        anchos: list = None,
+                        alinear_der: tuple = (),
+                        filas_por_pagina: int = 28,
+                        apaisado: bool = True,
+                        pie: str = "") -> bytes:
     """
-    PDF A4 apaisado B&W del Control de Márgenes por producto.
+    PDF B&W de un reporte tabular, con encabezado repetido en cada página.
 
-    filas: los registros que ya muestra modulo_margenes.agregar_margenes.
-    tot:   el dict de modulo_margenes.totales.
-
-    Acá NO se recalcula ningún margen: solo se maqueta lo que vino, para que el
-    papel no pueda discrepar de la pantalla. Va apaisado porque las ocho
-    columnas en vertical dejarían el nombre del producto en dos renglones.
+    encabezados: list[str] — los títulos de columna.
+    filas:       list[list[str]] — celdas ya formateadas (números con sus
+                 separadores, porcentajes con su signo). Strings, no floats.
+    fila_total:  list[str] o None — se dibuja al final de la ÚLTIMA página con
+                 una línea gruesa arriba.
+    anchos:      list[float] — fracciones del ancho útil; deben sumar 1. Si no
+                 se pasa, todas las columnas miden igual.
+    alinear_der: índices de columna alineados a la derecha (los numéricos). La
+                 columna 0 va siempre a la izquierda salvo que se incluya acá.
     """
     from reportlab.lib import colors as rc
     from reportlab.lib.pagesizes import landscape
     from reportlab.platypus import PageBreak
     from datetime import date as _date
 
-    tot = tot or {}
+    n_col = len(encabezados)
     buf = BytesIO()
-    PS = landscape(A4)
+    PS  = landscape(A4) if apaisado else A4
     ML = MR = 12*mm
     MT = MB = 11*mm
     PW, PH = PS
@@ -1689,80 +1705,45 @@ def generar_reporte_margenes(filas: list, desde: "date", hasta: "date",
     doc = SimpleDocTemplate(buf, pagesize=PS,
                             leftMargin=ML, rightMargin=MR,
                             topMargin=MT, bottomMargin=MB,
-                            title=f"Control de Márgenes · "
-                                  f"{desde:%d/%m/%Y}-{hasta:%d/%m/%Y}")
+                            title=f"{titulo} · {desde:%d/%m/%Y}-{hasta:%d/%m/%Y}")
     story = []
     NEGRO = rc.black
     HOY = _date.today().strftime("%d/%m/%Y")
-    ROWS_PER_PAGE = 28
 
     def ts(name, **kw):
         d = dict(fontSize=8, fontName="Helvetica", textColor=NEGRO, leading=10)
         d.update(kw)
         return ParagraphStyle(name, **d)
 
-    s_title = ts("mtit", fontSize=12, fontName="Helvetica-Bold", leading=14)
-    s_sub   = ts("msub", fontSize=7.5, alignment=TA_RIGHT)
-    s_meta  = ts("mmeta", fontSize=7.5)
-    s_th    = ts("mth", fontSize=7, fontName="Helvetica-Bold",
+    s_title = ts("rgtit", fontSize=12, fontName="Helvetica-Bold", leading=14)
+    s_sub   = ts("rgsub", fontSize=7.5, alignment=TA_RIGHT)
+    s_meta  = ts("rgmeta", fontSize=7.5)
+    s_th    = ts("rgth", fontSize=7, fontName="Helvetica-Bold",
                  alignment=TA_CENTER, leading=8.5)
-    s_th_l  = ts("mthl", fontSize=7, fontName="Helvetica-Bold", leading=8.5)
-    s_td    = ts("mtd", fontSize=7.5)
-    s_td_r  = ts("mtdr", fontSize=7.5, alignment=TA_RIGHT)
-    s_tot_l = ts("mtotl", fontSize=8, fontName="Helvetica-Bold")
-    s_tot_r = ts("mtotr", fontSize=8, fontName="Helvetica-Bold",
+    s_th_l  = ts("rgthl", fontSize=7, fontName="Helvetica-Bold", leading=8.5)
+    s_td    = ts("rgtd", fontSize=7.5)
+    s_td_r  = ts("rgtdr", fontSize=7.5, alignment=TA_RIGHT)
+    s_tot_l = ts("rgtotl", fontSize=8, fontName="Helvetica-Bold")
+    s_tot_r = ts("rgtotr", fontSize=8, fontName="Helvetica-Bold",
                  alignment=TA_RIGHT)
-    s_ft    = ParagraphStyle("mft", fontSize=6.5, fontName="Helvetica-Oblique",
+    s_ft    = ParagraphStyle("rgft", fontSize=6.5, fontName="Helvetica-Oblique",
                              textColor=NEGRO, alignment=TA_CENTER, leading=8)
 
-    # Producto se lleva el ancho porque es lo único de largo variable.
-    col_w = [CW*0.26, CW*0.09, CW*0.11, CW*0.11,
-             CW*0.12, CW*0.07, CW*0.12, CW*0.07]
-    CABEZAL = ["Producto", "Cantidad", "Costo (Q)", "Ingreso (Q)",
-               "M. Bruto (Q)", "Bruto %", "M. Neto (Q)", "Neto %"]
+    col_w = [CW * a for a in anchos] if anchos else [CW / n_col] * n_col
+    der   = set(alinear_der)
 
-    def header_row():
-        return [_p(CABEZAL[0], s_th_l)] + [_p(h, s_th) for h in CABEZAL[1:]]
+    def _celdas(valores, izq, drch):
+        return [_p(str(v), drch if i in der else izq)
+                for i, v in enumerate(valores)]
 
-    def fila_datos(r):
-        return [
-            _p(str(r.get("Producto", "")), s_td),
-            _p(f"{float(r.get('Cantidad', 0)):,.2f}", s_td_r),
-            _p(f"{float(r.get('Costo (Q)', 0)):,.2f}", s_td_r),
-            _p(f"{float(r.get('Ingreso (Q)', 0)):,.2f}", s_td_r),
-            _p(f"{float(r.get('Margen Bruto (Q)', 0)):,.2f}", s_td_r),
-            _p(f"{float(r.get('Bruto %', 0)):.1f}%", s_td_r),
-            _p(f"{float(r.get('Margen Neto (Q)', 0)):,.2f}", s_td_r),
-            _p(f"{float(r.get('Neto %', 0)):.1f}%", s_td_r),
-        ]
-
-    def estilo_tabla(n_filas, con_total):
-        cmds = [
-            ("GRID", (0, 0), (-1, -1), 0.4, NEGRO),
-            ("BOX", (0, 0), (-1, -1), 0.9, NEGRO),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.9, NEGRO),
-            ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
-            ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
-        ]
-        if con_total:
-            cmds.append(("LINEABOVE", (0, n_filas - 1), (-1, n_filas - 1),
-                         0.9, NEGRO))
-        return TableStyle(cmds)
-
-    # Paginación manual: cada página repite el encabezado, igual que
-    # generar_reporte_compras.
-    paginas = [filas[i:i + ROWS_PER_PAGE]
-               for i in range(0, len(filas), ROWS_PER_PAGE)] or [[]]
+    paginas = [filas[i:i + filas_por_pagina]
+               for i in range(0, len(filas), filas_por_pagina)] or [[]]
 
     for i, chunk in enumerate(paginas):
         if i:
             story.append(PageBreak())
 
-        enc = Table([[_p("Control de Márgenes por Producto", s_title),
-                      _p(f"Generado: {HOY}", s_sub)]],
+        enc = Table([[_p(titulo, s_title), _p(f"Generado: {HOY}", s_sub)]],
                     colWidths=[CW * 0.65, CW * 0.35])
         enc.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
@@ -1778,27 +1759,110 @@ def generar_reporte_margenes(filas: list, desde: "date", hasta: "date",
                         f"<b>Filtros:</b> {_sin_emoji(filtros_txt)}", s_meta))
         story.append(Spacer(1, 4))
 
-        datos = [header_row()] + [fila_datos(r) for r in chunk]
+        datos = [[_p(h, s_th if j in der or j > 0 else s_th_l)
+                  for j, h in enumerate(encabezados)]]
+        datos += [_celdas([_sin_emoji(c) for c in f], s_td, s_td_r)
+                  for f in chunk]
+
         ultima = (i == len(paginas) - 1)
-        if ultima:
-            datos.append([
-                _p("TOTAL", s_tot_l),
-                _p(f"{tot.get('cantidad', 0):,.2f}", s_tot_r),
-                _p(f"{tot.get('costo', 0):,.2f}", s_tot_r),
-                _p(f"{tot.get('ingreso', 0):,.2f}", s_tot_r),
-                _p(f"{tot.get('bruto', 0):,.2f}", s_tot_r),
-                _p(f"{tot.get('bruto_pct', 0):.1f}%", s_tot_r),
-                _p(f"{tot.get('neto', 0):,.2f}", s_tot_r),
-                _p(f"{tot.get('neto_pct', 0):.1f}%", s_tot_r),
-            ])
+        if ultima and fila_total:
+            datos.append(_celdas(fila_total, s_tot_l, s_tot_r))
+
+        cmds = [
+            ("GRID", (0, 0), (-1, -1), 0.4, NEGRO),
+            ("BOX", (0, 0), (-1, -1), 0.9, NEGRO),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.9, NEGRO),
+            ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
+        ]
+        if ultima and fila_total:
+            cmds.append(("LINEABOVE", (0, len(datos) - 1), (-1, len(datos) - 1),
+                         0.9, NEGRO))
         t = Table(datos, colWidths=col_w, repeatRows=1)
-        t.setStyle(estilo_tabla(len(datos), ultima))
+        t.setStyle(TableStyle(cmds))
         story.append(t)
 
         story.append(Spacer(1, 5))
-        story.append(_p(f"VeggiExpress · Control de Márgenes · "
-                        f"página {i + 1} de {len(paginas)} · "
-                        f"{len(filas)} producto(s)", s_ft))
+        _pie = f" · {pie}" if pie else ""
+        story.append(_p(f"VeggiExpress · {titulo} · "
+                        f"página {i + 1} de {len(paginas)}{_pie}", s_ft))
 
     doc.build(story)
     return buf.getvalue()
+
+
+def _q(v) -> str:
+    """Número a texto con separador de miles y dos decimales."""
+    return f"{float(v or 0):,.2f}"
+
+
+def _pc(v) -> str:
+    """Porcentaje a texto con un decimal."""
+    return f"{float(v or 0):.1f}%"
+
+
+# ── REPORTE DE MÁRGENES (Control de Márgenes) ─────────────────────────────────
+def generar_reporte_margenes(filas: list, desde: "date", hasta: "date",
+                             filtros_txt: str = "",
+                             tot: dict = None) -> bytes:
+    """
+    PDF del Control de Márgenes por producto.
+
+    filas: los registros que ya muestra modulo_margenes.agregar_margenes.
+    tot:   el dict de modulo_margenes.totales.
+
+    Solo formatea y delega la maquetación: los márgenes no se recalculan acá.
+    Va apaisado porque las ocho columnas en vertical dejarían el nombre del
+    producto en dos renglones.
+    """
+    tot = tot or {}
+    cuerpo = [[r.get("Producto", ""), _q(r.get("Cantidad")),
+               _q(r.get("Costo (Q)")), _q(r.get("Ingreso (Q)")),
+               _q(r.get("Margen Bruto (Q)")), _pc(r.get("Bruto %")),
+               _q(r.get("Margen Neto (Q)")), _pc(r.get("Neto %"))]
+              for r in filas]
+    total = (["TOTAL", _q(tot.get("cantidad")), _q(tot.get("costo")),
+              _q(tot.get("ingreso")), _q(tot.get("bruto")),
+              _pc(tot.get("bruto_pct")), _q(tot.get("neto")),
+              _pc(tot.get("neto_pct"))] if tot else None)
+    return generar_pdf_reporte(
+        "Control de Márgenes por Producto",
+        ["Producto", "Cantidad", "Costo (Q)", "Ingreso (Q)", "M. Bruto (Q)",
+         "Bruto %", "M. Neto (Q)", "Neto %"],
+        cuerpo, desde, hasta,
+        filtros_txt=filtros_txt, fila_total=total,
+        anchos=[0.26, 0.09, 0.11, 0.11, 0.12, 0.07, 0.12, 0.07],
+        alinear_der=(1, 2, 3, 4, 5, 6, 7),
+        pie=f"{len(filas)} producto(s)")
+
+
+# ── HISTÓRICO POR ÁREA (Facturación Mensual) ──────────────────────────────────
+def generar_reporte_historico(filas: list, desde: "date", hasta: "date",
+                              filtros_txt: str = "",
+                              tot: dict = None) -> bytes:
+    """
+    PDF del histórico de venta y compra por área.
+
+    filas: los registros que ya muestra modulo_facturacion.agregar_historico.
+    tot:   el dict de modulo_facturacion.totales_historico.
+    """
+    tot = tot or {}
+    cuerpo = [[r.get("Período", ""), r.get("Área", ""), _q(r.get("Venta (Q)")),
+               _q(r.get("Compra (Q)")), _q(r.get("Diferencia (Q)")),
+               _pc(r.get("Dif %")), f"{int(r.get('Líneas') or 0):,}"]
+              for r in filas]
+    total = (["TOTAL", "", _q(tot.get("venta")), _q(tot.get("compra")),
+              _q(tot.get("dif")), _pc(tot.get("dif_pct")),
+              f"{int(tot.get('lineas') or 0):,}"] if tot else None)
+    return generar_pdf_reporte(
+        "Histórico de Venta y Compra por Área",
+        ["Período", "Área", "Venta (Q)", "Compra (Q)", "Diferencia (Q)",
+         "Dif %", "Líneas"],
+        cuerpo, desde, hasta,
+        filtros_txt=filtros_txt, fila_total=total,
+        anchos=[0.13, 0.24, 0.14, 0.14, 0.15, 0.09, 0.11],
+        alinear_der=(2, 3, 4, 5, 6),
+        pie=f"{len(filas)} fila(s)")

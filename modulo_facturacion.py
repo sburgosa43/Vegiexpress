@@ -384,16 +384,36 @@ def _tab_historico(todos: list):
         st.caption("⚠️ 'Sin área' son clientes cuyo codigo_lugar no está en "
                    "ZONAS_MAP — revisalos en el catálogo de Clientes.")
 
+    # Texto de los filtros aplicados: va al PDF para que un reporte impreso
+    # nunca sea ambiguo sobre qué recorte representa.
+    filtros_txt = (f"Cliente: {', '.join(sel_cli)}" if sel_cli
+                   else "sin filtros (todos los clientes)")
+    filtros_txt += f" · Ver por: {gran}"
+
+    b1, b2 = st.columns(2)
     csv_df = pd.concat([df, pd.DataFrame([{
         "Período": "TOTAL", "Área": "",
         "Venta (Q)": round(t["venta"], 2), "Compra (Q)": round(t["compra"], 2),
         "Diferencia (Q)": round(t["dif"], 2), "Dif %": t["dif_pct"],
         "Líneas": t["lineas"]}])], ignore_index=True)
-    st.download_button(
+    b1.download_button(
         "📥 Descargar CSV",
         data=csv_df.to_csv(index=False).encode("utf-8-sig"),
         file_name=f"historico_area_{desde:%Y%m%d}_{hasta:%Y%m%d}.csv",
         mime="text/csv", key="hist_csv", use_container_width=True)
+
+    with b2:
+        if st.button("🖨 Preparar impresión", key="hist_pdf",
+                     use_container_width=True):
+            import streamlit.components.v1 as components
+            from pdf_helper import (generar_reporte_historico,
+                                    boton_imprimir_html)
+            with st.spinner("Generando PDF..."):
+                pdf = generar_reporte_historico(df.to_dict("records"), desde,
+                                                hasta, filtros_txt, t)
+            components.html(boton_imprimir_html(pdf, "rephistorico",
+                                                label="🖨 Abrir e imprimir"),
+                            height=60)
 
 
 def mostrar():

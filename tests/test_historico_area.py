@@ -191,4 +191,32 @@ r.check(_rango_historico("Últimos 12 meses", HOY, PEDIDOS)[1] == HOY,
 print("\n=== 9. El reporte NO escribe ===")
 r.check(ESCRITO == [], "ningún update_cells: es solo lectura")
 
+print("\n=== 10. Exportación e impresión ===")
+# El PDF debe salir de las MISMAS filas que muestra la pantalla: si maquetara
+# a partir de otra cosa, papel y pantalla podrian discrepar sin que se note.
+sys.modules.pop("pdf_helper", None)
+try:
+    from pdf_helper import generar_reporte_historico, generar_pdf_reporte
+    pdf = generar_reporte_historico(df.to_dict("records"), JUN1, JUL31,
+                                    f"Cliente: Hotelito · Ver por: Mes", t)
+    r.check(pdf[:4] == b"%PDF" and len(pdf) > 1200,
+            f"PDF válido de {len(pdf):,} bytes")
+    r.check(generar_reporte_historico([], JUN1, JUL31, "", {})[:4] == b"%PDF",
+            "un reporte sin filas tampoco explota")
+    # Sin fila_total no debe dibujarse un TOTAL en blanco.
+    r.check(generar_reporte_historico(df.to_dict("records"), JUN1, JUL31,
+                                      "", None)[:4] == b"%PDF",
+            "sin totales tambien genera")
+    # Mas filas que las que entran en una pagina -> tiene que paginar.
+    _muchas = df.to_dict("records") * 20
+    _multi = generar_reporte_historico(_muchas, JUN1, JUL31, "", t)
+    r.check(len(_multi) > len(pdf),
+            f"{len(_muchas)} filas ocupan mas de una pagina "
+            f"({len(_multi):,} bytes vs {len(pdf):,})")
+    r.check(generar_pdf_reporte("X", ["A", "B"], [["1", "2"]], JUN1, JUL31,
+                                )[:4] == b"%PDF",
+            "el maquetador generico funciona con anchos por defecto")
+except ImportError:
+    print("  (reportlab no instalado: se omite)")
+
 r.salir()
