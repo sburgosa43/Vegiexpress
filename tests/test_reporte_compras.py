@@ -62,6 +62,16 @@ sys.modules["excel_helper"] = excel_helper
 
 data_helper = types.ModuleType("data_helper")
 data_helper.cargar_clientes = lambda: [dict(c) for c in CLIENTES]
+# mapa_area_grupo vive en data_helper (fuente unica de la resolucion de area).
+# Se carga la funcion REAL para que el test no valide una copia.
+_dh_src = open(os.path.join(RAIZ, "data_helper.py"), encoding="utf-8").read()
+_dh_ns = {"cargar_clientes": data_helper.cargar_clientes,
+          "st": sys.modules["streamlit"]}
+exec(compile(ast.Module(
+    body=[n for n in ast.parse(_dh_src).body
+          if isinstance(n, ast.FunctionDef) and n.name == "mapa_area_grupo"],
+    type_ignores=[]), "data_helper", "exec"), _dh_ns)
+data_helper.mapa_area_grupo = _dh_ns["mapa_area_grupo"]
 data_helper.cargar_productos = lambda *a, **k: []
 sys.modules["data_helper"] = data_helper
 
@@ -83,7 +93,7 @@ excel_helper._sf = _sf_real
 import pandas as pd                                        # noqa: E402
 from config import ZONAS_MAP, excluido_proveedores         # noqa: E402
 
-_QUIERO = {"_mapa_clientes_rep", "_rango_atajo", "_lineas_reporte",
+_QUIERO = {"_rango_atajo", "_lineas_reporte",
            "_opciones_reporte", "_agregar_compras", "_agregar_detalle"}
 _src = open(os.path.join(RAIZ, "modulo_proveedores.py"), encoding="utf-8").read()
 _mod = ast.parse(_src)
@@ -92,6 +102,7 @@ _ns = {
     "cargar_clientes": data_helper.cargar_clientes,
     "leer_pedidos": excel_helper.leer_pedidos_op,
     "_excluido": excluido_proveedores,
+    "_mapa_clientes_rep": data_helper.mapa_area_grupo,
 }
 exec(compile(ast.Module(
     body=[n for n in _mod.body
@@ -101,7 +112,7 @@ exec(compile(ast.Module(
             and getattr(n.targets[0], "id", "") == "_REP_CLAVE"],
     type_ignores=[]), "modulo_proveedores", "exec"), _ns)
 
-_mapa           = _ns["_mapa_clientes_rep"]
+_mapa           = data_helper.mapa_area_grupo
 _rango_atajo    = _ns["_rango_atajo"]
 _agregar        = _ns["_agregar_compras"]
 _opciones       = _ns["_opciones_reporte"]

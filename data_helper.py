@@ -130,6 +130,34 @@ def _leer_tabla_precios(hoja: str) -> dict:
     return result
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def mapa_area_grupo() -> dict:
+    """nombre_cliente_lower → {'area': str, 'grupo': str}.
+
+    Fuente única para los reportes que agrupan por área. El área sale de
+    codigo_lugar contra ZONAS_MAP de config: es el único mapa que cubre
+    L05/L06, y como cargar_clientes pone "L05" por defecto, usar los mapas
+    locales de un módulo mandaría la mayoría de los clientes a "Otro".
+
+    Vive acá y no en un módulo de pantalla porque la usan varios reportes. En
+    la auditoría aparecieron CINCO definiciones distintas de área conviviendo;
+    esto existe para no sumar una sexta.
+    """
+    from config import ZONAS_MAP
+    cod_a_area = {cod: nom for nom, cods in ZONAS_MAP.items() for cod in cods}
+    out = {}
+    for c in cargar_clientes():
+        nom = str(c.get("nombre", "") or "").strip()
+        if not nom:
+            continue
+        cod = str(c.get("codigo_lugar", "") or "").strip()
+        out[nom.lower()] = {
+            "area":  cod_a_area.get(cod, "Sin área"),
+            "grupo": str(c.get("grupo", "") or "").strip() or "Sin grupo",
+        }
+    return out
+
+
 def cli_precio(cliente: dict, producto_nombre: str) -> tuple[float, str]:
     """
     Cascada 4 niveles: cliente → grupo → zona → general.

@@ -564,29 +564,9 @@ def _recolectar_compras(sel_prov, base_dfs, prod_map, todas_areas,
 # existentes, usando el costo YA guardado en cada línea. No depende de la hoja
 # ComprasHistorico.
 
-@st.cache_data(ttl=600, show_spinner=False)
-def _mapa_clientes_rep() -> dict:
-    """nombre_lower → {'area': str, 'grupo': str}.
-
-    El área sale de codigo_lugar contra ZONAS_MAP de config: es el único mapa
-    que cubre L05/L06, y como cargar_clientes pone "L05" por defecto, usar los
-    mapas locales del módulo (AREAS_PROV) mandaría la mayoría de los clientes
-    a "Otro". El grupo es cliente["grupo"] tal cual — el mismo campo que usa
-    la cascada de precios contra la hoja PreciosGrupo.
-    """
-    from config import ZONAS_MAP
-    cod_a_area = {cod: nom for nom, cods in ZONAS_MAP.items() for cod in cods}
-    out = {}
-    for c in cargar_clientes():
-        nom = str(c.get("nombre", "") or "").strip()
-        if not nom:
-            continue
-        cod = str(c.get("codigo_lugar", "") or "").strip()
-        out[nom.lower()] = {
-            "area":  cod_a_area.get(cod, "Sin área"),
-            "grupo": str(c.get("grupo", "") or "").strip() or "Sin grupo",
-        }
-    return out
+# La resolución de área/grupo vive en data_helper para que este reporte y el
+# de Control de Márgenes no tengan dos definiciones distintas.
+from data_helper import mapa_area_grupo as _mapa_clientes_rep
 
 
 def _rango_atajo(atajo: str, hoy: date) -> tuple:
