@@ -32,6 +32,7 @@ SECCIONES = [
         ("🛒 Compras a Proveedores",        "modulo_proveedores"),
         ("🚚 Envíos y Facturación Semanal", "modulo_envios"),
         ("🧾 Facturación Mensual",          "modulo_facturacion"),
+        ("📈 Control de Márgenes",          "modulo_margenes"),
     ]),
     ("🟡 CATÁLOGOS", [
         ("📦 Productos",                    "modulo_productos"),

@@ -1,0 +1,174 @@
+"""
+Control de Márgenes (Operación Diaria → 📈 Control de Márgenes).
+
+Reporte de SOLO LECTURA. Lo que se pincha acá:
+  - la aritmética de costo, ingreso y ambos márgenes;
+  - que los % del TOTAL salgan de los totales y no de promediar filas — con
+    productos de tamaños distintos, promediar da un margen que no existe;
+  - que los filtros de área y proveedor recorten de verdad;
+  - que nada escriba en el Sheet.
+
+    python tests/test_margenes.py
+"""
+import sys
+import types
+from datetime import date
+
+from _stubs import Reporte, instalar_streamlit, raiz_repo
+
+raiz_repo()
+instalar_streamlit()
+
+ESCRITO = []
+
+# Dos áreas, dos proveedores, un producto repetido en ambas áreas.
+PEDIDOS = [
+    {"row_num": 10, "cliente": "Hotelito", "producto": "Lechuga",
+     "fecha": date(2026, 6, 3), "precio": 10.0, "costo": 6.0, "cantidad": 5,
+     "proveedor": "Don Chus"},
+    {"row_num": 11, "cliente": "Sundog", "producto": "Lechuga",
+     "fecha": date(2026, 6, 5), "precio": 12.0, "costo": 6.0, "cantidad": 10,
+     "proveedor": "Don Chus"},
+    {"row_num": 12, "cliente": "Hotelito", "producto": "Salsa Pesto",
+     "fecha": date(2026, 6, 8), "precio": 40.0, "costo": 20.0, "cantidad": 2,
+     "proveedor": "Cocina"},
+    # Fuera del rango que se va a consultar
+    {"row_num": 13, "cliente": "Hotelito", "producto": "Lechuga",
+     "fecha": date(2026, 7, 1), "precio": 10.0, "costo": 6.0, "cantidad": 99,
+     "proveedor": "Don Chus"},
+    # Cliente en EXCLUIR_PROVEEDORES ("wilson"): no cuenta como venta
+    {"row_num": 14, "cliente": "Wilson Mayoreo", "producto": "Lechuga",
+     "fecha": date(2026, 6, 4), "precio": 10.0, "costo": 6.0, "cantidad": 50,
+     "proveedor": "Don Chus"},
+    # Producto vacío: línea basura de la hoja
+    {"row_num": 15, "cliente": "Hotelito", "producto": "  ",
+     "fecha": date(2026, 6, 4), "precio": 10.0, "costo": 6.0, "cantidad": 7,
+     "proveedor": "Don Chus"},
+]
+
+CLIENTES = [
+    {"nombre": "Hotelito", "codigo_lugar": "L03", "grupo": ""},   # 🔖 Antigua & Chimal
+    {"nombre": "Sundog",   "codigo_lugar": "L01", "grupo": ""},   # 🌊 Río
+    {"nombre": "Wilson Mayoreo", "codigo_lugar": "L03", "grupo": ""},
+]
+
+from utils import _sf                                          # noqa: E402
+
+excel_stub = types.ModuleType("excel_helper")
+excel_stub.leer_pedidos_op = lambda: [dict(p) for p in PEDIDOS]
+excel_stub.leer_pedidos    = excel_stub.leer_pedidos_op
+excel_stub._sf = _sf
+excel_stub._si = lambda v: int(_sf(v))
+sys.modules["excel_helper"] = excel_stub
+
+gsheets = types.ModuleType("gsheets")
+gsheets.update_cells = lambda hoja, ups: ESCRITO.extend(ups)
+gsheets.append_rows  = lambda *a, **k: None
+gsheets.get_all_rows = lambda *a, **k: []
+sys.modules["gsheets"] = gsheets
+
+import config                                                   # noqa: E402
+from config import ZONAS_MAP, margen_neto_q                     # noqa: E402
+
+# data_helper real necesita streamlit+gspread; se sustituye por un doble que
+# reproduce mapa_area_grupo con la MISMA regla (codigo_lugar contra ZONAS_MAP).
+_cod_area = {c: n for n, cods in ZONAS_MAP.items() for c in cods}
+data_helper = types.ModuleType("data_helper")
+data_helper.mapa_area_grupo = lambda: {
+    c["nombre"].lower(): {"area": _cod_area.get(c["codigo_lugar"], "Sin área"),
+                          "grupo": c["grupo"] or "Sin grupo"}
+    for c in CLIENTES}
+data_helper.cargar_clientes = lambda: CLIENTES
+sys.modules["data_helper"] = data_helper
+
+from modulo_margenes import agregar_margenes, totales, _pct     # noqa: E402
+
+JUN1, JUN30 = date(2026, 6, 1), date(2026, 6, 30)
+# El nombre del area sale de ZONAS_MAP, no se escribe a mano: si el
+# catalogo renombra una zona, el test debe seguir apuntando a la misma.
+AREA_ANT = next(n for n, c in ZONAS_MAP.items() if "L03" in c)
+r = Reporte()
+
+print("=== 1. Alcance: qué líneas entran ===")
+df = agregar_margenes(JUN1, JUN30, (), ())
+prods = sorted(df["Producto"])
+r.check(prods == ["Lechuga", "Salsa Pesto"], f"productos: {prods}")
+lech = df[df["Producto"] == "Lechuga"].iloc[0]
+r.check(lech["Cantidad"] == 15.0,
+        f"cantidad = solo junio, sin excluidos: {lech['Cantidad']} (5+10)")
+r.check(99 not in list(df["Cantidad"]), "julio queda fuera del rango")
+
+print("\n=== 2. Aritmética por producto ===")
+r.check(lech["Costo (Q)"] == 90.0,   f"costo 6x5 + 6x10 = {lech['Costo (Q)']}")
+r.check(lech["Ingreso (Q)"] == 170.0,
+        f"ingreso 10x5 + 12x10 = {lech['Ingreso (Q)']}")
+r.check(lech["Margen Bruto (Q)"] == 80.0,
+        f"bruto = ingreso - costo = {lech['Margen Bruto (Q)']}")
+_neto_esp = margen_neto_q(6.0, 10.0) * 5 + margen_neto_q(6.0, 12.0) * 10
+r.check(abs(lech["Margen Neto (Q)"] - round(_neto_esp, 2)) < 0.01,
+        f"neto acumulado línea por línea: {lech['Margen Neto (Q)']}")
+r.check(lech["Margen Neto (Q)"] < lech["Margen Bruto (Q)"],
+        "el neto siempre queda por debajo del bruto (IVA + ISR)")
+r.check(abs(lech["Bruto %"] - round(80.0 / 170.0 * 100, 1)) < 0.05,
+        f"bruto % sobre ingreso: {lech['Bruto %']}%")
+
+print("\n=== 3. El TOTAL % sale de los totales, no del promedio de filas ===")
+t = totales(df)
+r.check(abs(t["ingreso"] - 250.0) < 0.01, f"ingreso total: {t['ingreso']}")
+r.check(abs(t["costo"] - 130.0) < 0.01,   f"costo total: {t['costo']}")
+r.check(abs(t["bruto"] - 120.0) < 0.01,   f"bruto total: {t['bruto']}")
+r.check(abs(t["bruto_pct"] - 48.0) < 0.05,
+        f"bruto % del total = 120/250 = {t['bruto_pct']}%")
+_promedio = sum(df["Bruto %"]) / len(df)
+r.check(abs(_promedio - t["bruto_pct"]) > 0.5,
+        f"y NO es el promedio de las filas ({_promedio:.1f}%), que sería otro "
+        f"número")
+r.check(abs(t["neto_pct"] - round(t["neto"] / t["ingreso"] * 100, 1)) < 0.05,
+        "el neto % también sale de los totales")
+
+print("\n=== 4. Filtros ===")
+d_ant = agregar_margenes(JUN1, JUN30, (AREA_ANT,), ())
+r.check(float(d_ant[d_ant["Producto"] == "Lechuga"]["Cantidad"].iloc[0]) == 5.0,
+        "filtrar por área deja solo las 5 de Hotelito")
+d_pv = agregar_margenes(JUN1, JUN30, (), ("Cocina",))
+r.check(sorted(d_pv["Producto"]) == ["Salsa Pesto"],
+        f"filtrar por proveedor: {sorted(d_pv['Producto'])}")
+r.check(agregar_margenes(JUN1, JUN30, (AREA_ANT,), ("Cocina",)).shape[0] == 1,
+        "los dos filtros se combinan (AND)")
+r.check(agregar_margenes(JUN1, JUN30, ("No Existe",), ()).empty,
+        "un filtro sin coincidencias devuelve vacío, no todo")
+
+print("\n=== 5. Casos borde ===")
+r.check(agregar_margenes(date(2026, 1, 1), date(2026, 1, 31), (), ()).empty,
+        "rango sin pedidos devuelve vacío")
+r.check(agregar_margenes(JUN30, JUN1, (), ()).empty,
+        "rango invertido no devuelve nada")
+r.check(totales(agregar_margenes(JUN30, JUN1, (), ()))["ingreso"] == 0.0,
+        "totales de un DataFrame vacío no explota")
+r.check(_pct(50.0, 0.0) == 0.0,
+        "sin ingreso el % es 0, no una división por cero")
+
+print("\n=== 6. El reporte NO escribe ===")
+r.check(ESCRITO == [], "ningún update_cells: es solo lectura")
+
+print("\n=== 7. El PDF se genera con lo que muestra la pantalla ===")
+try:
+    from pdf_helper import generar_reporte_margenes, _sin_emoji
+    pdf = generar_reporte_margenes(df.to_dict("records"), JUN1, JUN30,
+                                   f"Área: {AREA_ANT}", t)
+    r.check(pdf[:4] == b"%PDF" and len(pdf) > 1200,
+            f"PDF válido de {len(pdf):,} bytes")
+    # Los nombres de zona traen emoji; Helvetica no los tiene y los imprimiría
+    # como un cuadro negro, así que se limpian antes de maquetar.
+    r.check(_sin_emoji(AREA_ANT) == "Antigua & Chimal",
+            f"el nombre de zona llega al papel sin el emoji: "
+            f"{_sin_emoji(AREA_ANT)!r}")
+    r.check(_sin_emoji("Área: 🏙️ Guatemala") == "Área: Guatemala",
+            "también con selector de variación (U+FE0F), y sin perder acentos")
+    r.check(_sin_emoji("sin filtros (todas las áreas)")
+            == "sin filtros (todas las áreas)",
+            "un texto sin emoji queda intacto")
+except ImportError:
+    print("  (reportlab no instalado: se omite)")
+
+r.salir()

@@ -81,6 +81,21 @@ def _p(texto, estilo) -> Paragraph:
     return Paragraph(_s(texto), estilo)
 
 
+def _sin_emoji(texto) -> str:
+    """Quita los pictogramas que Helvetica no tiene y saldrían como ■.
+
+    Los nombres de zona de ZONAS_MAP llevan emoji ("🔖 Antigua & Chimal"), que
+    en pantalla se ven bien pero impresos quedan como un cuadro negro. Se aplica
+    solo donde esos nombres llegan al papel, no en _s: el resto de los PDFs ya
+    salen bien y cambiar el saneador global los tocaría a todos.
+    """
+    if not texto:
+        return ""
+    limpio = "".join(c for c in str(texto)
+                     if unicodedata.category(c) != "So" and ord(c) < 0x2190)
+    return re.sub(r"\s{2,}", " ", limpio).strip()
+
+
 # ── ESTILOS ───────────────────────────────────────────────────────────────────
 def _S():
     def sty(name, **kw):
@@ -1642,3 +1657,148 @@ def boton_imprimir_html(pdf_bytes: bytes, fn_id: str,
                 .replace("B64", b64)
                 .replace("COLOR", color)
                 .replace("LABEL", label))
+
+
+# ── REPORTE DE MÁRGENES (Control de Márgenes) ─────────────────────────────────
+def generar_reporte_margenes(filas: list, desde: "date", hasta: "date",
+                             filtros_txt: str = "",
+                             tot: dict = None) -> bytes:
+    """
+    PDF A4 apaisado B&W del Control de Márgenes por producto.
+
+    filas: los registros que ya muestra modulo_margenes.agregar_margenes.
+    tot:   el dict de modulo_margenes.totales.
+
+    Acá NO se recalcula ningún margen: solo se maqueta lo que vino, para que el
+    papel no pueda discrepar de la pantalla. Va apaisado porque las ocho
+    columnas en vertical dejarían el nombre del producto en dos renglones.
+    """
+    from reportlab.lib import colors as rc
+    from reportlab.lib.pagesizes import landscape
+    from reportlab.platypus import PageBreak
+    from datetime import date as _date
+
+    tot = tot or {}
+    buf = BytesIO()
+    PS = landscape(A4)
+    ML = MR = 12*mm
+    MT = MB = 11*mm
+    PW, PH = PS
+    CW = PW - ML - MR
+
+    doc = SimpleDocTemplate(buf, pagesize=PS,
+                            leftMargin=ML, rightMargin=MR,
+                            topMargin=MT, bottomMargin=MB,
+                            title=f"Control de Márgenes · "
+                                  f"{desde:%d/%m/%Y}-{hasta:%d/%m/%Y}")
+    story = []
+    NEGRO = rc.black
+    HOY = _date.today().strftime("%d/%m/%Y")
+    ROWS_PER_PAGE = 28
+
+    def ts(name, **kw):
+        d = dict(fontSize=8, fontName="Helvetica", textColor=NEGRO, leading=10)
+        d.update(kw)
+        return ParagraphStyle(name, **d)
+
+    s_title = ts("mtit", fontSize=12, fontName="Helvetica-Bold", leading=14)
+    s_sub   = ts("msub", fontSize=7.5, alignment=TA_RIGHT)
+    s_meta  = ts("mmeta", fontSize=7.5)
+    s_th    = ts("mth", fontSize=7, fontName="Helvetica-Bold",
+                 alignment=TA_CENTER, leading=8.5)
+    s_th_l  = ts("mthl", fontSize=7, fontName="Helvetica-Bold", leading=8.5)
+    s_td    = ts("mtd", fontSize=7.5)
+    s_td_r  = ts("mtdr", fontSize=7.5, alignment=TA_RIGHT)
+    s_tot_l = ts("mtotl", fontSize=8, fontName="Helvetica-Bold")
+    s_tot_r = ts("mtotr", fontSize=8, fontName="Helvetica-Bold",
+                 alignment=TA_RIGHT)
+    s_ft    = ParagraphStyle("mft", fontSize=6.5, fontName="Helvetica-Oblique",
+                             textColor=NEGRO, alignment=TA_CENTER, leading=8)
+
+    # Producto se lleva el ancho porque es lo único de largo variable.
+    col_w = [CW*0.26, CW*0.09, CW*0.11, CW*0.11,
+             CW*0.12, CW*0.07, CW*0.12, CW*0.07]
+    CABEZAL = ["Producto", "Cantidad", "Costo (Q)", "Ingreso (Q)",
+               "M. Bruto (Q)", "Bruto %", "M. Neto (Q)", "Neto %"]
+
+    def header_row():
+        return [_p(CABEZAL[0], s_th_l)] + [_p(h, s_th) for h in CABEZAL[1:]]
+
+    def fila_datos(r):
+        return [
+            _p(str(r.get("Producto", "")), s_td),
+            _p(f"{float(r.get('Cantidad', 0)):,.2f}", s_td_r),
+            _p(f"{float(r.get('Costo (Q)', 0)):,.2f}", s_td_r),
+            _p(f"{float(r.get('Ingreso (Q)', 0)):,.2f}", s_td_r),
+            _p(f"{float(r.get('Margen Bruto (Q)', 0)):,.2f}", s_td_r),
+            _p(f"{float(r.get('Bruto %', 0)):.1f}%", s_td_r),
+            _p(f"{float(r.get('Margen Neto (Q)', 0)):,.2f}", s_td_r),
+            _p(f"{float(r.get('Neto %', 0)):.1f}%", s_td_r),
+        ]
+
+    def estilo_tabla(n_filas, con_total):
+        cmds = [
+            ("GRID", (0, 0), (-1, -1), 0.4, NEGRO),
+            ("BOX", (0, 0), (-1, -1), 0.9, NEGRO),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.9, NEGRO),
+            ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 3.5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 3.5),
+        ]
+        if con_total:
+            cmds.append(("LINEABOVE", (0, n_filas - 1), (-1, n_filas - 1),
+                         0.9, NEGRO))
+        return TableStyle(cmds)
+
+    # Paginación manual: cada página repite el encabezado, igual que
+    # generar_reporte_compras.
+    paginas = [filas[i:i + ROWS_PER_PAGE]
+               for i in range(0, len(filas), ROWS_PER_PAGE)] or [[]]
+
+    for i, chunk in enumerate(paginas):
+        if i:
+            story.append(PageBreak())
+
+        enc = Table([[_p("Control de Márgenes por Producto", s_title),
+                      _p(f"Generado: {HOY}", s_sub)]],
+                    colWidths=[CW * 0.65, CW * 0.35])
+        enc.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story.append(enc)
+        story.append(HRFlowable(width="100%", thickness=1, color=NEGRO,
+                                spaceBefore=1, spaceAfter=4))
+        story.append(_p(f"<b>Período:</b> {desde:%d/%m/%Y} al "
+                        f"{hasta:%d/%m/%Y} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                        f"<b>Filtros:</b> {_sin_emoji(filtros_txt)}", s_meta))
+        story.append(Spacer(1, 4))
+
+        datos = [header_row()] + [fila_datos(r) for r in chunk]
+        ultima = (i == len(paginas) - 1)
+        if ultima:
+            datos.append([
+                _p("TOTAL", s_tot_l),
+                _p(f"{tot.get('cantidad', 0):,.2f}", s_tot_r),
+                _p(f"{tot.get('costo', 0):,.2f}", s_tot_r),
+                _p(f"{tot.get('ingreso', 0):,.2f}", s_tot_r),
+                _p(f"{tot.get('bruto', 0):,.2f}", s_tot_r),
+                _p(f"{tot.get('bruto_pct', 0):.1f}%", s_tot_r),
+                _p(f"{tot.get('neto', 0):,.2f}", s_tot_r),
+                _p(f"{tot.get('neto_pct', 0):.1f}%", s_tot_r),
+            ])
+        t = Table(datos, colWidths=col_w, repeatRows=1)
+        t.setStyle(estilo_tabla(len(datos), ultima))
+        story.append(t)
+
+        story.append(Spacer(1, 5))
+        story.append(_p(f"VeggiExpress · Control de Márgenes · "
+                        f"página {i + 1} de {len(paginas)} · "
+                        f"{len(filas)} producto(s)", s_ft))
+
+    doc.build(story)
+    return buf.getvalue()
