@@ -4,6 +4,7 @@ Acumula todos los envíos del mes seleccionado, desglose por semana
 y subtotal por producto, con PDF descargable por cliente.
 """
 import streamlit as st
+import pandas as pd
 from datetime import date
 from excel_helper import leer_pedidos
 from data_helper  import cargar_clientes
@@ -209,6 +210,192 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
             st.error(f"Error generando PDF: {e}")
 
 
+# ── HISTÓRICO POR ÁREA (solo lectura) ─────────────────────────────────────────
+# Nada de acá escribe. Es la misma lectura que hace la pestaña del mes, pero
+# sobre un rango de fechas libre y agregada por área en vez de por cliente.
+#
+# El área sale de data_helper.mapa_area_grupo, la misma fuente que usan el
+# reporte de Compras y Control de Márgenes. _zona_cliente (arriba) aplica el
+# mismo criterio pero cliente por cliente; acá hace falta el mapa completo.
+
+COLS_HIST = ["Período", "Área", "Venta (Q)", "Compra (Q)", "Diferencia (Q)",
+             "Dif %", "Líneas"]
+
+_GRANULARIDAD = ["Mes", "Semana", "Solo área (todo el rango)"]
+
+
+def _periodo_de(p: dict, granularidad: str) -> str:
+    """Etiqueta de período de una línea. Con 'Solo área' todas caen en la misma
+    etiqueta, así el mismo agregador sirve para el total del rango."""
+    if granularidad == "Semana":
+        return f"{p['año']}-S{int(p['semana'] or 0):02d}"
+    if granularidad == "Mes":
+        return p["fecha"].strftime("%Y-%m")
+    return "Todo el rango"
+
+
+def agregar_historico(pedidos: list, mapa: dict, desde: date, hasta: date,
+                      clientes: tuple = (), granularidad: str = "Mes"):
+    """Venta y compra por área y período.
+
+        Venta  = Σ(precio × cantidad)   — el mismo 'total' que factura el módulo
+        Compra = Σ(costo  × cantidad)
+
+    Usa el precio y el costo GUARDADOS en cada línea, no el catálogo de hoy:
+    un histórico tiene que mostrar lo que pasó, no lo que costaría hoy.
+
+    Sin lógica de estados: los pedidos cancelados se borran de la hoja, así que
+    filtrar por status sería una regla que nunca se cumple.
+    """
+    acc = {}
+    for p in pedidos:
+        f = p.get("fecha")
+        if not f or not (desde <= f <= hasta):
+            continue
+        if not str(p.get("producto", "") or "").strip():
+            continue
+        cli = str(p.get("cliente", "") or "").strip()
+        if not cli or (clientes and cli not in clientes):
+            continue
+        area = mapa.get(cli.lower(), {}).get("area", "Sin área")
+        a = acc.setdefault((_periodo_de(p, granularidad), area),
+                           {"v": 0.0, "c": 0.0, "n": 0})
+        a["v"] += float(p.get("total") or 0)
+        a["c"] += float(p.get("costo") or 0) * float(p.get("cantidad") or 0)
+        a["n"] += 1
+
+    filas = []
+    for (per, area), v in acc.items():
+        dif = v["v"] - v["c"]
+        filas.append({
+            "Período":        per,
+            "Área":           area,
+            "Venta (Q)":      round(v["v"], 2),
+            "Compra (Q)":     round(v["c"], 2),
+            "Diferencia (Q)": round(dif, 2),
+            # % sobre la venta. Sin venta no hay porcentaje que calcular:
+            # devolver 0 evita dividir por cero y no inventa un margen.
+            "Dif %":          round(dif / v["v"] * 100, 1) if v["v"] else 0.0,
+            "Líneas":         v["n"],
+        })
+    df = pd.DataFrame(filas, columns=COLS_HIST)
+    if not df.empty:
+        # Período descendente: lo más reciente arriba, que es lo que se mira.
+        df = df.sort_values(["Período", "Área"], ascending=[False, True],
+                            ignore_index=True)
+    return df
+
+
+def totales_historico(df) -> dict:
+    """Totales de la tabla. El % se recalcula sobre los totales — promediar los
+    porcentajes de las filas daría un número que no es la diferencia real."""
+    if df.empty:
+        return {"venta": 0.0, "compra": 0.0, "dif": 0.0, "dif_pct": 0.0,
+                "lineas": 0}
+    venta = float(df["Venta (Q)"].sum())
+    dif   = float(df["Diferencia (Q)"].sum())
+    return {"venta":   venta,
+            "compra":  float(df["Compra (Q)"].sum()),
+            "dif":     dif,
+            "dif_pct": round(dif / venta * 100, 1) if venta else 0.0,
+            "lineas":  int(df["Líneas"].sum())}
+
+
+def _rango_historico(atajo: str, hoy: date, pedidos: list) -> tuple:
+    """(desde, hasta) de cada atajo. 'Todo' arranca en el pedido más viejo que
+    haya en la hoja, no en una fecha fija que envejezca sola."""
+    from datetime import timedelta
+    if atajo == "Este año":
+        return date(hoy.year, 1, 1), hoy
+    if atajo == "Últimos 12 meses":
+        return hoy - timedelta(days=365), hoy
+    if atajo == "Todo":
+        fechas = [p["fecha"] for p in pedidos if p.get("fecha")]
+        return (min(fechas) if fechas else hoy), hoy
+    return hoy - timedelta(days=90), hoy          # Personalizado: 3 meses
+
+
+def _tab_historico(todos: list):
+    """Venta y compra por área sobre un rango libre de fechas."""
+    from data_helper import mapa_area_grupo
+
+    hoy = date.today()
+    st.caption("Venta y compra por área sobre el histórico completo. Usa el "
+               "precio y el costo guardados en cada línea; no recalcula nada "
+               "ni modifica el Sheet.")
+
+    a1, a2, a3 = st.columns([2.2, 1.1, 1.1])
+    atajo = a1.radio("Rango", ["Este año", "Últimos 12 meses", "Todo",
+                               "Personalizado"], horizontal=True,
+                     key="hist_atajo")
+    d_def, h_def = _rango_historico(atajo, hoy, todos)
+    if atajo == "Personalizado":
+        desde = a2.date_input("Desde", value=d_def, key="hist_desde")
+        hasta = a3.date_input("Hasta", value=h_def, key="hist_hasta")
+    else:
+        desde, hasta = d_def, h_def
+        a2.markdown(f"<small>Desde<br><b>{desde:%d/%m/%Y}</b></small>",
+                    unsafe_allow_html=True)
+        a3.markdown(f"<small>Hasta<br><b>{hasta:%d/%m/%Y}</b></small>",
+                    unsafe_allow_html=True)
+
+    if desde > hasta:
+        st.error("El 'Desde' es posterior al 'Hasta'.")
+        return
+
+    # Clientes presentes en el rango, no el catálogo entero: filtrar por uno
+    # que no compró en el período elegido no diría nada.
+    disp = sorted({str(p.get("cliente", "") or "").strip() for p in todos
+                   if p.get("fecha") and desde <= p["fecha"] <= hasta
+                   and str(p.get("cliente", "") or "").strip()})
+    f1, f2 = st.columns([2, 1])
+    sel_cli = f1.multiselect("Cliente", disp, key="hist_cli",
+                             help="Vacío = todos los clientes del período.")
+    gran    = f2.selectbox("Ver por", _GRANULARIDAD, key="hist_gran")
+
+    df = agregar_historico(todos, mapa_area_grupo(), desde, hasta,
+                           tuple(sel_cli), gran)
+    if df.empty:
+        st.info("No hay pedidos para ese rango y esos clientes.")
+        return
+
+    t = totales_historico(df)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Venta",       f"Q{t['venta']:,.2f}")
+    m2.metric("Compra",      f"Q{t['compra']:,.2f}")
+    m3.metric("Diferencia",  f"Q{t['dif']:,.2f}", f"{t['dif_pct']:.1f}%",
+              delta_color="off")
+
+    _num = st.column_config.NumberColumn
+    st.dataframe(df, use_container_width=True, hide_index=True,
+                 column_config={
+                     "Venta (Q)":      _num(format="%.2f"),
+                     "Compra (Q)":     _num(format="%.2f"),
+                     "Diferencia (Q)": _num(format="%.2f"),
+                     "Dif %":          _num(format="%.1f%%"),
+                 })
+    st.caption(f"**TOTAL: Venta Q{t['venta']:,.2f} · Compra "
+               f"Q{t['compra']:,.2f} · Diferencia Q{t['dif']:,.2f} "
+               f"({t['dif_pct']:.1f}%)** — {len(df)} fila(s), "
+               f"{t['lineas']:,} línea(s) de pedido, "
+               f"{desde:%d/%m/%Y} a {hasta:%d/%m/%Y}")
+
+    if (df["Área"] == "Sin área").any():
+        st.caption("⚠️ 'Sin área' son clientes cuyo codigo_lugar no está en "
+                   "ZONAS_MAP — revisalos en el catálogo de Clientes.")
+
+    csv_df = pd.concat([df, pd.DataFrame([{
+        "Período": "TOTAL", "Área": "",
+        "Venta (Q)": round(t["venta"], 2), "Compra (Q)": round(t["compra"], 2),
+        "Diferencia (Q)": round(t["dif"], 2), "Dif %": t["dif_pct"],
+        "Líneas": t["lineas"]}])], ignore_index=True)
+    st.download_button(
+        "📥 Descargar CSV",
+        data=csv_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"historico_area_{desde:%Y%m%d}_{hasta:%Y%m%d}.csv",
+        mime="text/csv", key="hist_csv", use_container_width=True)
+
+
 def mostrar():
     st.markdown("## 🧾 Facturación Mensual")
     # Botón de regreso al Inicio
@@ -217,11 +404,22 @@ def mostrar():
         st.rerun()
     st.divider()
 
-
     with st.spinner("Cargando pedidos..."):
         todos    = leer_pedidos()
         cli_list = cargar_clientes()
 
+    # Los pedidos se leen una vez y se pasan a cada pestaña: leer_pedidos
+    # recorre el histórico completo y hacerlo dos veces por render no aporta.
+    t_mes, t_hist = st.tabs(["🧾 Facturación del mes",
+                             "📊 Histórico por Área"])
+    with t_mes:
+        _tab_mes(todos, cli_list)
+    with t_hist:
+        _tab_historico(todos)
+
+
+def _tab_mes(todos: list, cli_list: list):
+    """Lo que el módulo hace desde siempre: un mes, por cliente y por zona."""
     # ── Alerta Rodrigo ────────────────────────────────────────────────────────
     hoy      = date.today()
     sem_act  = hoy.isocalendar()[1]
