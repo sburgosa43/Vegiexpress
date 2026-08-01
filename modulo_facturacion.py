@@ -218,15 +218,15 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
 # reporte de Compras y Control de Márgenes. _zona_cliente (arriba) aplica el
 # mismo criterio pero cliente por cliente; acá hace falta el mapa completo.
 
-COLS_HIST = ["Período", "Área", "Venta (Q)", "Compra (Q)", "Diferencia (Q)",
-             "Dif %", "Líneas"]
+COLS_HIST = ["Período", "Cliente", "Venta (Q)", "Compra (Q)", "IVA (Q)",
+             "ISR (Q)", "Margen Bruto (Q)", "Margen Neto (Q)"]
 
-_GRANULARIDAD = ["Mes", "Semana", "Solo área (todo el rango)"]
+_GRANULARIDAD = ["Mes", "Semana", "Sin período (todo el rango)"]
 
 
 def _periodo_de(p: dict, granularidad: str) -> str:
-    """Etiqueta de período de una línea. Con 'Solo área' todas caen en la misma
-    etiqueta, así el mismo agregador sirve para el total del rango."""
+    """Etiqueta de período de una línea. Con 'Sin período' todas caen en la
+    misma etiqueta, así el mismo agregador sirve para el total del rango."""
     if granularidad == "Semana":
         return f"{p['año']}-S{int(p['semana'] or 0):02d}"
     if granularidad == "Mes":
@@ -235,18 +235,33 @@ def _periodo_de(p: dict, granularidad: str) -> str:
 
 
 def agregar_historico(pedidos: list, mapa: dict, desde: date, hasta: date,
-                      clientes: tuple = (), granularidad: str = "Mes"):
-    """Venta y compra por área y período.
+                      areas: tuple = (), granularidad: str = "Mes"):
+    """Una fila por cliente y período. El área es el FILTRO, no una columna.
 
         Venta  = Σ(precio × cantidad)   — el mismo 'total' que factura el módulo
         Compra = Σ(costo  × cantidad)
+        IVA    = el IVA contenido en la venta (config.iva_incluido)
+        ISR    = retención real, ver abajo
+        Bruto  = Venta − Compra
+        Neto   = Σ margen_neto_q(costo, precio) × cantidad
+
+    Bruto y Neto son las mismas definiciones que usa Control de Márgenes, para
+    que los dos reportes no den números distintos de lo mismo.
 
     Usa el precio y el costo GUARDADOS en cada línea, no el catálogo de hoy:
     un histórico tiene que mostrar lo que pasó, no lo que costaría hoy.
 
+    El ISR NO es un 5% plano: hay clientes exentos y un umbral de Q2,800 que se
+    evalúa POR FACTURA, y la factura es semanal. Por eso la venta se acumula
+    también por semana y calcular_liquido se aplica a cada una — igual que en
+    la pestaña del mes. Aplicarlo al total del período inflaría el ISR de
+    clientes que facturan poco cada semana pero mucho en el mes.
+
     Sin lógica de estados: los pedidos cancelados se borran de la hoja, así que
     filtrar por status sería una regla que nunca se cumple.
     """
+    from config import iva_incluido, margen_neto_q
+
     acc = {}
     for p in pedidos:
         f = p.get("fecha")
@@ -255,50 +270,66 @@ def agregar_historico(pedidos: list, mapa: dict, desde: date, hasta: date,
         if not str(p.get("producto", "") or "").strip():
             continue
         cli = str(p.get("cliente", "") or "").strip()
-        if not cli or (clientes and cli not in clientes):
+        if not cli:
             continue
         area = mapa.get(cli.lower(), {}).get("area", "Sin área")
-        a = acc.setdefault((_periodo_de(p, granularidad), area),
-                           {"v": 0.0, "c": 0.0, "n": 0})
-        a["v"] += float(p.get("total") or 0)
-        a["c"] += float(p.get("costo") or 0) * float(p.get("cantidad") or 0)
-        a["n"] += 1
+        if areas and area not in areas:
+            continue
+
+        cant  = float(p.get("cantidad") or 0)
+        costo = float(p.get("costo") or 0)
+        prec  = float(p.get("precio") or 0)
+        venta = float(p.get("total") or 0)
+
+        a = acc.setdefault((_periodo_de(p, granularidad), cli),
+                           {"v": 0.0, "c": 0.0, "ne": 0.0, "sem": {}})
+        a["v"]  += venta
+        a["c"]  += costo * cant
+        a["ne"] += margen_neto_q(costo, prec) * cant
+        k_sem = f"{p.get('año')}-{p.get('semana')}"
+        a["sem"][k_sem] = a["sem"].get(k_sem, 0.0) + venta
 
     filas = []
-    for (per, area), v in acc.items():
-        dif = v["v"] - v["c"]
+    for (per, cli), v in acc.items():
+        isr = sum(calcular_liquido(cli, sub)[1] for sub in v["sem"].values())
         filas.append({
-            "Período":        per,
-            "Área":           area,
-            "Venta (Q)":      round(v["v"], 2),
-            "Compra (Q)":     round(v["c"], 2),
-            "Diferencia (Q)": round(dif, 2),
-            # % sobre la venta. Sin venta no hay porcentaje que calcular:
-            # devolver 0 evita dividir por cero y no inventa un margen.
-            "Dif %":          round(dif / v["v"] * 100, 1) if v["v"] else 0.0,
-            "Líneas":         v["n"],
+            "Período":          per,
+            "Cliente":          cli,
+            "Venta (Q)":        round(v["v"], 2),
+            "Compra (Q)":       round(v["c"], 2),
+            "IVA (Q)":          round(iva_incluido(v["v"]), 2),
+            "ISR (Q)":          round(isr, 2),
+            "Margen Bruto (Q)": round(v["v"] - v["c"], 2),
+            "Margen Neto (Q)":  round(v["ne"], 2),
         })
     df = pd.DataFrame(filas, columns=COLS_HIST)
     if not df.empty:
-        # Período descendente: lo más reciente arriba, que es lo que se mira.
-        df = df.sort_values(["Período", "Área"], ascending=[False, True],
+        # Período descendente y, dentro de cada uno, el cliente que más vendió
+        # primero: es el orden en que se lee un reporte de facturación.
+        df = df.sort_values(["Período", "Venta (Q)"], ascending=[False, False],
                             ignore_index=True)
     return df
 
 
 def totales_historico(df) -> dict:
-    """Totales de la tabla. El % se recalcula sobre los totales — promediar los
-    porcentajes de las filas daría un número que no es la diferencia real."""
+    """Totales de la tabla. Los % se recalculan sobre los totales — promediar
+    los porcentajes de las filas daría un margen que no es el real."""
     if df.empty:
-        return {"venta": 0.0, "compra": 0.0, "dif": 0.0, "dif_pct": 0.0,
-                "lineas": 0}
+        return {k: 0.0 for k in ("venta", "compra", "iva", "isr", "bruto",
+                                 "bruto_pct", "neto", "neto_pct")}
     venta = float(df["Venta (Q)"].sum())
-    dif   = float(df["Diferencia (Q)"].sum())
-    return {"venta":   venta,
-            "compra":  float(df["Compra (Q)"].sum()),
-            "dif":     dif,
-            "dif_pct": round(dif / venta * 100, 1) if venta else 0.0,
-            "lineas":  int(df["Líneas"].sum())}
+    bruto = float(df["Margen Bruto (Q)"].sum())
+    neto  = float(df["Margen Neto (Q)"].sum())
+    return {"venta":     venta,
+            "compra":    float(df["Compra (Q)"].sum()),
+            "iva":       float(df["IVA (Q)"].sum()),
+            "isr":       float(df["ISR (Q)"].sum()),
+            "bruto":     bruto,
+            # Sin venta no hay porcentaje que calcular: devolver 0 evita
+            # dividir por cero y no inventa un margen.
+            "bruto_pct": round(bruto / venta * 100, 1) if venta else 0.0,
+            "neto":      neto,
+            "neto_pct":  round(neto / venta * 100, 1) if venta else 0.0}
 
 
 def _rango_historico(atajo: str, hoy: date, pedidos: list) -> tuple:
@@ -343,59 +374,67 @@ def _tab_historico(todos: list):
         st.error("El 'Desde' es posterior al 'Hasta'.")
         return
 
-    # Clientes presentes en el rango, no el catálogo entero: filtrar por uno
-    # que no compró en el período elegido no diría nada.
-    disp = sorted({str(p.get("cliente", "") or "").strip() for p in todos
+    # Áreas presentes en el rango, no todas las de ZONAS_MAP: ofrecer filtrar
+    # por un área sin ventas en el período elegido no diría nada.
+    mapa = mapa_area_grupo()
+    disp = sorted({mapa.get(str(p.get("cliente", "") or "").strip().lower(),
+                            {}).get("area", "Sin área")
+                   for p in todos
                    if p.get("fecha") and desde <= p["fecha"] <= hasta
                    and str(p.get("cliente", "") or "").strip()})
     f1, f2 = st.columns([2, 1])
-    sel_cli = f1.multiselect("Cliente", disp, key="hist_cli",
-                             help="Vacío = todos los clientes del período.")
-    gran    = f2.selectbox("Ver por", _GRANULARIDAD, key="hist_gran")
+    sel_area = f1.multiselect("Área", disp, key="hist_area",
+                              help="Vacío = todas las áreas del período.")
+    gran     = f2.selectbox("Ver por", _GRANULARIDAD, key="hist_gran")
 
-    df = agregar_historico(todos, mapa_area_grupo(), desde, hasta,
-                           tuple(sel_cli), gran)
+    df = agregar_historico(todos, mapa, desde, hasta, tuple(sel_area), gran)
     if df.empty:
-        st.info("No hay pedidos para ese rango y esos clientes.")
+        st.info("No hay pedidos para ese rango y esas áreas.")
         return
 
+    # Los porcentajes viven acá arriba y en el TOTAL de abajo, no en la tabla:
+    # un % por fila se lee como si todas pesaran igual, y no es así.
     t = totales_historico(df)
     m1, m2, m3 = st.columns(3)
-    m1.metric("Venta",       f"Q{t['venta']:,.2f}")
-    m2.metric("Compra",      f"Q{t['compra']:,.2f}")
-    m3.metric("Diferencia",  f"Q{t['dif']:,.2f}", f"{t['dif_pct']:.1f}%",
-              delta_color="off")
+    m1.metric("Venta",        f"Q{t['venta']:,.2f}")
+    m2.metric("Compra",       f"Q{t['compra']:,.2f}")
+    m3.metric("Margen Bruto", f"Q{t['bruto']:,.2f}",
+              f"{t['bruto_pct']:.1f}%", delta_color="off")
+    m4, m5, m6 = st.columns(3)
+    m4.metric("IVA",          f"Q{t['iva']:,.2f}")
+    m5.metric("ISR retenido", f"Q{t['isr']:,.2f}")
+    m6.metric("Margen Neto",  f"Q{t['neto']:,.2f}",
+              f"{t['neto_pct']:.1f}%", delta_color="off")
 
     _num = st.column_config.NumberColumn
     st.dataframe(df, use_container_width=True, hide_index=True,
-                 column_config={
-                     "Venta (Q)":      _num(format="%.2f"),
-                     "Compra (Q)":     _num(format="%.2f"),
-                     "Diferencia (Q)": _num(format="%.2f"),
-                     "Dif %":          _num(format="%.1f%%"),
-                 })
+                 column_config={c: _num(format="%.2f") for c in
+                                ("Venta (Q)", "Compra (Q)", "IVA (Q)",
+                                 "ISR (Q)", "Margen Bruto (Q)",
+                                 "Margen Neto (Q)")})
     st.caption(f"**TOTAL: Venta Q{t['venta']:,.2f} · Compra "
-               f"Q{t['compra']:,.2f} · Diferencia Q{t['dif']:,.2f} "
-               f"({t['dif_pct']:.1f}%)** — {len(df)} fila(s), "
-               f"{t['lineas']:,} línea(s) de pedido, "
+               f"Q{t['compra']:,.2f} · IVA Q{t['iva']:,.2f} · ISR "
+               f"Q{t['isr']:,.2f} · Bruto Q{t['bruto']:,.2f} "
+               f"({t['bruto_pct']:.1f}%) · Neto Q{t['neto']:,.2f} "
+               f"({t['neto_pct']:.1f}%)** — {len(df)} fila(s), "
                f"{desde:%d/%m/%Y} a {hasta:%d/%m/%Y}")
-
-    if (df["Área"] == "Sin área").any():
-        st.caption("⚠️ 'Sin área' son clientes cuyo codigo_lugar no está en "
-                   "ZONAS_MAP — revisalos en el catálogo de Clientes.")
+    st.caption("El ISR se calcula por factura semanal, respetando exentos y el "
+               f"umbral de Q{ISR_UMBRAL:,.0f} — no es un 5% plano sobre el "
+               "total del período.")
 
     # Texto de los filtros aplicados: va al PDF para que un reporte impreso
     # nunca sea ambiguo sobre qué recorte representa.
-    filtros_txt = (f"Cliente: {', '.join(sel_cli)}" if sel_cli
-                   else "sin filtros (todos los clientes)")
+    filtros_txt = (f"Área: {', '.join(sel_area)}" if sel_area
+                   else "sin filtros (todas las áreas)")
     filtros_txt += f" · Ver por: {gran}"
 
     b1, b2 = st.columns(2)
     csv_df = pd.concat([df, pd.DataFrame([{
-        "Período": "TOTAL", "Área": "",
+        "Período": "TOTAL", "Cliente": "",
         "Venta (Q)": round(t["venta"], 2), "Compra (Q)": round(t["compra"], 2),
-        "Diferencia (Q)": round(t["dif"], 2), "Dif %": t["dif_pct"],
-        "Líneas": t["lineas"]}])], ignore_index=True)
+        "IVA (Q)": round(t["iva"], 2), "ISR (Q)": round(t["isr"], 2),
+        "Margen Bruto (Q)": round(t["bruto"], 2),
+        "Margen Neto (Q)": round(t["neto"], 2)}])], ignore_index=True)
     b1.download_button(
         "📥 Descargar CSV",
         data=csv_df.to_csv(index=False).encode("utf-8-sig"),

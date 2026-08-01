@@ -1844,25 +1844,33 @@ def generar_reporte_historico(filas: list, desde: "date", hasta: "date",
                               filtros_txt: str = "",
                               tot: dict = None) -> bytes:
     """
-    PDF del histórico de venta y compra por área.
+    PDF del histórico de venta y compra por cliente.
 
     filas: los registros que ya muestra modulo_facturacion.agregar_historico.
     tot:   el dict de modulo_facturacion.totales_historico.
+
+    Los porcentajes no son columnas: van en el pie, calculados sobre los
+    totales. Un % por fila se lee como si todas las filas pesaran igual.
     """
     tot = tot or {}
-    cuerpo = [[r.get("Período", ""), r.get("Área", ""), _q(r.get("Venta (Q)")),
-               _q(r.get("Compra (Q)")), _q(r.get("Diferencia (Q)")),
-               _pc(r.get("Dif %")), f"{int(r.get('Líneas') or 0):,}"]
+    cuerpo = [[r.get("Período", ""), r.get("Cliente", ""),
+               _q(r.get("Venta (Q)")), _q(r.get("Compra (Q)")),
+               _q(r.get("IVA (Q)")), _q(r.get("ISR (Q)")),
+               _q(r.get("Margen Bruto (Q)")), _q(r.get("Margen Neto (Q)"))]
               for r in filas]
     total = (["TOTAL", "", _q(tot.get("venta")), _q(tot.get("compra")),
-              _q(tot.get("dif")), _pc(tot.get("dif_pct")),
-              f"{int(tot.get('lineas') or 0):,}"] if tot else None)
+              _q(tot.get("iva")), _q(tot.get("isr")), _q(tot.get("bruto")),
+              _q(tot.get("neto"))] if tot else None)
+    pie = f"{len(filas)} fila(s)"
+    if tot:
+        pie += (f" · Margen Bruto {_pc(tot.get('bruto_pct'))} · "
+                f"Margen Neto {_pc(tot.get('neto_pct'))} sobre la venta")
     return generar_pdf_reporte(
-        "Histórico de Venta y Compra por Área",
-        ["Período", "Área", "Venta (Q)", "Compra (Q)", "Diferencia (Q)",
-         "Dif %", "Líneas"],
+        "Histórico de Venta y Compra por Cliente",
+        ["Período", "Cliente", "Venta (Q)", "Compra (Q)", "IVA (Q)", "ISR (Q)",
+         "M. Bruto (Q)", "M. Neto (Q)"],
         cuerpo, desde, hasta,
         filtros_txt=filtros_txt, fila_total=total,
-        anchos=[0.13, 0.24, 0.14, 0.14, 0.15, 0.09, 0.11],
-        alinear_der=(2, 3, 4, 5, 6),
-        pie=f"{len(filas)} fila(s)")
+        anchos=[0.11, 0.23, 0.12, 0.12, 0.10, 0.10, 0.11, 0.11],
+        alinear_der=(2, 3, 4, 5, 6, 7),
+        pie=pie)
