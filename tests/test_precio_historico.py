@@ -243,4 +243,55 @@ r.check(diferencias_precio_historico(PRECIOS, "hoja_inventada", "x",
                                      JUN1, JUN30) == [],
         "un nivel desconocido no alcanza a nadie")
 
+print("\n=== 10. El selector lee las listas de las HOJAS ===")
+# Las listas especiales se crean en el Sheet sin tocar codigo, asi que
+# hardcodearlas dejaria el selector viejo el dia que se agregue una.
+import ast                                                     # noqa: E402
+import os                                                      # noqa: E402
+
+_HOJAS = {
+    "precioszona":  [["Lista", "Producto", "Precio"],
+                     ["Hogares", "Manzana", 10.0],
+                     ["hogares", "Pera", 12.0],       # mismo nombre, otro caso
+                     ["Rio", "Manzana", 11.0]],
+    "preciosgrupo": [["Lista", "Producto", "Precio"],
+                     ["Condominio", "Manzana", 9.0],
+                     ["", "", ""]],                   # fila vacia de la hoja
+}
+_gs = types.ModuleType("gsheets")
+_gs.get_all_rows = lambda hoja: [list(r) for r in _HOJAS[hoja]]
+sys.modules["gsheets"] = _gs
+
+_src = open(os.path.join(raiz_repo(), "modulo_productos.py"),
+            encoding="utf-8").read()
+_fn = next(n for n in ast.parse(_src).body
+           if isinstance(n, ast.FunctionDef) and n.name == "_listas_de_precio")
+_ns = {"st": sys.modules["streamlit"]}
+exec(compile(ast.Module(body=[_fn], type_ignores=[]),
+             "modulo_productos", "exec"), _ns)
+opciones = _ns["_listas_de_precio"]()
+
+r.check(opciones[0] == ("General (catálogo)", "general", ""),
+        f"General va primero: {opciones[0]}")
+_etiq = [o[0] for o in opciones]
+r.check(_etiq == ["General (catálogo)", "Zona: Hogares", "Zona: Rio",
+                  "Grupo: Condominio"],
+        f"lee zonas y grupos de las hojas: {_etiq}")
+r.check(sum(1 for o in opciones if o[0].startswith("Zona: Hogares")) == 1,
+        "no duplica una lista que aparece en varias filas")
+r.check(("Zona: Rio", "precioszona", "Rio") in opciones,
+        "aparece incluso una zona que config no mapea: el aviso de alcance "
+        "es el que va a decir que no le llega a nadie")
+r.check(all(o[1] in ("general", "precioszona", "preciosgrupo")
+            for o in opciones), "cada opción trae su hoja")
+
+# Si una hoja falla, el selector no debe caerse: pierde esas listas y avisa.
+_gs.get_all_rows = lambda hoja: (_ for _ in ()).throw(
+    RuntimeError("sin credenciales"))
+_ns2 = {"st": sys.modules["streamlit"]}
+exec(compile(ast.Module(body=[_fn], type_ignores=[]),
+             "modulo_productos", "exec"), _ns2)
+r.check(_ns2["_listas_de_precio"]() == [("General (catálogo)", "general", "")],
+        "si no se puede leer una hoja, queda General y no revienta")
+
 r.salir()

@@ -735,6 +735,174 @@ def _tab_costos_masivo():
         st.rerun()
 
 
+
+
+# ── TAB: Actualizar Precios Masivo ────────────────────────────────────────────
+def _listas_de_precio() -> list:
+    """Opciones del selector, leídas de las HOJAS y no de una constante.
+
+    Devuelve [(etiqueta, hoja_key, lista)]. Las listas especiales se crean en el
+    Sheet sin tocar código, así que hardcodearlas dejaría el selector viejo el
+    día que se agregue una.
+    """
+    from gsheets import get_all_rows
+    opciones = [("General (catálogo)", "general", "")]
+    for hoja, titulo in (("precioszona", "Zona"), ("preciosgrupo", "Grupo")):
+        try:
+            vistas, filas = set(), get_all_rows(hoja)
+            for row in filas[1:]:
+                nom = str(row[0]).strip() if row and len(row) else ""
+                if nom and nom.lower() not in vistas:
+                    vistas.add(nom.lower())
+                    opciones.append((f"{titulo}: {nom}", hoja, nom))
+        except Exception as e:
+            st.warning(f"No se pudo leer «{hoja}» ({e}). "
+                       f"Sus listas no aparecen en el selector.")
+    return opciones
+
+
+def _tab_precios_masivo():
+    """Aplica un precio al HISTORIAL de pedidos, por lista y rango de fechas.
+
+    Reemplaza la Corrección Masiva que vivía en Mantenimiento. La diferencia que
+    importa: aquella filtraba por pertenencia (todo cliente de la zona), y por
+    eso le pisaba el precio a quien tenía uno individual negociado. Acá el
+    alcance lo decide la cascada — ver data_helper.alcanzado_por_nivel.
+    """
+    from datetime import date
+    from order_helper import (diferencias_precio_historico,
+                              aplicar_precio_historico, clientes_alcanzados,
+                              semana_en_curso)
+
+    st.markdown("#### Actualizar Precios Masivo")
+    st.caption("Aplica un precio a los pedidos YA INGRESADOS del rango que "
+               "elijas, solo a los clientes a quienes esa lista les da el "
+               "precio hoy.")
+    st.warning("⚠️ Esto modifica pedidos de semanas pasadas, incluidas las ya "
+               "facturadas. **No hay deshacer**: si algo sale mal, la única "
+               "salida es restaurar el Sheet desde el historial de versiones "
+               "de Google. Revisá la vista previa antes de aplicar.")
+
+    todos = leer_productos_con_fila(es_antigua=False)
+    tipos = sorted({str(p.get("tipo_producto", "") or "").strip()
+                    for p in todos if str(p.get("tipo_producto", "") or "").strip()})
+
+    # ── Qué productos y de qué lista ─────────────────────────────────────────
+    f1, f2 = st.columns([1, 2])
+    tipo_sel = f1.multiselect("Tipo de producto", tipos, key="pm_tipos",
+                              help="Vacío = todos los tipos.")
+    candidatos = [p for p in todos
+                  if not tipo_sel
+                  or str(p.get("tipo_producto", "") or "").strip() in tipo_sel]
+    prods_sel = f2.multiselect(
+        "Productos a actualizar", sorted(p["nombre"] for p in candidatos),
+        key="pm_prods", placeholder="Elegí uno o más productos...")
+
+    opciones = _listas_de_precio()
+    etiqueta = st.selectbox("Lista de precio", [o[0] for o in opciones],
+                            key="pm_lista",
+                            help="Determina a qué clientes les llega el "
+                                 "cambio. General alcanza solo a quienes no "
+                                 "tienen ninguna lista especial.")
+    _, hoja_key, lista = next(o for o in opciones if o[0] == etiqueta)
+
+    if not prods_sel:
+        st.info("Seleccioná al menos un producto.")
+        return
+
+    # ── A quién alcanza ──────────────────────────────────────────────────────
+    # Se muestra ANTES de pedir el precio: si la lista no alcanza a nadie, no
+    # tiene sentido seguir. Pasaba en silencio con las zonas que existen en la
+    # hoja pero que config.ZONA_LISTA_CODIGOS no mapea a ningún codigo_lugar.
+    alcance = {p: clientes_alcanzados(p, hoja_key, lista) for p in prods_sel}
+    total_alc = sorted({c for v in alcance.values() for c in v})
+    if not total_alc:
+        st.error(
+            f"**«{etiqueta}» no le está dando el precio a ningún cliente** "
+            f"para esos productos, así que este cambio no tocaría nada.\n\n"
+            f"Puede ser porque todos sus clientes tienen un precio más "
+            f"específico (individual o de grupo) que manda sobre esta lista, "
+            f"o porque es una lista de zona sin códigos de lugar asignados en "
+            f"la configuración.")
+        return
+    with st.expander(f"👥 Alcanza a {len(total_alc)} cliente(s) — ver cuáles"):
+        for p in prods_sel:
+            st.markdown(f"**{p}** — {len(alcance[p])}: "
+                        + (", ".join(alcance[p]) if alcance[p] else "_ninguno_"))
+
+    # ── Qué precio aplicar ───────────────────────────────────────────────────
+    st.markdown("**Precio a aplicar** — por defecto el del catálogo general; "
+                "cambialo al que corresponde a esta lista.")
+    cat = {p["nombre"]: p for p in candidatos}
+    precios = {}
+    for i, nom in enumerate(prods_sel):
+        c1, c2, c3 = st.columns([2.5, 1, 1])
+        c1.markdown(f"<div style='padding-top:8px'>{nom}</div>",
+                    unsafe_allow_html=True)
+        _cat = float(cat.get(nom, {}).get("precio", 0) or 0)
+        c2.markdown(f"<div style='padding-top:8px;color:#666;font-size:.85rem'>"
+                    f"catálogo: Q{_cat:.2f}</div>", unsafe_allow_html=True)
+        precios[nom.strip().lower()] = c3.number_input(
+            "Precio Q", value=_cat, min_value=0.0, step=0.25,
+            key=f"pm_precio_{i}", label_visibility="collapsed")
+
+    # ── Rango de fechas ──────────────────────────────────────────────────────
+    lunes, domingo = semana_en_curso()
+    d1, d2 = st.columns(2)
+    desde = d1.date_input("Desde", value=lunes, key="pm_desde")
+    hasta = d2.date_input("Hasta", value=domingo, key="pm_hasta")
+    if desde > hasta:
+        st.error("El 'Desde' es posterior al 'Hasta'.")
+        return
+    if desde < lunes:
+        st.caption(f"⚠️ El rango incluye semanas anteriores a la actual "
+                   f"({desde:%d/%m/%Y} → {hasta:%d/%m/%Y}).")
+
+    # ── Vista previa ─────────────────────────────────────────────────────────
+    K = "pm_difs"
+    if st.button("🔍 Ver qué cambiaría", key="pm_ver", type="primary"):
+        with st.spinner("Revisando pedidos del rango..."):
+            st.session_state[K] = diferencias_precio_historico(
+                precios, hoja_key, lista, desde, hasta)
+
+    difs = st.session_state.get(K)
+    if difs is None:
+        return
+    if not difs:
+        st.success("Ninguna línea cambiaría: los pedidos del rango ya tienen "
+                   "esos precios para esta lista.")
+        return
+
+    _ta = sum(d["Total actual"] for d in difs)
+    _tn = sum(d["Total nuevo"]  for d in difs)
+    _ma = sum(d["Margen actual"] for d in difs)
+    _mn = sum(d["Margen nuevo"]  for d in difs)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Líneas a modificar", f"{len(difs):,}")
+    m2.metric("Facturado", f"Q{_tn:,.2f}", delta=f"Q{_tn - _ta:,.2f}")
+    m3.metric("Margen",    f"Q{_mn:,.2f}", delta=f"Q{_mn - _ma:,.2f}")
+
+    st.dataframe(pd.DataFrame(difs).drop(columns=["row_num"]),
+                 use_container_width=True, hide_index=True)
+    st.caption(f"Lista: **{etiqueta}** · Rango: {desde:%d/%m/%Y} a "
+               f"{hasta:%d/%m/%Y} · el costo de cada línea NO se modifica, "
+               f"solo el precio y los derivados.")
+    if _tn != _ta:
+        st.caption("Cambia lo facturado de esos pedidos. Si alguno ya se "
+                   "cobró, la factura emitida y el Sheet van a discrepar.")
+
+    b1, b2 = st.columns(2)
+    if b1.button(f"✅ Aplicar a {len(difs)} línea(s)", type="primary",
+                 key="pm_ok", use_container_width=True):
+        with st.spinner("Actualizando pedidos..."):
+            n = aplicar_precio_historico(difs)
+        st.session_state.pop(K, None)
+        st.success(f"{n} línea(s) actualizadas.")
+        st.rerun()
+    if b2.button("Cancelar", key="pm_no", use_container_width=True):
+        st.session_state.pop(K, None)
+        st.rerun()
+
 # ── TAB 5: Validación (ya existía) ────────────────────────────────────────────
 def _tab_validacion():
     import unicodedata
@@ -825,9 +993,10 @@ def mostrar():
         st.rerun()
     st.divider()
 
-    tab_upd, tab_cm, tab_np, tab_cat, tab_lp, tab_val = st.tabs([
+    tab_upd, tab_cm, tab_pm, tab_np, tab_cat, tab_lp, tab_val = st.tabs([
         "✏️ Actualizar Precios",
         "🧮 Actualizar Costos Masivo",
+        "🏷️ Actualizar Precios Masivo",
         "➕ Nuevo Producto",
         "📋 Ver Catálogo",
         "🏷️ Lista de Precios Especiales",
@@ -835,6 +1004,7 @@ def mostrar():
     ])
     with tab_upd: _tab_actualizar(es_antigua=False)
     with tab_cm:  _tab_costos_masivo()
+    with tab_pm:  _tab_precios_masivo()
     with tab_np:  _tab_nuevo()
     with tab_cat: _tab_catalogo()
     with tab_lp:  _tab_listas()
