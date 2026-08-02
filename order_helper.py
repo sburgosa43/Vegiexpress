@@ -184,7 +184,7 @@ def propagar_precio_nivel(producto: str, precio_nuevo: float,
 
     Devuelve la cantidad de líneas actualizadas.
     """
-    from config import cliente_en_nivel
+    from data_helper import alcanzado_por_nivel
 
     prod_l = str(producto or "").strip().lower()
     if not prod_l or float(precio_nuevo or 0) <= 0:
@@ -204,7 +204,7 @@ def propagar_precio_nivel(producto: str, precio_nuevo: float,
         if not fecha or not (lunes <= fecha <= domingo):
             continue
         cli = clientes.get(str(p.get("cliente", "")).strip().lower())
-        if not cli or not cliente_en_nivel(cli, hoja_key, lista):
+        if not cli or not alcanzado_por_nivel(cli, producto, hoja_key, lista):
             continue
         updates += celdas_linea(
             p["row_num"], float(p.get("cantidad") or 0),
@@ -428,6 +428,108 @@ def aplicar_costo_historico(difs: list) -> int:
     for d in difs:
         updates += celdas_linea(d["row_num"], d["Cantidad"],
                                 d["Precio"], d["Costo nuevo"])
+    update_cells("pedidos", updates)
+    try:
+        from data_helper import refrescar_datos
+        refrescar_datos(pedidos=True, productos=False,
+                        clientes=False, precios=True)
+    except Exception as e:
+        st.warning(f"Los pedidos se actualizaron, pero no se pudo refrescar "
+                   f"la caché ({e}). Recargá la página para verlos.")
+    return len(difs)
+
+
+def clientes_alcanzados(producto: str, hoja_key: str, lista: str) -> list:
+    """Clientes a los que ESA lista les está dando el precio de ESE producto.
+
+    Sirve para avisar en pantalla antes de aplicar. Si devuelve vacío, el cambio
+    no va a tocar nada: o la lista no alcanza a nadie (por ejemplo una zona de
+    PreciosZona que config.ZONA_LISTA_CODIGOS no mapea a ningún codigo_lugar),
+    o todos sus clientes tienen un precio más específico que manda.
+    """
+    from data_helper import cargar_clientes, alcanzado_por_nivel
+    return sorted(str(c.get("nombre", "") or "").strip()
+                  for c in cargar_clientes()
+                  if alcanzado_por_nivel(c, producto, hoja_key, lista))
+
+
+def diferencias_precio_historico(precios: dict, hoja_key: str, lista: str,
+                                 desde: date, hasta: date) -> list:
+    """Qué líneas cambiarían al aplicar `precios` en el rango. NO escribe nada.
+
+    precios: {nombre_producto_en_minúsculas: precio_a_aplicar}
+
+    Solo alcanza a los clientes a quienes ESA lista les da el precio hoy: ver
+    data_helper.alcanzado_por_nivel. Un cliente con precio individual no se toca
+    aunque esté en la zona editada.
+
+    Devuelve una fila por línea que difiere, con el margen actual y el que
+    quedaría, para que el impacto se vea antes de escribir.
+    """
+    if not precios or not desde or not hasta or desde > hasta:
+        return []
+    from config import margen_neto_q
+    from data_helper import cargar_clientes, alcanzado_por_nivel
+
+    clientes = {str(c.get("nombre", "")).strip().lower(): c
+                for c in cargar_clientes()}
+    # El alcance depende de (cliente, producto), no de la línea: se memoiza para
+    # no reevaluar la cascada en cada una de las miles de líneas del histórico.
+    cache = {}
+
+    difs = []
+    for p in leer_pedidos():
+        fecha = p.get("fecha")
+        if not fecha or not (desde <= fecha <= hasta):
+            continue
+        prod_l = str(p.get("producto", "")).strip().lower()
+        if prod_l not in precios:
+            continue
+
+        cli_l = str(p.get("cliente", "")).strip().lower()
+        clave = (cli_l, prod_l)
+        if clave not in cache:
+            cli = clientes.get(cli_l)
+            cache[clave] = bool(cli) and alcanzado_por_nivel(
+                cli, p.get("producto", ""), hoja_key, lista)
+        if not cache[clave]:
+            continue
+
+        precio_act = float(p.get("precio") or 0)
+        precio_nue = float(precios[prod_l])
+        if precio_nue <= 0 or abs(precio_nue - precio_act) < 0.001:
+            continue
+
+        costo = float(p.get("costo") or 0)
+        cant  = float(p.get("cantidad") or 0)
+        difs.append({
+            "row_num":  p["row_num"],
+            "Fecha":    fecha.strftime("%d/%m/%Y"),
+            "Semana":   p.get("semana"),
+            "Cliente":  p.get("cliente", ""),
+            "Producto": p.get("producto", ""),
+            "Cantidad": cant,
+            "Costo":    round(costo, 2),
+            "Precio actual": round(precio_act, 2),
+            "Precio nuevo":  round(precio_nue, 2),
+            "Total actual":  round(precio_act * cant, 2),
+            "Total nuevo":   round(precio_nue * cant, 2),
+            "Margen actual": round(margen_neto_q(costo, precio_act) * cant, 2),
+            "Margen nuevo":  round(margen_neto_q(costo, precio_nue) * cant, 2),
+        })
+    difs.sort(key=lambda d: (d["Producto"], d["Fecha"], d["Cliente"]))
+    return difs
+
+
+def aplicar_precio_historico(difs: list) -> int:
+    """Escribe las diferencias de precio. El COSTO de cada línea no se toca."""
+    if not difs:
+        return 0
+    updates = []
+    for d in difs:
+        updates += celdas_linea(d["row_num"], d["Cantidad"],
+                                d["Precio nuevo"], d["Costo"],
+                                escribir_precio=True)
     update_cells("pedidos", updates)
     try:
         from data_helper import refrescar_datos

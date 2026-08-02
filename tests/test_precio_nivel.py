@@ -34,7 +34,20 @@ CLIENTES = [
     {"nombre": "Casa Perez",  "codigo_lugar": "L20", "grupo": ""},
     {"nombre": "Hotelito",    "codigo_lugar": "L03", "grupo": "Italianos"},
     {"nombre": "Sundog",      "codigo_lugar": "L05", "grupo": ""},
+    # También L20, pero con precio individual negociado: la zona no debe
+    # pisárselo. Es el caso que rompía el criterio viejo de pertenencia.
+    {"nombre": "Casa Ruiz",   "codigo_lugar": "L20", "grupo": ""},
 ]
+
+# Estado de las hojas de precios que implica este escenario. Se declara para
+# que cli_precio del doble resuelva la MISMA cascada que el original.
+TABLAS = {
+    "preciosclient": {("casa ruiz", "manzana amarilla"): 5.0},
+    "preciosgrupo":  {},
+    "precioszona":   {("hogares", "manzana amarilla"): 6.0,
+                      ("antigua", "manzana amarilla"): 9.0},
+}
+CATALOGO_PRECIO = 8.0
 
 PEDIDOS = [
     # Semana en curso
@@ -49,6 +62,9 @@ PEDIDOS = [
      "semana": 31, "año": 2026},
     {"row_num": 13, "cliente": "Sundog", "producto": "Manzana Amarilla",
      "fecha": HOY, "precio": 8.0, "costo": 4.0, "cantidad": 4,
+     "semana": 31, "año": 2026},
+    {"row_num": 14, "cliente": "Casa Ruiz", "producto": "Manzana Amarilla",
+     "fecha": HOY, "precio": 5.0, "costo": 4.0, "cantidad": 6,
      "semana": 31, "año": 2026},
     # Semana PASADA — el historial no se toca
     {"row_num": 20, "cliente": "Casa Lopez", "producto": "Manzana Amarilla",
@@ -79,12 +95,46 @@ gsheets.append_rows = lambda *a, **k: None
 gsheets.get_all_rows = lambda *a, **k: []
 sys.modules["gsheets"] = gsheets
 
+from config import (cliente_en_nivel, zona_lista_de,          # noqa: E402
+                    ZONA_LISTA_CODIGOS)
+
 data_helper = types.ModuleType("data_helper")
 data_helper.refrescar_datos = lambda **k: []
 data_helper.cargar_clientes = lambda: [dict(c) for c in CLIENTES]
+
+
+def _cli_precio(cliente, producto):
+    """Misma cascada que el original: cliente -> grupo -> zona -> general."""
+    prod = str(producto or "").lower().strip()
+    nom  = str(cliente.get("nombre", "") or "").strip().lower()
+    grp  = str(cliente.get("grupo", "") or "").strip().lower()
+    zona = zona_lista_de(cliente.get("codigo_lugar", ""))
+    v = TABLAS["preciosclient"].get((nom, prod))
+    if v: return float(v), "cliente"
+    if grp:
+        v = TABLAS["preciosgrupo"].get((grp, prod))
+        if v: return float(v), "grupo"
+    if zona:
+        v = TABLAS["precioszona"].get((zona, prod))
+        if v: return float(v), "zona"
+    return CATALOGO_PRECIO, "general"
+
+
+def _alcanzado(cliente, producto, hoja_key, lista):
+    _, fuente = _cli_precio(cliente, producto)
+    if hoja_key == "general":
+        return fuente == "general"
+    esperada = {"precioszona": "zona", "preciosgrupo": "grupo",
+                "preciosclient": "cliente"}.get(hoja_key)
+    if not esperada:
+        return False
+    return fuente == esperada and cliente_en_nivel(cliente, hoja_key, lista)
+
+
+data_helper.cli_precio = _cli_precio
+data_helper.alcanzado_por_nivel = _alcanzado
 sys.modules["data_helper"] = data_helper
 
-from config import cliente_en_nivel, zona_lista_de           # noqa: E402
 from order_helper import propagar_precio_nivel               # noqa: E402
 
 # actualizar_precio_semana REAL
@@ -125,6 +175,8 @@ r.check(n == 2, f"toca las 2 líneas de Hogares de esta semana (devolvió {n})")
 r.check(sorted(pf) == [10, 11], f"filas {sorted(pf)}")
 r.check(12 not in pf, "Hotelito (Antigua) NO se toca")
 r.check(13 not in pf, "Sundog (precio general) NO se toca")
+r.check(14 not in pf,
+        "Casa Ruiz es L20 pero tiene precio individual: la zona NO se lo pisa")
 r.check(20 not in pf, "la semana PASADA no se toca: el historial queda intacto")
 r.check(pf[10]["E"] == 7.5, f"precio nuevo escrito: {pf[10]['E']}")
 r.check(abs(pf[10]["G"] - 22.5) < 1e-9, f"total recalculado 7.50 x 3 -> {pf[10]['G']}")
@@ -148,8 +200,8 @@ print("\n=== 4. Sin nivel (General) sigue tocando todas ===")
 ESCRITO.clear()
 res = actualizar_precio_semana(cambios, 31, 2026, actualizar_catalogo=False)
 pf = por_fila(ESCRITO)
-r.check(sorted(pf) == [10, 11, 12, 13],
-        f"nivel General alcanza a todos los clientes: {sorted(pf)}")
+r.check(sorted(pf) == [10, 11, 12, 13, 14],
+        f"sin nivel se tocan todas las líneas del producto: {sorted(pf)}")
 
 print("\n=== 5. El bug que se corrigió ===")
 # Antes, editar Zona Hogares reescribia el precio de Hogares a TODOS.
@@ -161,6 +213,24 @@ r.check(13 not in pf,
         "Sundog conserva su precio general: antes se lo pisaba el de Hogares")
 r.check(12 not in pf,
         "Hotelito conserva su precio de Antigua")
+r.check(14 not in pf,
+        "y Casa Ruiz conserva su precio negociado")
+
+print("\n=== 5b. Pertenecer a la zona NO alcanza: manda la cascada ===")
+# Contraprueba del bug: el criterio viejo (cliente_en_nivel) daba por buenos a
+# los TRES clientes L20. Sin esto, los checks de arriba pasarian tambien con una
+# implementacion que simplemente no tocara nada.
+_cl5 = {c["nombre"]: c for c in CLIENTES}
+_viejo = sorted(n for n, c in _cl5.items()
+                if cliente_en_nivel(c, "precioszona", "Hogares"))
+r.check(_viejo == ["Casa Lopez", "Casa Perez", "Casa Ruiz"],
+        f"el criterio viejo alcanzaba a los 3 de L20: {_viejo}")
+_nuevo = sorted(n for n, c in _cl5.items()
+                if _alcanzado(c, "Manzana Amarilla", "precioszona", "Hogares"))
+r.check(_nuevo == ["Casa Lopez", "Casa Perez"],
+        f"el criterio nuevo deja 2: {_nuevo}")
+r.check(_cli_precio(_cl5["Casa Ruiz"], "Manzana Amarilla") == (5.0, "cliente"),
+        "porque Casa Ruiz cotiza por su precio individual, no por la zona")
 
 print("\n=== 6. Casos borde ===")
 ESCRITO.clear()

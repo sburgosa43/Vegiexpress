@@ -208,6 +208,35 @@ def cli_precio(cliente: dict, producto_nombre: str) -> tuple[float, str]:
     return 0.0, "general"
 
 
+def alcanzado_por_nivel(cliente: dict, producto: str,
+                        hoja_key: str, lista: str) -> bool:
+    """¿Un cambio de precio en esa lista le corresponde a este cliente?
+
+    Pertenecer a la zona NO alcanza. Si el cliente tiene precio individual o de
+    grupo para ese producto, ESE es su precio, y editar la zona no debe pisarlo:
+    son precios negociados uno a uno. Por eso se consulta la fuente real con
+    cli_precio — la misma cascada que usa el cotizador — en vez de mirar solo el
+    codigo_lugar.
+
+    Sin esto, subir el precio de Zona Hogares le reescribía el pedido a un
+    cliente L20 que tenía precio propio en PreciosCliente.
+
+    hoja_key: 'general' | 'precioszona' | 'preciosgrupo' | 'preciosclient'
+    """
+    from config import cliente_en_nivel
+
+    _, fuente = cli_precio(cliente, producto)
+    if hoja_key == "general":
+        # El catálogo alcanza solo a quien no tiene ninguna lista especial.
+        return fuente == "general"
+    esperada = {"precioszona":  "zona",
+                "preciosgrupo": "grupo",
+                "preciosclient": "cliente"}.get(hoja_key)
+    if not esperada:
+        return False
+    return fuente == esperada and cliente_en_nivel(cliente, hoja_key, lista)
+
+
 def limpiar_cache_precios():
     """Limpia caches de todas las tablas de precios especiales."""
     _leer_tabla_precios.clear()

@@ -31,6 +31,7 @@ PRUEBAS = [
     "test_costo_historico.py",
     "test_margenes.py",
     "test_historico_area.py",
+    "test_precio_historico.py",
 ]
 
 

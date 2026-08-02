@@ -398,14 +398,17 @@ def actualizar_precio_semana(cambios: list, semana: int, año: int,
     # clientes de ESE nivel. Sin esto, corregir el precio de Zona Hogares se lo
     # reescribía a todos los clientes con ese producto en la semana, incluidos
     # los que cotizan por el precio general o por otra zona.
+    # Se usa alcanzado_por_nivel y no cliente_en_nivel: pertenecer a la zona no
+    # basta. Un cliente L20 con precio propio en PreciosCliente cotiza por ese
+    # precio, y editar Zona Hogares no debe pisárselo.
     _en_nivel = None
     if hoja_nivel and lista_nivel:
-        from config import cliente_en_nivel as _cen
+        from data_helper import alcanzado_por_nivel as _apn
         from data_helper import cargar_clientes as _cc
         _clis = {str(c.get("nombre", "")).strip().lower(): c for c in _cc()}
-        def _en_nivel(nombre_cli):
+        def _en_nivel(nombre_cli, prod_nom):
             c = _clis.get(str(nombre_cli or "").strip().lower())
-            return bool(c) and _cen(c, hoja_nivel, lista_nivel)
+            return bool(c) and _apn(c, prod_nom, hoja_nivel, lista_nivel)
 
     upd = []
     filas_ped = 0
@@ -413,7 +416,7 @@ def actualizar_precio_semana(cambios: list, semana: int, año: int,
         prod = p["producto"]
         if prod not in prod_all: continue
         if p["semana"] != semana or p["año"] != año: continue
-        if _en_nivel and not _en_nivel(p.get("cliente", "")): continue
+        if _en_nivel and not _en_nivel(p.get("cliente", ""), prod): continue
 
         p_nuevo = precio_map.get(prod)
         c_nuevo = costo_map.get(prod)
