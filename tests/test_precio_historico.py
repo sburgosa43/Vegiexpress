@@ -249,13 +249,15 @@ print("\n=== 10. El selector lee las listas de las HOJAS ===")
 import ast                                                     # noqa: E402
 import os                                                      # noqa: E402
 
+# OJO: get_all_rows ya devuelve las filas SIN encabezado (gsheets hace vals[1:]),
+# asi que el doble tampoco lo incluye. Cuando el stub traia un encabezado de
+# mentira, tapaba un bug real: _listas_de_precio recortaba otra fila y se comia
+# la primera lista de cada hoja.
 _HOJAS = {
-    "precioszona":  [["Lista", "Producto", "Precio"],
-                     ["Hogares", "Manzana", 10.0],
+    "precioszona":  [["Hogares", "Manzana", 10.0],
                      ["hogares", "Pera", 12.0],       # mismo nombre, otro caso
                      ["Rio", "Manzana", 11.0]],
-    "preciosgrupo": [["Lista", "Producto", "Precio"],
-                     ["Condominio", "Manzana", 9.0],
+    "preciosgrupo": [["Condominio", "Manzana", 9.0],
                      ["", "", ""]],                   # fila vacia de la hoja
 }
 _gs = types.ModuleType("gsheets")

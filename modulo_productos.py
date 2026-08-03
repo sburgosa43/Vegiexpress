@@ -749,8 +749,11 @@ def _listas_de_precio() -> list:
     opciones = [("General (catálogo)", "general", "")]
     for hoja, titulo in (("precioszona", "Zona"), ("preciosgrupo", "Grupo")):
         try:
+            # get_all_rows YA devuelve las filas sin encabezado (hace vals[1:]),
+            # así que acá NO se vuelve a recortar: hacerlo se comía la primera
+            # lista de cada hoja.
             vistas, filas = set(), get_all_rows(hoja)
-            for row in filas[1:]:
+            for row in filas:
                 nom = str(row[0]).strip() if row and len(row) else ""
                 if nom and nom.lower() not in vistas:
                     vistas.add(nom.lower())
