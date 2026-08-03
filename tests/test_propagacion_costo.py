@@ -19,32 +19,43 @@ from _stubs import Reporte, instalar_streamlit, por_fila, raiz_repo
 RAIZ = raiz_repo()
 st = instalar_streamlit()
 
-# Miércoles. La semana en curso va del lunes 27/07 al domingo 02/08.
-HOY = date(2026, 7, 29)
+# Las fechas se derivan de la semana REAL, no se fijan a un calendario.
+#
+# _propagar_precios_pedidos no recibe `hoy`: por diseño usa date.today(), que es
+# justo lo que hay que probar. Con fechas fijas (27/07 al 02/08) el test pasaba
+# solo durante esa semana y se invertia despues: los pedidos quedaban en la
+# semana pasada y el de "la semana que viene" caia dentro de la actual. Fallo el
+# lunes siguiente, sin que nada del codigo hubiera cambiado.
+from datetime import timedelta                              # noqa: E402
+
+_HOY_REAL = date.today()
+LUNES     = _HOY_REAL - timedelta(days=_HOY_REAL.weekday())
+DOMINGO   = LUNES + timedelta(days=6)
+HOY       = LUNES + timedelta(days=2)      # miercoles de esta semana
 
 PEDIDOS = [
     # lunes, con precio NEGOCIADO 9.50 (el del catálogo es 8.00)
-    {"row_num": 10, "producto": "Lechuga", "fecha": date(2026, 7, 27),
+    {"row_num": 10, "producto": "Lechuga", "fecha": LUNES,
      "precio": 9.50, "costo": 5.0, "cantidad": 10, "status": "Pendiente",
      "cliente": "Hotelito"},          # precio de ZONA: el general no la alcanza
-    {"row_num": 11, "producto": "Lechuga", "fecha": date(2026, 7, 28),
+    {"row_num": 11, "producto": "Lechuga", "fecha": LUNES + timedelta(days=1),
      "precio": 8.00, "costo": 5.0, "cantidad": 4, "status": "Pendiente", "cliente": "Nanajuana"},
     {"row_num": 12, "producto": "Lechuga", "fecha": HOY,
      "precio": 8.00, "costo": 5.0, "cantidad": 2, "status": "", "cliente": "Nanajuana"},
     # domingo: último día de la semana, entra
-    {"row_num": 13, "producto": "Lechuga", "fecha": date(2026, 8, 2),
+    {"row_num": 13, "producto": "Lechuga", "fecha": DOMINGO,
      "precio": 8.00, "costo": 5.0, "cantidad": 1, "status": "Pendiente", "cliente": "Nanajuana"},
     # domingo anterior: semana pasada, NO entra
-    {"row_num": 14, "producto": "Lechuga", "fecha": date(2026, 7, 26),
+    {"row_num": 14, "producto": "Lechuga", "fecha": LUNES - timedelta(days=1),
      "precio": 8.00, "costo": 5.0, "cantidad": 7, "status": "Pendiente"},
     # lunes siguiente: semana que viene, NO entra
-    {"row_num": 15, "producto": "Lechuga", "fecha": date(2026, 8, 3),
+    {"row_num": 15, "producto": "Lechuga", "fecha": DOMINGO + timedelta(days=1),
      "precio": 8.00, "costo": 5.0, "cantidad": 3, "status": "Pendiente"},
     # otro producto de la misma semana, NO entra
-    {"row_num": 16, "producto": "Tomate", "fecha": date(2026, 7, 27),
+    {"row_num": 16, "producto": "Tomate", "fecha": LUNES,
      "precio": 6.00, "costo": 3.0, "cantidad": 5, "status": "Pendiente"},
     # estado escrito a mano: entra igual, ya no se filtra por estado
-    {"row_num": 17, "producto": "Lechuga", "fecha": date(2026, 7, 27),
+    {"row_num": 17, "producto": "Lechuga", "fecha": LUNES,
      "precio": 8.00, "costo": 5.0, "cantidad": 6, "status": "Entregado", "cliente": "Nanajuana"},
 ]
 
