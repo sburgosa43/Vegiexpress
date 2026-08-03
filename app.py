@@ -34,6 +34,9 @@ SECCIONES = [
         ("🧾 Facturación Mensual",          "modulo_facturacion"),
         ("📈 Control de Márgenes",          "modulo_margenes"),
     ]),
+    ("💵 IMPUESTOS", [
+        ("🧾 ISR Mensual",                  "modulo_isr"),
+    ]),
     ("🟡 CATÁLOGOS", [
         ("📦 Productos",                    "modulo_productos"),
         ("👥 Clientes",                     "modulo_clientes"),
