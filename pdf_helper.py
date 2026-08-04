@@ -1807,19 +1807,23 @@ def _pc(v) -> str:
 # ── REPORTE DE MÁRGENES (Control de Márgenes) ─────────────────────────────────
 def generar_reporte_margenes(filas: list, desde: "date", hasta: "date",
                              filtros_txt: str = "",
-                             tot: dict = None) -> bytes:
+                             tot: dict = None,
+                             dim: str = "Producto") -> bytes:
     """
-    PDF del Control de Márgenes por producto.
+    PDF del Control de Márgenes, agrupado por `dim`.
 
     filas: los registros que ya muestra modulo_margenes.agregar_margenes.
     tot:   el dict de modulo_margenes.totales.
+    dim:   "Producto", "Cliente" o "Área" — la primera columna. Es la misma
+           maqueta para las tres; solo cambia el encabezado y de qué campo se
+           lee el nombre.
 
     Solo formatea y delega la maquetación: los márgenes no se recalculan acá.
-    Va apaisado porque las ocho columnas en vertical dejarían el nombre del
-    producto en dos renglones.
+    Va apaisado porque las ocho columnas en vertical dejarían el nombre en dos
+    renglones.
     """
     tot = tot or {}
-    cuerpo = [[r.get("Producto", ""), _q(r.get("Cantidad")),
+    cuerpo = [[r.get(dim, ""), _q(r.get("Cantidad")),
                _q(r.get("Costo (Q)")), _q(r.get("Ingreso (Q)")),
                _q(r.get("Margen Bruto (Q)")), _pc(r.get("Bruto %")),
                _q(r.get("Margen Neto (Q)")), _pc(r.get("Neto %"))]
@@ -1828,15 +1832,17 @@ def generar_reporte_margenes(filas: list, desde: "date", hasta: "date",
               _q(tot.get("ingreso")), _q(tot.get("bruto")),
               _pc(tot.get("bruto_pct")), _q(tot.get("neto")),
               _pc(tot.get("neto_pct"))] if tot else None)
+    _plural = {"Producto": "producto(s)", "Cliente": "cliente(s)",
+               "Área": "área(s)"}.get(dim, "fila(s)")
     return generar_pdf_reporte(
-        "Control de Márgenes por Producto",
-        ["Producto", "Cantidad", "Costo (Q)", "Ingreso (Q)", "M. Bruto (Q)",
+        f"Control de Márgenes por {dim}",
+        [dim, "Cantidad", "Costo (Q)", "Ingreso (Q)", "M. Bruto (Q)",
          "Bruto %", "M. Neto (Q)", "Neto %"],
         cuerpo, desde, hasta,
         filtros_txt=filtros_txt, fila_total=total,
         anchos=[0.26, 0.09, 0.11, 0.11, 0.12, 0.07, 0.12, 0.07],
         alinear_der=(1, 2, 3, 4, 5, 6, 7),
-        pie=f"{len(filas)} producto(s)")
+        pie=f"{len(filas)} {_plural}")
 
 
 # ── HISTÓRICO POR ÁREA (Facturación Mensual) ──────────────────────────────────

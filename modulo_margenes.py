@@ -27,11 +27,27 @@ from excel_helper import leer_pedidos_op as leer_pedidos
 _fragment = getattr(st, "fragment", None) or getattr(st, "experimental_fragment",
                                                      lambda f: f)
 
-# Columnas del reporte, en orden. Se declaran una sola vez porque las usan la
+# Columnas de métrica, en orden. Se declaran una sola vez porque las usan la
 # tabla, el CSV y el PDF — con tres listas separadas, agregar una columna
 # significaba que el papel dejara de coincidir con la pantalla.
-COLS = ["Producto", "Cantidad", "Costo (Q)", "Ingreso (Q)",
-        "Margen Bruto (Q)", "Bruto %", "Margen Neto (Q)", "Neto %"]
+COLS_METRICA = ["Cantidad", "Costo (Q)", "Ingreso (Q)",
+                "Margen Bruto (Q)", "Bruto %", "Margen Neto (Q)", "Neto %"]
+
+# Cómo se agrupa cada pestaña: etiqueta de la columna → clave de _lineas.
+# Las tres miran los MISMOS datos filtrados, así que los totales no cambian de
+# una a otra; lo único que cambia es cómo se reparten.
+DIMENSIONES = {"Producto": "producto",
+               "Cliente":  "cliente",
+               "Área":     "area"}
+
+
+def cols_de(dim: str) -> list:
+    """Columnas de la tabla para la dimensión elegida."""
+    return [dim] + COLS_METRICA
+
+
+# Compatibilidad: COLS era la lista fija por producto.
+COLS = cols_de("Producto")
 
 
 def _rango_atajo(atajo: str, hoy: date) -> tuple:
@@ -73,6 +89,7 @@ def _lineas(desde: date, hasta: date):
         yield {
             "area":      mapa.get(cli.lower(), {}).get("area", "Sin área"),
             "proveedor": str(p.get("proveedor", "") or "").strip() or "Sin proveedor",
+            "cliente":   cli,
             "producto":  prod,
             "cantidad":  float(p.get("cantidad") or 0),
             "costo":     float(p.get("costo") or 0),
@@ -97,19 +114,24 @@ def _pct(valor: float, ingreso: float) -> float:
 
 @st.cache_data(ttl=300, max_entries=8, show_spinner=False)
 def agregar_margenes(desde: date, hasta: date,
-                     areas: tuple, provs: tuple) -> pd.DataFrame:
-    """Una fila por producto con cantidad, costo, ingreso y ambos márgenes.
+                     areas: tuple, provs: tuple,
+                     dim: str = "Producto") -> pd.DataFrame:
+    """Una fila por `dim` con cantidad, costo, ingreso y ambos márgenes.
+
+    dim ∈ DIMENSIONES ("Producto", "Cliente", "Área"). Cambiar la dimensión NO
+    cambia los totales: son las mismas líneas repartidas de otra forma.
 
     Recibe solo primitivas y devuelve el DataFrame ya agregado — nunca la lista
     cruda, para que el caché no retenga el histórico de pedidos en memoria.
     """
+    clave = DIMENSIONES.get(dim, "producto")
     acc = {}
     for l in _lineas(desde, hasta):
         if areas and l["area"]      not in areas: continue
         if provs and l["proveedor"] not in provs: continue
         cant = l["cantidad"]
-        a = acc.setdefault(l["producto"], {"c": 0.0, "co": 0.0, "in": 0.0,
-                                           "ne": 0.0})
+        a = acc.setdefault(l[clave], {"c": 0.0, "co": 0.0, "in": 0.0,
+                                      "ne": 0.0})
         a["c"]  += cant
         a["co"] += l["costo"]  * cant
         a["in"] += l["precio"] * cant
@@ -118,10 +140,10 @@ def agregar_margenes(desde: date, hasta: date,
         a["ne"] += margen_neto_q(l["costo"], l["precio"]) * cant
 
     filas = []
-    for prod, v in acc.items():
+    for nombre, v in acc.items():
         bruto = v["in"] - v["co"]
         filas.append({
-            "Producto":         prod,
+            dim:                nombre,
             "Cantidad":         round(v["c"], 2),
             "Costo (Q)":        round(v["co"], 2),
             "Ingreso (Q)":      round(v["in"], 2),
@@ -130,7 +152,7 @@ def agregar_margenes(desde: date, hasta: date,
             "Margen Neto (Q)":  round(v["ne"], 2),
             "Neto %":           _pct(v["ne"], v["in"]),
         })
-    df = pd.DataFrame(filas, columns=COLS)
+    df = pd.DataFrame(filas, columns=cols_de(dim))
     if not df.empty:
         df = df.sort_values("Margen Neto (Q)", ascending=False, ignore_index=True)
     return df
@@ -166,7 +188,8 @@ def mostrar():
 @_fragment
 def _reporte():
     hoy = date.today()
-    st.caption("Rentabilidad por producto sobre lo vendido. Usa el costo y el "
+    st.caption("Rentabilidad sobre lo vendido, con el mismo total repartido "
+               "por producto, cliente o área. Usa el costo y el "
                "precio guardados en cada línea de pedido: no recalcula nada ni "
                "modifica el Sheet.")
 
@@ -201,13 +224,16 @@ def _reporte():
     f1, f2 = st.columns(2)
     sel_area = f1.multiselect("Área",      op["areas"],       key="marg_area")
     sel_prov = f2.multiselect("Proveedor", op["proveedores"], key="marg_prov")
-
-    df = agregar_margenes(desde, hasta, tuple(sel_area), tuple(sel_prov))
-    if df.empty:
+    # Los totales son los MISMOS en las tres pestañas: son las mismas líneas
+    # filtradas, repartidas de otra forma. Por eso las métricas van una sola
+    # vez acá arriba y no repetidas adentro de cada una.
+    df_prod = agregar_margenes(desde, hasta, tuple(sel_area), tuple(sel_prov),
+                               "Producto")
+    if df_prod.empty:
         st.info("Sin líneas de pedido para esos filtros.")
         return
 
-    t = totales(df)
+    t = totales(df_prod)
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Ingreso",      f"Q{t['ingreso']:,.2f}")
     m2.metric("Costo",        f"Q{t['costo']:,.2f}")
@@ -216,37 +242,69 @@ def _reporte():
     m4.metric("Margen Neto",  f"Q{t['neto']:,.2f}",  f"{t['neto_pct']:.1f}%",
               delta_color="off")
 
-    st.dataframe(df, use_container_width=True, hide_index=True,
-                 column_config={
-                     "Cantidad":         st.column_config.NumberColumn(format="%.2f"),
-                     "Costo (Q)":        st.column_config.NumberColumn(format="%.2f"),
-                     "Ingreso (Q)":      st.column_config.NumberColumn(format="%.2f"),
-                     "Margen Bruto (Q)": st.column_config.NumberColumn(format="%.2f"),
-                     "Bruto %":          st.column_config.NumberColumn(format="%.1f%%"),
-                     "Margen Neto (Q)":  st.column_config.NumberColumn(format="%.2f"),
-                     "Neto %":           st.column_config.NumberColumn(format="%.1f%%"),
-                 })
-    st.caption(f"**TOTAL: Ingreso Q{t['ingreso']:,.2f} · Costo "
-               f"Q{t['costo']:,.2f} · Bruto Q{t['bruto']:,.2f} "
-               f"({t['bruto_pct']:.1f}%) · Neto Q{t['neto']:,.2f} "
-               f"({t['neto_pct']:.1f}%)** — {len(df)} producto(s), "
-               f"{desde:%d/%m/%Y} a {hasta:%d/%m/%Y}")
-
-    if (df["Margen Neto (Q)"] < 0).any():
-        _n = int((df["Margen Neto (Q)"] < 0).sum())
-        st.warning(f"⚠️ {_n} producto(s) con margen neto negativo: se está "
-                   f"vendiendo por debajo del punto de equilibrio "
-                   f"(costo × 1.12).")
-
     # Filtros aplicados: van al PDF para que un reporte impreso nunca sea
     # ambiguo sobre qué recorte representa.
     _partes = [f"{lbl}: {', '.join(v)}"
                for lbl, v in (("Área", sel_area), ("Proveedor", sel_prov)) if v]
     filtros_txt = " · ".join(_partes) or "sin filtros (todas las áreas)"
 
+    t_prod, t_cli, t_area = st.tabs(["📦 Por Producto", "👥 Por Cliente",
+                                     "🗺️ Por Área"])
+    for _tab, _dim, _pref in ((t_prod, "Producto", "prod"),
+                              (t_cli,  "Cliente",  "cli"),
+                              (t_area, "Área",     "area")):
+        with _tab:
+            _bloque(_dim, _pref,
+                    df_prod if _dim == "Producto" else
+                    agregar_margenes(desde, hasta, tuple(sel_area),
+                                     tuple(sel_prov), _dim),
+                    t, desde, hasta, filtros_txt)
+
+
+def _bloque(dim: str, pref: str, df: pd.DataFrame, t: dict,
+            desde: date, hasta: date, filtros_txt: str):
+    """Tabla, total, aviso y exportación de una pestaña.
+
+    `t` son los totales del conjunto filtrado, iguales para las tres: se pasan
+    en vez de recalcularlos para que ninguna pestaña pueda mostrar un total
+    distinto de las otras.
+    """
+    if df.empty:
+        st.info("Sin datos para esta vista.")
+        return
+
+    _num = st.column_config.NumberColumn
+    st.dataframe(df, use_container_width=True, hide_index=True,
+                 column_config={
+                     **{c: _num(format="%.2f") for c in
+                        ("Cantidad", "Costo (Q)", "Ingreso (Q)",
+                         "Margen Bruto (Q)", "Margen Neto (Q)")},
+                     "Bruto %": _num(format="%.1f%%"),
+                     "Neto %":  _num(format="%.1f%%"),
+                 })
+
+    _plural = {"Producto": "producto(s)", "Cliente": "cliente(s)",
+               "Área": "área(s)"}[dim]
+    st.caption(f"**TOTAL: Ingreso Q{t['ingreso']:,.2f} · Costo "
+               f"Q{t['costo']:,.2f} · Bruto Q{t['bruto']:,.2f} "
+               f"({t['bruto_pct']:.1f}%) · Neto Q{t['neto']:,.2f} "
+               f"({t['neto_pct']:.1f}%)** — {len(df)} {_plural}, "
+               f"{desde:%d/%m/%Y} a {hasta:%d/%m/%Y}")
+
+    if dim != "Producto":
+        st.caption("⚠️ **Cantidad** suma unidades distintas (Lb, Und, Caja): "
+                   "sirve como volumen aproximado, no como una medida exacta. "
+                   "Los montos en Q sí son exactos.")
+
+    if (df["Margen Neto (Q)"] < 0).any():
+        _n = int((df["Margen Neto (Q)"] < 0).sum())
+        st.warning(f"⚠️ {_n} {_plural} con margen neto negativo: se está "
+                   f"vendiendo por debajo del punto de equilibrio "
+                   f"(costo × 1.12).")
+
     b1, b2 = st.columns(2)
     csv_df = pd.concat([df, pd.DataFrame([{
-        "Producto": "TOTAL",
+        dim: "TOTAL",
         "Cantidad": round(t["cantidad"], 2), "Costo (Q)": round(t["costo"], 2),
         "Ingreso (Q)": round(t["ingreso"], 2),
         "Margen Bruto (Q)": round(t["bruto"], 2), "Bruto %": t["bruto_pct"],
@@ -255,17 +313,17 @@ def _reporte():
     b1.download_button(
         "📥 Descargar CSV",
         data=csv_df.to_csv(index=False).encode("utf-8-sig"),
-        file_name=f"margenes_{desde:%Y%m%d}_{hasta:%Y%m%d}.csv",
-        mime="text/csv", key="marg_csv", use_container_width=True)
+        file_name=f"margenes_{pref}_{desde:%Y%m%d}_{hasta:%Y%m%d}.csv",
+        mime="text/csv", key=f"marg_csv_{pref}", use_container_width=True)
 
     with b2:
-        if st.button("🖨 Preparar impresión", key="marg_pdf",
+        if st.button("🖨 Preparar impresión", key=f"marg_pdf_{pref}",
                      use_container_width=True):
             import streamlit.components.v1 as components
             from pdf_helper import generar_reporte_margenes, boton_imprimir_html
             with st.spinner("Generando PDF..."):
                 pdf = generar_reporte_margenes(df.to_dict("records"), desde,
-                                               hasta, filtros_txt, t)
-            components.html(boton_imprimir_html(pdf, "repmargenes",
+                                               hasta, filtros_txt, t, dim=dim)
+            components.html(boton_imprimir_html(pdf, f"repmargenes{pref}",
                                                 label="🖨 Abrir e imprimir"),
                             height=60)

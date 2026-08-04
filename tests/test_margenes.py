@@ -87,6 +87,7 @@ JUN1, JUN30 = date(2026, 6, 1), date(2026, 6, 30)
 # El nombre del area sale de ZONAS_MAP, no se escribe a mano: si el
 # catalogo renombra una zona, el test debe seguir apuntando a la misma.
 AREA_ANT = next(n for n, c in ZONAS_MAP.items() if "L03" in c)
+AREA_RIO = next(n for n, c in ZONAS_MAP.items() if "L01" in c)
 r = Reporte()
 
 print("=== 1. Alcance: qué líneas entran ===")
@@ -148,6 +149,45 @@ r.check(totales(agregar_margenes(JUN30, JUN1, (), ()))["ingreso"] == 0.0,
 r.check(_pct(50.0, 0.0) == 0.0,
         "sin ingreso el % es 0, no una división por cero")
 
+print("\n=== 5b. Las tres dimensiones: mismo total, otro reparto ===")
+from modulo_margenes import DIMENSIONES, cols_de              # noqa: E402
+
+d_cli  = agregar_margenes(JUN1, JUN30, (), (), "Cliente")
+d_area = agregar_margenes(JUN1, JUN30, (), (), "Área")
+r.check(sorted(DIMENSIONES) == ["Cliente", "Producto", "Área"],
+        f"dimensiones disponibles: {sorted(DIMENSIONES)}")
+r.check(list(d_cli.columns)[0] == "Cliente"
+        and list(d_area.columns)[0] == "Área",
+        "la primera columna es la dimensión elegida")
+r.check(list(d_cli.columns)[1:] == list(df.columns)[1:],
+        "las columnas de métrica son las mismas en las tres")
+r.check(sorted(d_cli["Cliente"]) == ["Hotelito", "Sundog"],
+        f"por cliente: {sorted(d_cli['Cliente'])}")
+r.check(sorted(d_area["Área"]) == sorted({AREA_ANT, AREA_RIO}),
+        f"por área: {sorted(d_area['Área'])}")
+
+# Lo que hay que proteger: cambiar de pestaña reparte, no recalcula. Si un
+# total difiere, dos pestañas del mismo reporte se contradicen en pantalla.
+for _col in ("Costo (Q)", "Ingreso (Q)", "Margen Bruto (Q)",
+             "Margen Neto (Q)", "Cantidad"):
+    _p, _c, _a = (float(x[_col].sum()) for x in (df, d_cli, d_area))
+    r.check(abs(_p - _c) < 0.01 and abs(_p - _a) < 0.01,
+            f"{_col}: producto {_p:,.2f} = cliente {_c:,.2f} = área {_a:,.2f}")
+for _k in ("ingreso", "costo", "bruto", "neto", "bruto_pct", "neto_pct"):
+    r.check(abs(totales(d_cli)[_k] - totales(df)[_k]) < 0.05,
+            f"totales['{_k}'] no cambia entre pestañas")
+
+print("\n=== 5c. Los filtros siguen aplicando en cada dimensión ===")
+r.check(sorted(agregar_margenes(JUN1, JUN30, (AREA_ANT,), (), "Cliente")
+               ["Cliente"]) == ["Hotelito"],
+        "filtrar por área deja un solo cliente")
+r.check(list(agregar_margenes(JUN1, JUN30, (), ("Cocina",), "Área")["Área"])
+        == [AREA_ANT], "filtrar por proveedor recorta también la vista por área")
+r.check(agregar_margenes(JUN1, JUN30, ("No Existe",), (), "Cliente").empty,
+        "un filtro sin coincidencias devuelve vacío en cualquier dimensión")
+r.check(list(cols_de("Cliente")) == ["Cliente"] + list(df.columns)[1:],
+        "cols_de arma el encabezado de cada dimensión")
+
 print("\n=== 6. El reporte NO escribe ===")
 r.check(ESCRITO == [], "ningún update_cells: es solo lectura")
 
@@ -168,6 +208,14 @@ try:
     r.check(_sin_emoji("sin filtros (todas las áreas)")
             == "sin filtros (todas las áreas)",
             "un texto sin emoji queda intacto")
+    # El PDF de cada pestaña lee la columna de SU dimensión: si quedara fijo en
+    # "Producto", las vistas por cliente y por área saldrían con la primera
+    # columna en blanco y nadie lo notaría hasta imprimir.
+    for _dim, _datos in (("Cliente", d_cli), ("Área", d_area)):
+        _pdf = generar_reporte_margenes(_datos.to_dict("records"), JUN1, JUN30,
+                                        "", totales(_datos), dim=_dim)
+        r.check(_pdf[:4] == b"%PDF" and len(_pdf) > 1200,
+                f"PDF por {_dim}: {len(_pdf):,} bytes")
 except ImportError:
     print("  (reportlab no instalado: se omite)")
 
