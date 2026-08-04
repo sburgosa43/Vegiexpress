@@ -145,6 +145,32 @@ r.check(_u["updateMask"] == "title", "updateMask acotado al título")
 r.check(res["actualizados"] == 1 and res["agregados"] == 0
         and res["quitados"] == 0, f"resumen: {res}")
 
+print("\n=== 6b. El update conserva el questionItem (error 400 real) ===")
+# Sin questionItem la API responde:
+#   400 "A QuestionItem or QuestionGroupItem cannot be changed into a non
+#        question Item type by an Update operation."
+# porque lee el item mandado como si dejara de ser una pregunta. Hay que
+# reenviarlo aunque el updateMask sea solo "title".
+r.check("questionItem" in _u["item"],
+        f"el item mandado conserva su tipo: {sorted(_u['item'])}")
+r.check(_u["item"]["questionItem"]["question"]["questionId"] == "qi1",
+        "y es EL de esa pregunta, con su questionId — las respuestas "
+        "históricas se mapean por ahí")
+r.check(_u["item"]["questionItem"] is not None
+        and _u["item"]["questionItem"] == _q("i1", "x")["questionItem"],
+        "se reenvía tal cual vino de la API, sin reconstruirlo")
+
+print("\n=== 6c. Un item que ya no está en el formulario no rompe el lote ===")
+ENVIADO.clear()
+res = fh.aplicar_cambios_form(
+    "FID",
+    actualizar=[{"item_id": "fantasma", "index": 9, "nombre": "Ajo",
+                 "unidad": "Red", "precio": 7.25}])
+_uf = ENVIADO[0]["updateItem"]
+r.check("questionItem" not in _uf["item"],
+        "sin questionItem que copiar, se manda igual y decide la API")
+r.check(res["actualizados"] == 1, "no se descarta en silencio")
+
 print("\n=== 7. Agregar y quitar ===")
 ENVIADO.clear()
 fh.aplicar_cambios_form(

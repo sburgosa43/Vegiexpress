@@ -248,12 +248,34 @@ def aplicar_cambios_form(form_id: str,
     quitar     = quitar     or []
     reqs = []
 
+    # Estado actual del formulario. Se lee UNA vez y sirve para dos cosas: el
+    # questionItem que hay que devolverle a cada update, y la posición donde
+    # van los agregados.
+    _api_items, _n_items = {}, 0
+    if actualizar or agregar:
+        _form = svc.forms().get(formId=form_id).execute()
+        _lista = _form.get("items", [])
+        _n_items = len(_lista)
+        _api_items = {i.get("itemId"): i for i in _lista if i.get("itemId")}
+
     # 1. Updates — solo el título, que es donde vive nombre/unidad/precio.
+    #
+    # El item que se manda tiene que conservar su questionItem aunque el
+    # updateMask sea solo "title". Sin él la API lee el item como si fuera de
+    # otro tipo y responde:
+    #   400 "A QuestionItem or QuestionGroupItem cannot be changed into a
+    #        non question Item type by an Update operation."
+    # Se reenvía el questionItem tal cual vino; el updateMask sigue limitando
+    # la escritura al título, así que la pregunta no se altera.
     for it in actualizar:
+        item = {"itemId": it["item_id"],
+                "title": titulo_de(it["nombre"], it.get("unidad", ""),
+                                   it["precio"])}
+        _qi = (_api_items.get(it["item_id"]) or {}).get("questionItem")
+        if _qi:
+            item["questionItem"] = _qi
         reqs.append({"updateItem": {
-            "item": {"itemId": it["item_id"],
-                     "title": titulo_de(it["nombre"], it.get("unidad", ""),
-                                        it["precio"])},
+            "item":       item,
             "location":   {"index": it["index"]},
             "updateMask": "title",
         }})
@@ -262,10 +284,10 @@ def aplicar_cambios_form(form_id: str,
     for it in sorted(quitar, key=lambda x: x["index"], reverse=True):
         reqs.append({"deleteItem": {"location": {"index": it["index"]}}})
 
-    # 3. Agregados al final (antes de nada más re-leemos el tamaño).
+    # 3. Agregados al final. El tamaño sale de la lectura de arriba, que se
+    #    hizo antes de mandar ningún batchUpdate.
     if agregar:
-        form = svc.forms().get(formId=form_id).execute()
-        pos  = len(form.get("items", [])) - len(quitar)
+        pos = _n_items - len(quitar)
         for p in agregar:
             if tipo_cantidad == "numerico":
                 pregunta = {"required": False,
