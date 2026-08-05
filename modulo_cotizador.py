@@ -67,6 +67,17 @@ def _desglose(costo: float, precio: float) -> dict | None:
     }
 
 
+def _precio_cambiado(ajustado: float, sugerido: float) -> bool:
+    """¿El usuario movió el precio, o es el sugerido tal cual?
+
+    El input viene redondeado a 2 decimales y el sugerido se guarda con 4, así
+    que compararlos con `!=` daba distinto SIEMPRE y el bloque de impacto
+    aparecía aunque no se hubiera tocado nada. Media centésima de tolerancia
+    alcanza: por debajo de eso no hay diferencia que mostrar.
+    """
+    return abs(float(ajustado) - float(sugerido)) > 0.005
+
+
 # ── COMPONENTES UI ────────────────────────────────────────────────────────────
 
 def _mostrar_resultado(d: dict, titulo: str = "Resultado"):
@@ -163,14 +174,24 @@ def _tab_calcular():
     st.markdown("#### ¿Querés ajustar el precio final?")
     st.caption("Ingresá el precio que pensás cobrar y ves el impacto en tu margen.")
 
+    # El valor por defecto es el precio sugerido, y ese precio cambia cuando
+    # cambian el costo o el margen. Streamlit IGNORA `value` si la key ya tiene
+    # estado: con una key fija el campo se quedaba con el precio sugerido VIEJO
+    # y el "Impacto" comparaba contra un número que ya no correspondía.
+    # Versionar la key hace que una sugerencia nueva sea un widget nuevo.
+    _sug = round(resultado["precio"], 2)
+    if st.session_state.get("cot_sug_prev") != _sug:
+        st.session_state["cot_sug_prev"] = _sug
+        st.session_state["cot_ajuste_gen"] = st.session_state.get(
+            "cot_ajuste_gen", 0) + 1
     precio_ajustado = st.number_input(
         "Precio final a cobrar (Q)",
         min_value=0.01,
-        value=round(resultado["precio"], 2),
+        value=_sug,
         step=0.25,
-        key="cot_precio_ajuste",
+        key=f"cot_precio_ajuste_g{st.session_state.get('cot_ajuste_gen', 0)}",
     )
-    if precio_ajustado != resultado["precio"]:
+    if _precio_cambiado(precio_ajustado, resultado["precio"]):
         d_ajustado = _desglose(costo, precio_ajustado)
         if d_ajustado:
             diff_margen = d_ajustado["margen_neto_q"] - resultado["margen_neto_q"]
