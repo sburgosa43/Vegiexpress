@@ -467,12 +467,30 @@ def _cenma_guardar(prods: list, fecha: str) -> dict:
     CONTIGUAS. Si no lo están (alguien editó la hoja a mano, por ejemplo), se
     corta con un error en vez de borrar un bloque que incluya otras fechas.
     """
+    return _guardar_precios("precios_cenma", COLS_CENMA, prods, fecha,
+                            _derivar_cenma)
+
+
+def _guardar_precios(hoja_key: str, cols: list, prods: list, fecha: str,
+                     derivar=None) -> dict:
+    """Escribe una captura en su hoja, reemplazando las filas de ESA fecha.
+
+    Compartida por los tres mercados: la única diferencia entre ellos son la
+    hoja y las columnas.
+
+    Historial: cada captura queda con su fecha para poder comparar precios en
+    el tiempo. Capturar dos veces el mismo día no duplica — se reemplaza.
+
+    El borrado por rango solo se hace si las filas de esa fecha están
+    CONTIGUAS. Si no lo están (alguien editó la hoja a mano, por ejemplo), se
+    corta con un error en vez de borrar un bloque que incluya otras fechas.
+    """
     from gsheets import (ensure_ws, get_all_rows, append_rows,
                          delete_rows_range)
 
-    ensure_ws("precios_cenma", COLS_CENMA)
-    _cenma_migrar_hoja()
-    filas = get_all_rows("precios_cenma")        # ya viene SIN encabezado
+    ensure_ws(hoja_key, cols)
+    _migrar_hoja(hoja_key, cols, derivar)
+    filas = get_all_rows(hoja_key)              # ya viene SIN encabezado
     # start=2 porque la fila 1 es el encabezado y get_all_rows la descarta.
     idx = [i for i, r in enumerate(filas, start=2)
            if r and str(r[0]).strip() == fecha]
@@ -485,10 +503,9 @@ def _cenma_guardar(prods: list, fecha: str) -> dict:
                 f"Las filas del {fecha} no están juntas en la hoja "
                 f"(filas {ini} a {fin}, {len(idx)} con esa fecha). No se borra "
                 f"nada para no tocar otras fechas — revisá la hoja a mano.")
-        reemplazadas = delete_rows_range("precios_cenma", ini, fin)
+        reemplazadas = delete_rows_range(hoja_key, ini, fin)
 
-    append_rows("precios_cenma",
-                [[p[c] for c in COLS_CENMA] for p in prods])
+    append_rows(hoja_key, [[p[c] for c in cols] for p in prods])
     return {"escritas": len(prods), "reemplazadas": reemplazadas}
 
 
@@ -583,113 +600,221 @@ def _tab_cenma():
                 st.error(f"No se pudo guardar: {type(e).__name__}: {e}")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MERCADO LA TERMINAL — intento con requests (el sitio renderiza con JS;
-# el script original usa Playwright/Chromium, inviable en Streamlit Cloud
-# por memoria. Acá se intenta extraer el JSON inline que las tiendas Ecwid
-# a veces incluyen en el HTML inicial).
+# MERCADO LA TERMINAL — mercadolaterminalonline.com
+#
+# El sitio NO trae los productos en el HTML: los dibuja Ecwid con JS. Por eso
+# el scraper anterior (pedir /products y parsear) no encontraba nada.
+#
+# Pero el JS no inventa los datos: se los pide a la API pública de Ecwid, que
+# responde por HTTP normal. No hace falta navegador — 305 productos en ~6 s con
+# un pico de 7 MB, contra los ~300 MB que costaría un Chromium.
 # ══════════════════════════════════════════════════════════════════════════════
-def _laterminal_intento() -> tuple[list, str]:
-    """Intenta extraer productos del HTML estático. Retorna (productos, msg)."""
-    import re as _re, json as _json
-    url = "https://www.mercadolaterminalonline.com/products"
-    try:
-        r = requests.get(url, timeout=20, headers={
-            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                           "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")})
-        r.raise_for_status()
-    except Exception as e:
-        return [], f"No se pudo acceder al sitio: {e}"
+_LT_STORE_ID = "29155237"
+_LT_API      = f"https://app.ecwid.com/api/v3/{_LT_STORE_ID}"
+_LT_TIENDA   = "https://www.mercadolaterminalonline.com/"
+_LT_HEADERS  = {
+    "Accept": "application/json",
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"),
+}
 
-    html = r.text
-    productos = []
+COLS_LATERMINAL = ["Fecha", "Categoría", "Producto", "Unidad",
+                   "Precio", "Precio sin Impuestos", "SKU", "Disponible"]
 
-    # Intento 1: cards renderizadas server-side
-    soup = BeautifulSoup(html, "html.parser")
-    for card in soup.select("div[data-product-id]"):
-        t = card.select_one("a.grid-product__title")
-        s = card.select_one("div.grid-product__subtitle")
-        p = card.select_one("div.grid-product__price")
-        if t:
-            productos.append({
-                "Producto":     (t.get("title") or t.get_text() or "").strip(),
-                "Presentación": (s.get_text().strip() if s else ""),
-                "Precio":       (p.get_text().strip() if p else ""),
-            })
-    if productos:
-        return productos, ""
 
-    # Intento 2: JSON inline de Ecwid en <script>
-    for pat in (r'window\.ec\s*=\s*(\{.*?\});',
-                r'"items"\s*:\s*(\[.*?\])\s*[,}]'):
-        mjs = _re.search(pat, html, _re.DOTALL)
-        if mjs:
-            try:
-                data = _json.loads(mjs.group(1))
-                items = data if isinstance(data, list) else \
-                        data.get("storefront", {}).get("products", [])
-                for it in items:
-                    if isinstance(it, dict) and it.get("name"):
-                        productos.append({
-                            "Producto":     it.get("name", ""),
-                            "Presentación": it.get("subtitle", ""),
-                            "Precio":       it.get("defaultDisplayedPriceFormatted",
-                                                   it.get("price", "")),
-                        })
-                if productos:
-                    return productos, ""
-            except Exception:
-                continue
+def _lt_tokens_del_sitio() -> list:
+    """Tokens públicos de storefront, leídos del HTML de la tienda.
 
-    return [], ("El sitio no incluye los productos en el HTML inicial "
-                "(los dibuja con JavaScript). Este sitio requiere un navegador "
-                "para capturarse, lo cual no es viable en Streamlit Cloud por "
-                "consumo de memoria. Seguí usando tu script local de "
-                "Playwright para este sitio.")
+    Ecwid los embebe a propósito para que el front lea el catálogo: son de
+    lectura y públicos, no credenciales. Se extraen en vez de dejarlos fijos en
+    el código porque Ecwid puede rotarlos, y un token viejo daría 403.
+    """
+    r = requests.get(_LT_TIENDA, headers={"User-Agent": _LT_HEADERS["User-Agent"]},
+                     timeout=30)
+    r.raise_for_status()
+    vistos, out = set(), []
+    for t in re.findall(r"public_[A-Za-z0-9]{20,}", r.text):
+        if t not in vistos:
+            vistos.add(t)
+            out.append(t)
+    if not out:
+        raise RuntimeError(
+            "No encontré el token público en el HTML de la tienda. "
+            "Puede que Ecwid haya cambiado cómo lo publica.")
+    return out
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _lt_token() -> str:
+    """El primer token del sitio que la API acepte.
+
+    Se prueban todos porque la página trae varios (de distintas apps) y solo
+    alguno sirve para el catálogo. Cacheado media hora: no tiene sentido releer
+    el HTML en cada captura.
+    """
+    ultimo = None
+    for t in _lt_tokens_del_sitio():
+        try:
+            r = requests.get(f"{_LT_API}/products?limit=1",
+                             headers={**_LT_HEADERS, "Authorization": f"Bearer {t}"},
+                             timeout=25)
+            if r.ok:
+                return t
+            ultimo = f"HTTP {r.status_code}"
+        except Exception as e:          # noqa: BLE001 — se reporta abajo
+            ultimo = f"{type(e).__name__}: {e}"
+    raise RuntimeError(f"Ningún token del sitio fue aceptado por la API "
+                       f"({ultimo}). Puede que Ecwid los haya rotado.")
+
+
+def _lt_get(path: str, **params) -> dict:
+    """GET a la API de Ecwid.
+
+    Los booleanos se pasan a "true"/"false" en minúscula: requests serializa
+    True como "True" y la API responde 400 Bad Request.
+    """
+    params = {k: ("true" if v is True else "false" if v is False else v)
+              for k, v in params.items()}
+    r = requests.get(f"{_LT_API}/{path}", timeout=30,
+                     params=params,
+                     headers={**_LT_HEADERS,
+                              "Authorization": f"Bearer {_lt_token()}"})
+    r.raise_for_status()
+    return r.json()
+
+
+def _laterminal_descargar(fecha: str = None, progreso=None) -> list:
+    """Catálogo completo de La Terminal, paginando de a 100.
+
+    LEVANTA si algo falla, igual que el de Cenma: una lista vacía no puede
+    significar a la vez "no hay productos" y "la API dejó de responder".
+    """
+    from datetime import datetime as _dt
+    fecha = fecha or _dt.now().strftime("%Y-%m-%d")
+
+    cats = {c["id"]: str(c.get("name") or "").strip()
+            for c in _lt_get("categories", limit=100).get("items", [])}
+
+    todos, off = [], 0
+    while True:
+        d = _lt_get("products", limit=100, offset=off, enabled=True)
+        items = d.get("items") or []
+        todos += items
+        total = d.get("total") or 0
+        if progreso and total:
+            progreso(min(1.0, len(todos) / total))
+        if not items or len(todos) >= total:
+            break
+        off += 100
+
+    if not todos:
+        raise RuntimeError("La API respondió sin productos.")
+
+    out = []
+    for p in todos:
+        # defaultDisplayedPrice es el precio que ve el cliente en la web;
+        # `price` es el base antes de opciones y NO coincide con la vitrina.
+        precio = _sf_num(p.get("defaultDisplayedPrice"))
+        cid = p.get("defaultCategoryId") or (p.get("categoryIds") or [None])[0]
+        out.append({
+            "Fecha":      fecha,
+            "Categoría":  cats.get(cid, "Sin categoría"),
+            "Producto":   str(p.get("name") or "Sin nombre").strip(),
+            "Unidad":     str(p.get("subtitle") or "").strip(),
+            "Precio":     precio,
+            "Precio sin Impuestos": sin_impuestos(precio),
+            "SKU":        str(p.get("sku") or "").strip(),
+            "Disponible": "Sí" if p.get("inStock") else "No",
+        })
+    return out
+
+
+def _lt_categorias(prods: list) -> list:
+    return sorted({p["Categoría"] for p in prods if p["Categoría"]})
 
 
 def _tab_laterminal():
-    st.caption("Mercado La Terminal Online · mercadolaterminalonline.com")
+    from datetime import datetime as _dt
+    import pandas as pd
 
-    if "lter_prods" not in st.session_state:
-        st.session_state.lter_prods = []
-        st.session_state.lter_captura = None
+    st.caption("Mercado La Terminal · mercadolaterminalonline.com · vía la API "
+               "pública de Ecwid (sin navegador)")
+
+    if "mlt_prods" not in st.session_state:
+        st.session_state.mlt_prods = []
+        st.session_state.mlt_captura = None
+        st.session_state.mlt_fecha = None
 
     col_b, col_i = st.columns([2, 3])
-    iniciar = col_b.button("▶ Intentar captura", type="primary",
-                           use_container_width=True,
-                           help="Este sitio usa JavaScript; la captura sin "
-                                "navegador puede no ser posible.")
+    iniciar = col_b.button("▶ Capturar precios La Terminal", type="primary",
+                           use_container_width=True, key="mlt_btn")
     with col_i:
-        if st.session_state.lter_captura:
-            st.success(f"Última captura: **{st.session_state.lter_captura}** "
-                       f"· {len(st.session_state.lter_prods)} productos")
+        if st.session_state.mlt_captura:
+            st.success(f"Última captura: **{st.session_state.mlt_captura}**"
+                       f" · {len(st.session_state.mlt_prods)} productos")
         else:
             st.info("Sin captura en esta sesión.")
 
     if iniciar:
-        with st.spinner("Intentando capturar sin navegador..."):
-            prods, msg = _laterminal_intento()
-        if prods:
-            from datetime import datetime as _dt
-            st.session_state.lter_prods = prods
-            st.session_state.lter_captura = _dt.now().strftime("%d/%m/%Y %H:%M")
+        fecha = _dt.now().strftime("%Y-%m-%d")
+        bar = st.progress(0.0, text="Descargando el catálogo...")
+        try:
+            st.session_state.mlt_prods = _laterminal_descargar(
+                fecha, progreso=lambda f: bar.progress(f, text="Descargando..."))
+            bar.progress(1.0, text="Completado")
+            st.session_state.mlt_captura = _dt.now().strftime("%d/%m/%Y %H:%M")
+            st.session_state.mlt_fecha = fecha
             st.rerun()
-        else:
-            st.warning(msg)
+        except Exception as e:
+            bar.empty()
+            st.error(f"**No se pudo capturar:** {type(e).__name__}: {e}\n\n"
+                     f"Si el error es 403, es probable que Ecwid haya rotado "
+                     f"el token público. No se modificó nada.")
+            return
 
-    prods = st.session_state.lter_prods
-    if prods:
-        import pandas as pd
-        df = pd.DataFrame(prods)
-        st.dataframe(df, hide_index=True, use_container_width=True,
-                     height=min(500, 60 + len(df) * 35))
-        csv = df.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("📥 Descargar CSV", data=csv,
-                           file_name="precios_laterminal.csv",
-                           mime="text/csv", key="lter_csv")
+    prods = st.session_state.mlt_prods
+    if not prods:
+        return
 
+    cats = _lt_categorias(prods)
+    cats_sel = st.multiselect("Categorías", cats, default=cats, key="mlt_cats",
+                              help="Filtra la tabla y decide qué se guarda.")
+    sel = [p for p in prods if not cats_sel or p["Categoría"] in cats_sel]
+    df = pd.DataFrame(sel, columns=COLS_LATERMINAL)
 
-# ══════════════════════════════════════════════════════════════════════════════
+    filtro = st.text_input("Buscar producto:", key="mlt_filtro",
+                           placeholder="tomate, cebolla...")
+    if filtro:
+        df = df[df["Producto"].str.contains(filtro, case=False, na=False)]
+
+    st.caption(f"**{len(df)}** de {len(prods)} productos · {len(cats)} categorías")
+    st.dataframe(df, hide_index=True, use_container_width=True,
+                 height=min(500, 60 + len(df) * 35))
+    st.caption("La Terminal no publica costo, así que no hay columnas de costo "
+               "ni de margen — solo el precio y su neto de IVA e ISR.")
+
+    b1, b2 = st.columns(2)
+    b1.download_button(
+        "📥 Descargar CSV", data=df.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"precios_laterminal_{st.session_state.mlt_fecha or ''}.csv",
+        mime="text/csv", key="mlt_csv", use_container_width=True)
+
+    with b2:
+        if st.button(f"💾 Guardar {len(sel)} en «Precios La Terminal»",
+                     use_container_width=True, key="mlt_save", disabled=not sel):
+            try:
+                with st.spinner("Escribiendo en el Sheet..."):
+                    res = _guardar_precios("precios_laterminal",
+                                           COLS_LATERMINAL, sel,
+                                           st.session_state.mlt_fecha)
+                _msg = f"✅ {res['escritas']} fila(s) guardadas."
+                if res["reemplazadas"]:
+                    _msg += (f" Se reemplazaron {res['reemplazadas']} de una "
+                             f"captura anterior del mismo día.")
+                st.success(_msg)
+            except Exception as e:
+                st.error(f"No se pudo guardar: {type(e).__name__}: {e}")
+
 def mostrar():
     if st.button("Inicio", key="btn_home_scraper", type="secondary"):
         st.session_state["_nav_target"] = "🏠 Inicio"

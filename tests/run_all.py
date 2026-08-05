@@ -36,6 +36,7 @@ PRUEBAS = [
     "test_cotizador_ajuste.py",
     "test_cotizador_gastos.py",
     "test_cenma.py",
+    "test_laterminal.py",
 ]
 
 
