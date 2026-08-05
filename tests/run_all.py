@@ -35,6 +35,7 @@ PRUEBAS = [
     "test_isr.py",
     "test_cotizador_ajuste.py",
     "test_cotizador_gastos.py",
+    "test_cenma.py",
 ]
 
 

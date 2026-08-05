@@ -267,101 +267,135 @@ def _tab_latorre():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CENMA — API directa (adaptado del script scraping_cenma_v6 de Sergio)
+# CENMA — cenma.com.gt
+#
+# La API vieja (/api/get_products_for_category del marketplace) devuelve 404:
+# el sitio se reconstruyó entero y con él se fueron el endpoint, el payload de
+# marketplace y los IDs numéricos de categoría. El front actual pide el
+# catálogo completo a su backend en Railway, en UNA sola llamada.
+#
+# Antes: hasta 8 categorías x 20 páginas con pausas ≈ 160 requests.
+# Ahora: 1 request, ~200 KB, todo el catálogo.
 # ══════════════════════════════════════════════════════════════════════════════
-_CENMA_API = "https://www.cenma.com.gt/api/get_products_for_category"
+_CENMA_API_BASE  = "https://la-terminal-production.up.railway.app"
+_CENMA_PROVEEDOR = "101"          # catálogo por defecto del sitio público
 _CENMA_HEADERS = {
-    "Content-Type": "application/json",
     "Accept": "application/json",
-    "Origin": "https://www.cenma.com.gt",
+    "Origin":  "https://www.cenma.com.gt",
     "Referer": "https://www.cenma.com.gt/",
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                    "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"),
-    "base_version": "2",
-    "device_type": "3",
-    "timezone": "America/Guatemala",
-    "language": "es",
-}
-_CENMA_USER_ID        = 1472667
-_CENMA_MARKETPLACE_ID = "eab6628bd3634360a0b41e4f24b97a71"
-_CENMA_MKT_USER_ID    = 958678
-_CENMA_CATEGORIAS = {
-    "Verdura":         11284143,
-    "Fruta":           11284144,
-    "Hierbas y Hojas": 11284145,
-    "Granos":          11284146,
-    "Especias":        11284147,
-    "Abarroteria":     11284148,
-    "Otros":           11284149,
-    "Mayoreo":         11284150,
 }
 
+# Columnas de la hoja «Precios Cenma». Se declaran una sola vez porque las usan
+# la tabla, el CSV y la escritura al Sheet.
+COLS_CENMA = ["Fecha", "Categoría", "Producto", "Descripción",
+              "Precio", "Costo", "SKU", "Mayoreo"]
 
-def _cenma_categoria(categoria: str, category_id: int,
-                     max_paginas: int = 20) -> list:
-    """Descarga una categoría de Cenma paginando la API (con pausa
-    respetuosa y tope de páginas para proteger memoria/tiempo)."""
-    import time as _t
+
+def _cenma_descargar(fecha: str = None) -> list:
+    """Catálogo completo de Cenma. UNA llamada.
+
+    LEVANTA la excepción si algo falla, a propósito. La versión anterior hacía
+    `except Exception: break` y devolvía una lista vacía, así que un endpoint
+    caído se veía exactamente igual que un catálogo sin productos — por eso el
+    scraper "no funcionaba" sin decir nada.
+    """
     from datetime import datetime as _dt
-    todos, page, limit = [], 1, 25
-    while page <= max_paginas:
-        payload = {
-            "date_time": _dt.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-            "domain_name": "www.cenma.com.gt",
-            "dual_user_key": 0,
-            "language": "es",
-            "limit": limit,
-            "marketplace_reference_id": _CENMA_MARKETPLACE_ID,
-            "marketplace_user_id": _CENMA_MKT_USER_ID,
-            "offset": (page - 1) * limit,
-            "page_no": page,
-            "parent_category_id": category_id,
-            "user_id": _CENMA_USER_ID,
-        }
-        try:
-            resp = requests.post(_CENMA_API, json=payload,
-                                 headers=_CENMA_HEADERS, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception:
-            break
-        if data.get("status") != 200:
-            break
-        pagina = data.get("data", [])
-        if not pagina:
-            break
-        for p in pagina:
-            todos.append({
-                "Categoría":   categoria,
-                "Producto":    p.get("name", "Sin nombre"),
-                "Precio":      p.get("price", 0),
-                "Precio base": p.get("product_base_price", 0),
-            })
-        if len(pagina) < limit:
-            break
-        page += 1
-        _t.sleep(0.5)   # pausa respetuosa con el sitio
-    return todos
+    fecha = fecha or _dt.now().strftime("%Y-%m-%d")
+    url = f"{_CENMA_API_BASE}/api/productos?proveedor={_CENMA_PROVEEDOR}"
+
+    resp = requests.get(url, headers=_CENMA_HEADERS, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("ok"):
+        raise RuntimeError(f"La API respondió ok={data.get('ok')!r}. "
+                           f"Puede que haya vuelto a cambiar.")
+    crudos = data.get("productos") or []
+    if not crudos:
+        raise RuntimeError("La API respondió sin productos.")
+
+    out = []
+    for p in crudos:
+        out.append({
+            "Fecha":       fecha,
+            "Categoría":   str(p.get("categoria") or "Sin categoría").strip(),
+            "Producto":    str(p.get("nombre") or "Sin nombre").strip(),
+            "Descripción": str(p.get("descripcion") or "").strip(),
+            "Precio":      _sf_num(p.get("precio")),
+            "Costo":       _sf_num(p.get("costo")),
+            "SKU":         str(p.get("sku") or "").strip(),
+            "Mayoreo":     "Sí" if p.get("es_mayoreo") else "No",
+        })
+    return out
+
+
+def _sf_num(v) -> float:
+    try:
+        return round(float(v or 0), 4)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _cenma_categorias(prods: list) -> list:
+    """Categorías presentes, sacadas de los DATOS y no de una constante.
+
+    El sitio ya renombró las suyas una vez (Verdura → Verduras) y agregó
+    Embutidos y Cafe. Con una lista fija en el código, cualquier categoría
+    nueva quedaría invisible y una renombrada dejaría de traer nada.
+    """
+    return sorted({p["Categoría"] for p in prods if p["Categoría"]})
+
+
+def _cenma_guardar(prods: list, fecha: str) -> dict:
+    """Escribe en la hoja «Precios Cenma», reemplazando las filas de ESA fecha.
+
+    Historial: cada captura queda con su fecha para poder comparar precios en
+    el tiempo. Capturar dos veces el mismo día no duplica — se reemplaza.
+
+    El borrado por rango solo se hace si las filas de esa fecha están
+    CONTIGUAS. Si no lo están (alguien editó la hoja a mano, por ejemplo), se
+    corta con un error en vez de borrar un bloque que incluya otras fechas.
+    """
+    from gsheets import (ensure_ws, get_all_rows, append_rows,
+                         delete_rows_range)
+
+    ensure_ws("precios_cenma", COLS_CENMA)
+    filas = get_all_rows("precios_cenma")        # ya viene SIN encabezado
+    # start=2 porque la fila 1 es el encabezado y get_all_rows la descarta.
+    idx = [i for i, r in enumerate(filas, start=2)
+           if r and str(r[0]).strip() == fecha]
+
+    reemplazadas = 0
+    if idx:
+        ini, fin = min(idx), max(idx)
+        if (fin - ini + 1) != len(idx):
+            raise RuntimeError(
+                f"Las filas del {fecha} no están juntas en la hoja "
+                f"(filas {ini} a {fin}, {len(idx)} con esa fecha). No se borra "
+                f"nada para no tocar otras fechas — revisá la hoja a mano.")
+        reemplazadas = delete_rows_range("precios_cenma", ini, fin)
+
+    append_rows("precios_cenma",
+                [[p[c] for c in COLS_CENMA] for p in prods])
+    return {"escritas": len(prods), "reemplazadas": reemplazadas}
 
 
 def _tab_cenma():
-    st.caption("Mercado CENMA / CENDEC · cenma.com.gt · vía API directa")
+    from datetime import datetime as _dt
+    import pandas as pd
+
+    st.caption("Mercado CENMA / CENDEC · cenma.com.gt · catálogo completo en "
+               "una sola llamada")
 
     if "cenma_prods" not in st.session_state:
         st.session_state.cenma_prods = []
         st.session_state.cenma_captura = None
-
-    cats_sel = st.multiselect(
-        "Categorías a capturar:",
-        list(_CENMA_CATEGORIAS.keys()),
-        default=["Verdura", "Fruta", "Hierbas y Hojas"],
-        key="cenma_cats",
-        help="Menos categorías = captura más rápida y liviana.")
+        st.session_state.cenma_fecha = None
 
     col_b, col_i = st.columns([2, 3])
     iniciar = col_b.button("▶ Capturar precios Cenma", type="primary",
-                           use_container_width=True,
-                           disabled=not cats_sel)
+                           use_container_width=True)
     with col_i:
         if st.session_state.cenma_captura:
             st.success(f"Última captura: **{st.session_state.cenma_captura}**"
@@ -370,34 +404,72 @@ def _tab_cenma():
             st.info("Sin captura en esta sesión.")
 
     if iniciar:
-        bar = st.progress(0, text="Iniciando...")
-        todos = []
-        for i, cat in enumerate(cats_sel):
-            bar.progress((i) / len(cats_sel),
-                         text=f"Descargando {cat}...")
-            todos += _cenma_categoria(cat, _CENMA_CATEGORIAS[cat])
-        bar.progress(1.0, text="Completado")
-        from datetime import datetime as _dt
-        st.session_state.cenma_prods = todos
-        st.session_state.cenma_captura = _dt.now().strftime("%d/%m/%Y %H:%M")
-        st.rerun()
+        fecha = _dt.now().strftime("%Y-%m-%d")
+        try:
+            with st.spinner("Descargando el catálogo..."):
+                st.session_state.cenma_prods = _cenma_descargar(fecha)
+            st.session_state.cenma_captura = _dt.now().strftime("%d/%m/%Y %H:%M")
+            st.session_state.cenma_fecha = fecha
+            st.rerun()
+        except Exception as e:
+            # Visible y con el detalle: si el sitio vuelve a cambiar, que se
+            # sepa por qué en vez de ver una tabla vacía.
+            st.error(f"**No se pudo capturar:** {type(e).__name__}: {e}\n\n"
+                     f"Si esto se repite, es probable que el sitio haya "
+                     f"cambiado otra vez su API. No se modificó nada.")
+            return
 
     prods = st.session_state.cenma_prods
-    if prods:
-        import pandas as pd
-        df = pd.DataFrame(prods)
-        # Filtro rápido
-        filtro = st.text_input("Buscar producto:", key="cenma_filtro",
-                               placeholder="tomate, brócoli...")
-        if filtro:
-            df = df[df["Producto"].str.contains(filtro, case=False, na=False)]
-        st.dataframe(df, hide_index=True, use_container_width=True,
-                     height=min(500, 60 + len(df) * 35))
-        csv = df.to_csv(index=False).encode("utf-8-sig")
-        st.download_button("📥 Descargar CSV", data=csv,
-                           file_name=f"precios_cenma_{st.session_state.cenma_captura or ''}.csv".replace("/", "-").replace(":", ""),
-                           mime="text/csv", key="cenma_csv")
+    if not prods:
+        return
 
+    cats = _cenma_categorias(prods)
+    _def = [c for c in cats
+            if c.lower() in ("verduras", "frutas", "hierbas y hojas")]
+    cats_sel = st.multiselect(
+        "Categorías", cats, default=_def or cats, key="cenma_cats",
+        help="Filtra la tabla y decide qué se guarda en el Sheet.")
+
+    df = pd.DataFrame([p for p in prods
+                       if not cats_sel or p["Categoría"] in cats_sel],
+                      columns=COLS_CENMA)
+
+    filtro = st.text_input("Buscar producto:", key="cenma_filtro",
+                           placeholder="tomate, brócoli...")
+    if filtro:
+        df = df[df["Producto"].str.contains(filtro, case=False, na=False)]
+
+    st.caption(f"**{len(df)}** de {len(prods)} productos del catálogo · "
+               f"{len(cats)} categorías disponibles")
+    st.dataframe(df, hide_index=True, use_container_width=True,
+                 height=min(500, 60 + len(df) * 35))
+
+    b1, b2 = st.columns(2)
+    b1.download_button(
+        "📥 Descargar CSV", data=df.to_csv(index=False).encode("utf-8-sig"),
+        file_name=f"precios_cenma_{st.session_state.cenma_fecha or ''}.csv",
+        mime="text/csv", key="cenma_csv", use_container_width=True)
+
+    with b2:
+        # Se guarda lo FILTRADO por categoría, no el buscador: el texto libre es
+        # para mirar en pantalla, y guardar solo lo que quedó de una búsqueda
+        # dejaría la hoja con un recorte que después nadie recuerda.
+        a_guardar = [p for p in prods
+                     if not cats_sel or p["Categoría"] in cats_sel]
+        if st.button(f"💾 Guardar {len(a_guardar)} en «Precios Cenma»",
+                     use_container_width=True, key="cenma_save",
+                     disabled=not a_guardar):
+            try:
+                with st.spinner("Escribiendo en el Sheet..."):
+                    res = _cenma_guardar(a_guardar,
+                                         st.session_state.cenma_fecha)
+                _msg = f"✅ {res['escritas']} fila(s) guardadas."
+                if res["reemplazadas"]:
+                    _msg += (f" Se reemplazaron {res['reemplazadas']} de una "
+                             f"captura anterior del mismo día.")
+                st.success(_msg)
+            except Exception as e:
+                st.error(f"No se pudo guardar: {type(e).__name__}: {e}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MERCADO LA TERMINAL — intento con requests (el sitio renderiza con JS;

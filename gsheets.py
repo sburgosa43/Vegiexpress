@@ -32,6 +32,7 @@ HOJAS = {
     "formimports_hoteles": "FormImports_Hoteles",
     "compras_temp":       "ComprasTemporal",
     "compras_hist":       "ComprasHistorico",
+    "precios_cenma":      "Precios Cenma",
 }
 
 SCOPES = [
@@ -197,6 +198,31 @@ def delete_rows(nombre: str, row_indices: list[int]) -> None:
                     time.sleep(1)
                 else:
                     raise
+
+
+def delete_rows_range(nombre: str, desde: int, hasta: int) -> int:
+    """Elimina el bloque de filas [desde, hasta] (1-indexed) en UNA llamada.
+
+    delete_rows() borra de a una: para un bloque de cientos de filas serían
+    cientos de llamadas a la API. Usar esta cuando las filas son contiguas —
+    el llamador tiene que haberlo verificado, porque acá se borra el rango
+    entero sin mirar el contenido.
+    """
+    if desde < 2 or hasta < desde:
+        return 0
+    sheet = ws(nombre)
+    for attempt in range(3):
+        try:
+            sheet.delete_rows(desde, hasta)
+            return hasta - desde + 1
+        except Exception:
+            if attempt < 2:
+                clear_ws_cache()
+                sheet = ws(nombre)
+                time.sleep(1)
+            else:
+                raise
+    return 0
 
 
 def cell_value(nombre: str, row: int, col: int):
