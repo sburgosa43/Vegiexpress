@@ -19,28 +19,62 @@ from config import (IVA_RATE, ISR_RATE, IVA_FACTOR, ISR_FACTOR,
 
 # ── CÁLCULOS ──────────────────────────────────────────────────────────────────
 
-def _desde_margen_pct(costo: float, margen_pct: float) -> dict | None:
+def _gasto_operativo(cantidad: float, mano_obra: float,
+                     empaque: float, transporte: float) -> dict:
+    """Gastos TOTALES del pedido → gasto por unidad.
+
+    Los tres montos son del pedido completo, no por unidad: se suman y se
+    reparten entre la cantidad cotizada.
+
+    Cantidad en 0 (o gastos en 0) devuelve 0.0 por unidad, y entonces el costo
+    real es el costo del producto y el cálculo queda idéntico al de siempre.
+    Los gastos son un enriquecimiento opcional, no un requisito.
+
+    `ignorado` marca el caso incómodo: hay gastos cargados pero no hay cantidad
+    entre la cual repartirlos. No se descartan en silencio — la pantalla avisa.
+    """
+    mo    = max(0.0, float(mano_obra  or 0))
+    emp   = max(0.0, float(empaque    or 0))
+    tra   = max(0.0, float(transporte or 0))
+    cant  = float(cantidad or 0)
+    total = mo + emp + tra
+    return {"cantidad": cant, "mano_obra": mo, "empaque": emp,
+            "transporte": tra, "total": total,
+            "por_unidad": (total / cant) if cant > 0 else 0.0,
+            "ignorado":   total > 0 and cant <= 0}
+
+
+def _desde_margen_pct(costo: float, margen_pct: float,
+                      gastos: dict = None) -> dict | None:
     """Precio dado costo y margen neto deseado en %."""
     denom = 1 - margen_pct / ISR_FACTOR
     if denom <= 0 or costo <= 0:
         return None
     precio = costo * IVA_FACTOR / denom
-    return _desglose(costo, precio)
+    return _desglose(costo, precio, gastos)
 
 
-def _desde_margen_q(costo: float, margen_q: float) -> dict | None:
+def _desde_margen_q(costo: float, margen_q: float,
+                    gastos: dict = None) -> dict | None:
     """Precio dado costo y margen neto deseado en Q."""
     if costo <= 0:
         return None
     precio = margen_q / ISR_FACTOR + costo * IVA_FACTOR
-    return _desglose(costo, precio)
+    return _desglose(costo, precio, gastos)
 
 
-def _desglose(costo: float, precio: float) -> dict | None:
+def _desglose(costo: float, precio: float,
+              gastos: dict = None) -> dict | None:
     """Todos los campos derivados dado costo y precio de venta.
 
     Usa las fórmulas centralizadas de config.py para que un cambio de
     tasa (IVA/ISR) se refleje aquí automáticamente.
+
+    `costo` es el costo unitario REAL: si el llamador incorporó gastos
+    operativos, ya vienen adentro. `gastos` NO participa de ningún cálculo —
+    solo arrastra el desglose hasta la pantalla, para que el Desglose Completo
+    pueda mostrar de dónde sale ese costo sin volver a calcularlo. Con
+    gastos=None el resultado es el de siempre, campo por campo.
     """
     if precio <= 0 or costo <= 0:
         return None
@@ -52,7 +86,7 @@ def _desglose(costo: float, precio: float) -> dict | None:
     mp             = margen_neto_pct(costo, precio)
     pto_eq         = punto_equilibrio(costo)
     sobre_costo    = ((precio - costo) / costo * 100) if costo else 0
-    return {
+    d = {
         "costo":           round(costo, 4),
         "precio":          round(precio, 4),
         "precio_sin_iva":  round(precio_sin_iva, 4),
@@ -65,6 +99,13 @@ def _desglose(costo: float, precio: float) -> dict | None:
         "sobre_costo":     round(sobre_costo, 2),
         "rentable":        mq > 0,
     }
+    if gastos:
+        # El `costo` que entró YA es el real. Se guarda abierto para que el
+        # Desglose muestre de dónde sale, sin recalcular nada.
+        d["gastos"]         = gastos
+        d["costo_producto"] = round(costo - gastos["por_unidad"], 4)
+        d["gasto_unitario"] = round(gastos["por_unidad"], 4)
+    return d
 
 
 def _precio_cambiado(ajustado: float, sugerido: float) -> bool:
@@ -111,9 +152,27 @@ def _mostrar_resultado(d: dict, titulo: str = "Resultado"):
     """, unsafe_allow_html=True)
 
     with st.expander("📊 Desglose completo"):
+        _g = d.get("gastos")
+        if _g:
+            # De dónde sale el costo unitario real, para que se vea cuánto
+            # pesa cada gasto en el margen.
+            g1, g2, g3 = st.columns(3)
+            g1.metric("Costo del producto", f"Q{d['costo_producto']:,.4f}")
+            g2.metric("+ Gasto operativo / unidad",
+                      f"Q{d['gasto_unitario']:,.4f}")
+            g3.metric("= Costo unitario real", f"Q{d['costo']:,.4f}")
+            st.caption(
+                f"Gastos del pedido: Mano de obra Q{_g['mano_obra']:,.2f} · "
+                f"Empaque Q{_g['empaque']:,.2f} · "
+                f"Transporte Q{_g['transporte']:,.2f} "
+                f"= **Q{_g['total']:,.2f}** entre {_g['cantidad']:,.2f} "
+                f"unidad(es).")
+            st.divider()
+
         c1, c2 = st.columns(2)
         with c1:
-            st.metric("Costo de compra",       f"Q{d['costo']:,.4f}")
+            st.metric("Costo unitario real" if _g else "Costo de compra",
+                      f"Q{d['costo']:,.4f}")
             st.metric("Precio sin IVA",         f"Q{d['precio_sin_iva']:,.4f}")
             st.metric("IVA (12%)",              f"Q{d['iva_amount']:,.4f}")
             st.metric("ISR (Precio/1.12 × 5%)", f"Q{d['isr_retencion']:,.4f}")
@@ -155,13 +214,46 @@ def _tab_calcular():
                                           key="cot_margen_q",
                                           help="Q que querés ganar por cada unidad vendida")
 
+    # ── Gastos operativos del pedido (opcional) ──────────────────────────────
+    # Van ANTES del resultado a propósito: el precio sugerido y el margen que
+    # se muestran abajo ya los tienen adentro.
+    st.markdown("##### 🚚 Gastos operativos del pedido *(opcional)*")
+    st.caption("Los tres son TOTALES del pedido completo, no por unidad. Se "
+               "reparten entre la cantidad para obtener el costo unitario "
+               "real. Dejalos en 0 y el cálculo funciona como siempre.")
+    q1, q2, q3, q4 = st.columns(4)
+    cantidad = q1.number_input("📦 Cantidad a cotizar", min_value=0.0,
+                               value=0.0, step=1.0, key="cot_gop_cant",
+                               help="Unidades del pedido entre las que se "
+                                    "reparten los gastos.")
+    mo_tot  = q2.number_input("👷 Mano de obra (Q)", min_value=0.0, value=0.0,
+                              step=10.0, key="cot_gop_mo")
+    emp_tot = q3.number_input("📦 Empaque (Q)", min_value=0.0, value=0.0,
+                              step=10.0, key="cot_gop_emp")
+    tra_tot = q4.number_input("🚚 Transporte (Q)", min_value=0.0, value=0.0,
+                              step=10.0, key="cot_gop_tra")
+
+    gastos     = _gasto_operativo(cantidad, mo_tot, emp_tot, tra_tot)
+    costo_real = costo + gastos["por_unidad"]
+
+    if gastos["ignorado"]:
+        st.warning(f"⚠️ Cargaste **Q{gastos['total']:,.2f}** de gastos pero la "
+                   f"cantidad está en 0, así que **no se están aplicando**. "
+                   f"Poné la cantidad del pedido para repartirlos.")
+    elif gastos["total"] > 0:
+        st.info(f"Costo unitario real: **Q{costo:,.4f}** del producto + "
+                f"**Q{gastos['por_unidad']:,.4f}** de gastos "
+                f"= **Q{costo_real:,.4f}**")
+
     st.divider()
 
-    # Calcular
+    # Calcular — con el costo unitario REAL, que es lo único que cambia
+    # respecto de antes. Las fórmulas son las mismas.
+    _g = gastos if gastos["por_unidad"] > 0 else None
     if modo_margen == "Porcentaje (%)":
-        resultado = _desde_margen_pct(costo, margen_val / 100)
+        resultado = _desde_margen_pct(costo_real, margen_val / 100, _g)
     else:
-        resultado = _desde_margen_q(costo, margen_val)
+        resultado = _desde_margen_q(costo_real, margen_val, _g)
 
     if resultado is None:
         st.error("Verificá los valores ingresados. El margen no puede superar el 95%.")
@@ -192,7 +284,7 @@ def _tab_calcular():
         key=f"cot_precio_ajuste_g{st.session_state.get('cot_ajuste_gen', 0)}",
     )
     if _precio_cambiado(precio_ajustado, resultado["precio"]):
-        d_ajustado = _desglose(costo, precio_ajustado)
+        d_ajustado = _desglose(costo_real, precio_ajustado, _g)
         if d_ajustado:
             diff_margen = d_ajustado["margen_neto_q"] - resultado["margen_neto_q"]
             st.markdown(

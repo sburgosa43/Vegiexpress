@@ -34,6 +34,7 @@ PRUEBAS = [
     "test_precio_historico.py",
     "test_isr.py",
     "test_cotizador_ajuste.py",
+    "test_cotizador_gastos.py",
 ]
 
 
