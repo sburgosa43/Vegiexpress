@@ -290,30 +290,48 @@ _CENMA_HEADERS = {
 # Columnas de la hoja «Precios Cenma». Se declaran una sola vez porque las usan
 # la tabla, el CSV y la escritura al Sheet.
 COLS_CENMA = ["Fecha", "Categoría", "Producto", "Descripción",
-              "Precio", "Costo Bruto", "Costo sin Impuestos", "SKU", "Mayoreo"]
-
-# Layout anterior, para poder migrar una hoja que ya se haya escrito.
-_COLS_CENMA_V1 = ["Fecha", "Categoría", "Producto", "Descripción",
-                  "Precio", "Costo", "SKU", "Mayoreo"]
+              "Precio", "Precio sin Impuestos",
+              "Costo Bruto", "Costo sin Impuestos", "Margen CENMA %",
+              "SKU", "Mayoreo"]
 
 
-def costo_sin_impuestos(costo_bruto: float) -> float:
-    """Costo neto de IVA e ISR.
-
-        costo / 1.12 x 0.95
+def sin_impuestos(monto: float) -> float:
+    """Monto neto de IVA e ISR:  monto / 1.12 x 0.95
 
     base_sin_iva quita el 12% que el monto ya trae incluido; ISR_FACTOR (0.95)
     descuenta la retención del 5% sobre esa base. Las dos salen de config para
     que un cambio de tasa se refleje acá solo.
 
-    OJO con qué es el «Costo Bruto»: es el campo `costo` que devuelve la API de
-    CENMA, un dato por producto de SU sistema. Medido sobre el catálogo, la
-    relación precio/costo va de 1.10 a 1.20 (mediana 1.176), y en el 54% de los
-    productos es exactamente precio x 0.85. O sea que es un dato real y no una
-    fórmula, pero no sabemos qué significa en su contabilidad.
+    Sirve igual para precios y para costos: es el mismo neteo.
     """
     from config import base_sin_iva, ISR_FACTOR
-    return round(base_sin_iva(float(costo_bruto or 0)) * ISR_FACTOR, 4)
+    return round(base_sin_iva(float(monto or 0)) * ISR_FACTOR, 4)
+
+
+# Alias histórico: hubo una versión donde esto solo aplicaba a costos.
+costo_sin_impuestos = sin_impuestos
+
+
+def margen_mercado_pct(precio: float, costo: float) -> float:
+    """Markup del MERCADO sobre su propio costo, en % del precio.
+
+    OJO: NO es el margen del negocio. Vos comprás al PRECIO de ellos; su costo
+    interno no te toca. Tu margen sale de tu precio de venta contra lo que
+    pagás, y de eso se ocupa Control de Márgenes con config.margen_neto_q, que
+    da un número bien distinto (Q0.23 donde esto da Q0.65 en el mismo producto).
+    Por eso la columna se llama «Margen CENMA %» y no «Margen» a secas.
+
+    El % no depende de los impuestos: precio y costo se dividen por el mismo
+    factor, así que se cancela. Da igual calcularlo con brutos o con netos.
+
+    Medido sobre el catálogo real: el 49% de los productos da exactamente
+    15.0%, porque en esos CENMA fija costo = precio x 0.85. Para media hoja
+    esta columna refleja su regla de precios, no un dato.
+    """
+    p, c = float(precio or 0), float(costo or 0)
+    if p <= 0 or c <= 0:
+        return 0.0
+    return round((p - c) / p * 100, 2)
 
 
 def _cenma_descargar(fecha: str = None) -> list:
@@ -340,15 +358,18 @@ def _cenma_descargar(fecha: str = None) -> list:
 
     out = []
     for p in crudos:
-        _costo = _sf_num(p.get("costo"))
+        _costo  = _sf_num(p.get("costo"))
+        _precio = _sf_num(p.get("precio"))
         out.append({
             "Fecha":       fecha,
             "Categoría":   str(p.get("categoria") or "Sin categoría").strip(),
             "Producto":    str(p.get("nombre") or "Sin nombre").strip(),
             "Descripción": str(p.get("descripcion") or "").strip(),
-            "Precio":      _sf_num(p.get("precio")),
-            "Costo Bruto": _costo,
-            "Costo sin Impuestos": costo_sin_impuestos(_costo),
+            "Precio":                _precio,
+            "Precio sin Impuestos":  sin_impuestos(_precio),
+            "Costo Bruto":           _costo,
+            "Costo sin Impuestos":   sin_impuestos(_costo),
+            "Margen CENMA %":        margen_mercado_pct(_precio, _costo),
             "SKU":         str(p.get("sku") or "").strip(),
             "Mayoreo":     "Sí" if p.get("es_mayoreo") else "No",
         })
@@ -372,40 +393,68 @@ def _cenma_categorias(prods: list) -> list:
     return sorted({p["Categoría"] for p in prods if p["Categoría"]})
 
 
-def _cenma_migrar_hoja() -> int:
-    """Lleva la hoja al layout actual si quedó con el anterior.
+# Columnas sin las que una fila de precios no significa nada. Si el encabezado
+# de la hoja no las tiene, no se migra: es señal de que no es la hoja esperada.
+_MINIMAS = ("Fecha", "Producto", "Precio")
 
-    «Costo sin Impuestos» se insertó DESPUÉS de «Costo Bruto», no al final. En
-    una hoja ya escrita eso correría SKU y Mayoreo un lugar en cada fila vieja
-    y el historial quedaría corrupto sin que se note. Así que si el encabezado
-    es el viejo, se reescribe la hoja entera calculando la columna nueva a
-    partir del costo que ya estaba.
 
-    Devuelve cuántas filas migró. Si el encabezado no es ninguno de los dos
-    conocidos, se corta: mejor un error que reescribir a ciegas.
+def _migrar_hoja(hoja_key: str, cols: list, derivar=None) -> int:
+    """Lleva una hoja de precios al layout actual mapeando por NOMBRE.
+
+    Las columnas nuevas se insertan en el medio, no al final. En una hoja ya
+    escrita eso correría todo lo que va después un lugar en cada fila y el
+    historial quedaría corrupto sin que se note.
+
+    Se mapea por nombre y no comparando el encabezado contra un layout anterior
+    concreto: así aguanta cualquier orden previo y no hace falta una migración
+    pareada por cada columna que se agregue. Lo que existía se conserva por su
+    nombre, lo que falta lo calcula `derivar`, y lo que sobra se descarta.
+
+    Devuelve cuántas filas migró.
     """
     from gsheets import ws, get_all_rows
-    from utils import _sf
 
-    hoja = ws("precios_cenma")
+    hoja = ws(hoja_key)
     cab = [str(c).strip() for c in hoja.row_values(1)]
-    if cab == COLS_CENMA:
+    if cab == cols or not cab:
         return 0
-    if cab != _COLS_CENMA_V1:
+    faltan = [c for c in _MINIMAS if c not in cab]
+    if faltan:
         raise RuntimeError(
-            f"La hoja «Precios Cenma» tiene un encabezado que no reconozco:\n"
-            f"{cab}\n\nEsperaba {COLS_CENMA} o el anterior {_COLS_CENMA_V1}. "
-            f"No se toca nada — revisala a mano.")
+            f"La hoja «{hoja_key}» tiene un encabezado que no reconozco "
+            f"(le faltan {faltan}):\n{cab}\n\nNo se toca nada — revisala a "
+            f"mano.")
 
-    filas = get_all_rows("precios_cenma")
+    filas = get_all_rows(hoja_key)
     nuevas = []
     for f in filas:
-        f = list(f) + [""] * (len(_COLS_CENMA_V1) - len(f))
-        fe, cat, prod, desc, precio, costo, sku, may = f[:8]
-        nuevas.append([fe, cat, prod, desc, precio, costo,
-                       costo_sin_impuestos(_sf(costo)), sku, may])
-    hoja.update("A1", [COLS_CENMA] + nuevas, value_input_option="USER_ENTERED")
+        d = {cab[i]: f[i] for i in range(min(len(cab), len(f)))}
+        if derivar:
+            d = derivar(d)
+        nuevas.append([d.get(c, "") for c in cols])
+    hoja.update("A1", [cols] + nuevas, value_input_option="USER_ENTERED")
     return len(nuevas)
+
+
+def _derivar_cenma(d: dict) -> dict:
+    """Completa las columnas calculadas de una fila vieja de Cenma.
+
+    Se recalculan SIEMPRE, no solo si faltan: así la migración también corrige
+    filas que quedaron con un valor viejo si alguna vez cambia una tasa.
+    """
+    from utils import _sf
+    if "Costo" in d and "Costo Bruto" not in d:
+        d["Costo Bruto"] = d.pop("Costo")
+    precio = _sf(d.get("Precio"))
+    costo  = _sf(d.get("Costo Bruto"))
+    d["Precio sin Impuestos"] = sin_impuestos(precio)
+    d["Costo sin Impuestos"]  = sin_impuestos(costo)
+    d["Margen CENMA %"]       = margen_mercado_pct(precio, costo)
+    return d
+
+
+def _cenma_migrar_hoja() -> int:
+    return _migrar_hoja("precios_cenma", COLS_CENMA, _derivar_cenma)
 
 
 def _cenma_guardar(prods: list, fecha: str) -> dict:

@@ -114,9 +114,13 @@ sys.modules["gsheets"] = gs
 
 from modulo_scraper import (_cenma_descargar, _cenma_categorias,   # noqa: E402
                             _cenma_guardar, COLS_CENMA,
-                            _COLS_CENMA_V1, costo_sin_impuestos,
-                            _cenma_migrar_hoja)
+                            costo_sin_impuestos, sin_impuestos,
+                            _derivar_cenma,
+                            margen_mercado_pct, _cenma_migrar_hoja)
 from config import base_sin_iva, ISR_FACTOR                       # noqa: E402
+
+_COLS_CENMA_V1 = ["Fecha", "Categoría", "Producto", "Descripción",
+                  "Precio", "Costo", "SKU", "Mayoreo"]
 
 r = Reporte()
 HOY, AYER = "2026-08-05", "2026-08-04"
@@ -216,9 +220,14 @@ print("\n=== 8. Filas de una fecha NO contiguas: se planta ===")
 # borrar de min a max se llevaría puesto un bloque de otra fecha.
 HOJA["filas"].clear(); HOJA["borrados"].clear()
 HOJA["cabecera"] = list(COLS_CENMA)
-HOJA["filas"].extend([[HOY, "Verduras", "A", "", 1, 1, 0.8, "1", "No"],
-                      [AYER, "Verduras", "B", "", 1, 1, 0.8, "2", "No"],
-                      [HOY, "Verduras", "C", "", 1, 1, 0.8, "3", "No"]])
+def _fila(fecha, nom, sku):
+    d = {"Fecha": fecha, "Categoría": "Verduras", "Producto": nom,
+         "Descripción": "", "Precio": 1, "Costo Bruto": 1,
+         "SKU": sku, "Mayoreo": "No"}
+    return [_derivar_cenma(dict(d)).get(c, "") for c in COLS_CENMA]
+
+HOJA["filas"].extend([_fila(HOY, "A", "1"), _fila(AYER, "B", "2"),
+                      _fila(HOY, "C", "3")])
 try:
     _cenma_guardar(p, HOY)
     r.check(False, "debió negarse a borrar un rango que incluye otra fecha")
@@ -240,14 +249,24 @@ HOJA["filas"].extend([
 n = _cenma_migrar_hoja()
 r.check(n == 2, f"migró las 2 filas existentes: {n}")
 r.check(HOJA["cabecera"] == COLS_CENMA, f"cabecera nueva: {HOJA['cabecera']}")
+# Los índices salen del NOMBRE, no escritos a mano: la próxima columna que se
+# agregue en el medio no debe romper ni la prueba ni, sobre todo, la migración.
+IX = {c: COLS_CENMA.index(c) for c in COLS_CENMA}
 f0 = HOJA["filas"][0]
-r.check(len(f0) == 9, f"cada fila pasa a 9 columnas: {len(f0)}")
-r.check(f0[5] == 5.2, "el costo viejo queda como Costo Bruto")
-r.check(abs(f0[6] - costo_sin_impuestos(5.2)) < 1e-9,
-        f"la columna nueva se calcula del costo que ya estaba: {f0[6]}")
-r.check(f0[7] == "101" and f0[8] == "No",
+r.check(len(f0) == len(COLS_CENMA),
+        f"cada fila pasa a {len(COLS_CENMA)} columnas: {len(f0)}")
+r.check(f0[IX["Costo Bruto"]] == 5.2,
+        "el «Costo» viejo se renombra a «Costo Bruto»")
+r.check(abs(f0[IX["Costo sin Impuestos"]] - sin_impuestos(5.2)) < 1e-9,
+        f"costo neto del costo que ya estaba: {f0[IX['Costo sin Impuestos']]}")
+r.check(abs(f0[IX["Precio sin Impuestos"]] - sin_impuestos(6.5)) < 1e-9,
+        f"precio neto del precio que ya estaba: {f0[IX['Precio sin Impuestos']]}")
+r.check(f0[IX["Margen CENMA %"]] == margen_mercado_pct(6.5, 5.2),
+        f"margen recalculado: {f0[IX['Margen CENMA %']]}%")
+r.check(f0[IX["SKU"]] == "101" and f0[IX["Mayoreo"]] == "No",
         "SKU y Mayoreo NO se corrieron: siguen en su lugar")
-r.check(HOJA["filas"][1][7] == "102" and HOJA["filas"][1][8] == "Sí",
+r.check(HOJA["filas"][1][IX["SKU"]] == "102"
+        and HOJA["filas"][1][IX["Mayoreo"]] == "Sí",
         "y en la segunda fila tampoco")
 
 print("\n=== 9b. Migrar es idempotente y no adivina ===")
