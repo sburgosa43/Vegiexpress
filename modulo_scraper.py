@@ -290,7 +290,30 @@ _CENMA_HEADERS = {
 # Columnas de la hoja «Precios Cenma». Se declaran una sola vez porque las usan
 # la tabla, el CSV y la escritura al Sheet.
 COLS_CENMA = ["Fecha", "Categoría", "Producto", "Descripción",
-              "Precio", "Costo", "SKU", "Mayoreo"]
+              "Precio", "Costo Bruto", "Costo sin Impuestos", "SKU", "Mayoreo"]
+
+# Layout anterior, para poder migrar una hoja que ya se haya escrito.
+_COLS_CENMA_V1 = ["Fecha", "Categoría", "Producto", "Descripción",
+                  "Precio", "Costo", "SKU", "Mayoreo"]
+
+
+def costo_sin_impuestos(costo_bruto: float) -> float:
+    """Costo neto de IVA e ISR.
+
+        costo / 1.12 x 0.95
+
+    base_sin_iva quita el 12% que el monto ya trae incluido; ISR_FACTOR (0.95)
+    descuenta la retención del 5% sobre esa base. Las dos salen de config para
+    que un cambio de tasa se refleje acá solo.
+
+    OJO con qué es el «Costo Bruto»: es el campo `costo` que devuelve la API de
+    CENMA, un dato por producto de SU sistema. Medido sobre el catálogo, la
+    relación precio/costo va de 1.10 a 1.20 (mediana 1.176), y en el 54% de los
+    productos es exactamente precio x 0.85. O sea que es un dato real y no una
+    fórmula, pero no sabemos qué significa en su contabilidad.
+    """
+    from config import base_sin_iva, ISR_FACTOR
+    return round(base_sin_iva(float(costo_bruto or 0)) * ISR_FACTOR, 4)
 
 
 def _cenma_descargar(fecha: str = None) -> list:
@@ -317,13 +340,15 @@ def _cenma_descargar(fecha: str = None) -> list:
 
     out = []
     for p in crudos:
+        _costo = _sf_num(p.get("costo"))
         out.append({
             "Fecha":       fecha,
             "Categoría":   str(p.get("categoria") or "Sin categoría").strip(),
             "Producto":    str(p.get("nombre") or "Sin nombre").strip(),
             "Descripción": str(p.get("descripcion") or "").strip(),
             "Precio":      _sf_num(p.get("precio")),
-            "Costo":       _sf_num(p.get("costo")),
+            "Costo Bruto": _costo,
+            "Costo sin Impuestos": costo_sin_impuestos(_costo),
             "SKU":         str(p.get("sku") or "").strip(),
             "Mayoreo":     "Sí" if p.get("es_mayoreo") else "No",
         })
@@ -347,6 +372,42 @@ def _cenma_categorias(prods: list) -> list:
     return sorted({p["Categoría"] for p in prods if p["Categoría"]})
 
 
+def _cenma_migrar_hoja() -> int:
+    """Lleva la hoja al layout actual si quedó con el anterior.
+
+    «Costo sin Impuestos» se insertó DESPUÉS de «Costo Bruto», no al final. En
+    una hoja ya escrita eso correría SKU y Mayoreo un lugar en cada fila vieja
+    y el historial quedaría corrupto sin que se note. Así que si el encabezado
+    es el viejo, se reescribe la hoja entera calculando la columna nueva a
+    partir del costo que ya estaba.
+
+    Devuelve cuántas filas migró. Si el encabezado no es ninguno de los dos
+    conocidos, se corta: mejor un error que reescribir a ciegas.
+    """
+    from gsheets import ws, get_all_rows
+    from utils import _sf
+
+    hoja = ws("precios_cenma")
+    cab = [str(c).strip() for c in hoja.row_values(1)]
+    if cab == COLS_CENMA:
+        return 0
+    if cab != _COLS_CENMA_V1:
+        raise RuntimeError(
+            f"La hoja «Precios Cenma» tiene un encabezado que no reconozco:\n"
+            f"{cab}\n\nEsperaba {COLS_CENMA} o el anterior {_COLS_CENMA_V1}. "
+            f"No se toca nada — revisala a mano.")
+
+    filas = get_all_rows("precios_cenma")
+    nuevas = []
+    for f in filas:
+        f = list(f) + [""] * (len(_COLS_CENMA_V1) - len(f))
+        fe, cat, prod, desc, precio, costo, sku, may = f[:8]
+        nuevas.append([fe, cat, prod, desc, precio, costo,
+                       costo_sin_impuestos(_sf(costo)), sku, may])
+    hoja.update("A1", [COLS_CENMA] + nuevas, value_input_option="USER_ENTERED")
+    return len(nuevas)
+
+
 def _cenma_guardar(prods: list, fecha: str) -> dict:
     """Escribe en la hoja «Precios Cenma», reemplazando las filas de ESA fecha.
 
@@ -361,6 +422,7 @@ def _cenma_guardar(prods: list, fecha: str) -> dict:
                          delete_rows_range)
 
     ensure_ws("precios_cenma", COLS_CENMA)
+    _cenma_migrar_hoja()
     filas = get_all_rows("precios_cenma")        # ya viene SIN encabezado
     # start=2 porque la fila 1 es el encabezado y get_all_rows la descarta.
     idx = [i for i, r in enumerate(filas, start=2)

@@ -66,13 +66,16 @@ bs4.BeautifulSoup = lambda *a, **k: None
 sys.modules["bs4"] = bs4
 
 # ── Doble del Sheet ──────────────────────────────────────────────────────────
-HOJA = {"filas": [], "creada": False, "borrados": []}
+HOJA = {"filas": [], "creada": False, "borrados": [],
+        "cabecera": [], "updates": []}
 
 gs = types.ModuleType("gsheets")
 
 
 def _ensure_ws(nombre, headers, rows=None):
     HOJA["creada"] = True
+    if not HOJA["cabecera"]:
+        HOJA["cabecera"] = list(headers)
     return True
 
 
@@ -90,14 +93,30 @@ def _delete_rows_range(nombre, desde, hasta):
     return hasta - desde + 1
 
 
+class _Hoja:
+    """Doble del worksheet, solo lo que usa la migración."""
+
+    def row_values(self, n):
+        return list(HOJA["cabecera"])
+
+    def update(self, rango, datos, value_input_option=None):
+        HOJA["cabecera"] = list(datos[0])
+        HOJA["filas"] = [list(f) for f in datos[1:]]
+        HOJA["updates"].append(rango)
+
+
 gs.ensure_ws = _ensure_ws
 gs.get_all_rows = _get_all_rows
 gs.append_rows = _append_rows
 gs.delete_rows_range = _delete_rows_range
+gs.ws = lambda nombre: _Hoja()
 sys.modules["gsheets"] = gs
 
 from modulo_scraper import (_cenma_descargar, _cenma_categorias,   # noqa: E402
-                            _cenma_guardar, COLS_CENMA)
+                            _cenma_guardar, COLS_CENMA,
+                            _COLS_CENMA_V1, costo_sin_impuestos,
+                            _cenma_migrar_hoja)
+from config import base_sin_iva, ISR_FACTOR                       # noqa: E402
 
 r = Reporte()
 HOY, AYER = "2026-08-05", "2026-08-04"
@@ -107,15 +126,34 @@ p = _cenma_descargar(HOY)
 r.check(len(p) == 3, f"tres productos: {len(p)}")
 r.check(list(p[0]) == COLS_CENMA, f"columnas: {list(p[0])}")
 r.check(p[0]["Fecha"] == HOY, "la fecha viaja en cada fila (es el historial)")
-r.check(p[0]["Precio"] == 6.5 and p[0]["Costo"] == 5.2,
-        "precio y costo se guardan como números")
+r.check(p[0]["Precio"] == 6.5 and p[0]["Costo Bruto"] == 5.2,
+        "precio y costo bruto se guardan como números")
 r.check(p[1]["Mayoreo"] == "Sí" and p[0]["Mayoreo"] == "No",
         "es_mayoreo se traduce a Sí/No")
-r.check(p[2]["Costo"] == 0.0 and p[2]["Descripción"] == "",
+r.check(p[2]["Costo Bruto"] == 0.0 and p[2]["Descripción"] == "",
         "los nulos de la API quedan en 0 / vacío, no en None")
 r.check(all(isinstance(x[c], (str, int, float))
             for x in p for c in COLS_CENMA),
         "todo es serializable a una celda del Sheet")
+
+print("\n=== 1b. Costo sin impuestos = costo / 1.12 x 0.95 ===")
+r.check(abs(p[0]["Costo sin Impuestos"]
+            - round(base_sin_iva(5.2) * ISR_FACTOR, 4)) < 1e-9,
+        f"5.20 bruto -> {p[0]['Costo sin Impuestos']} sin impuestos")
+r.check(p[0]["Costo sin Impuestos"] < p[0]["Costo Bruto"],
+        "siempre queda por debajo del bruto")
+r.check(abs(costo_sin_impuestos(112.0) - 100.0 * 0.95) < 1e-6,
+        f"Q112 (que traen Q12 de IVA) -> Q{costo_sin_impuestos(112.0)}")
+r.check(costo_sin_impuestos(0) == 0.0 and costo_sin_impuestos(None) == 0.0,
+        "sin costo no inventa un neto")
+r.check(p[2]["Costo sin Impuestos"] == 0.0,
+        "un producto sin costo queda en 0, no en negativo ni None")
+# Las tasas salen de config: si cambian, esto cambia solo. Se compara contra
+# el valor YA redondeado, porque la función devuelve 4 decimales.
+r.check(costo_sin_impuestos(100) == round((100 / 1.12) * ISR_FACTOR, 4),
+        f"usa base_sin_iva e ISR_FACTOR de config: {costo_sin_impuestos(100)}")
+r.check(costo_sin_impuestos(100) == round(base_sin_iva(100) * ISR_FACTOR, 4),
+        "y coincide con base_sin_iva de config, no con un 1.12 a mano")
 
 print("\n=== 2. Un fallo LEVANTA; no devuelve lista vacía ===")
 # Era el bug de fondo: `except Exception: break` hacía que un 404 se viera
@@ -177,9 +215,10 @@ print("\n=== 8. Filas de una fecha NO contiguas: se planta ===")
 # Si alguien editó la hoja a mano y las filas de una fecha quedaron partidas,
 # borrar de min a max se llevaría puesto un bloque de otra fecha.
 HOJA["filas"].clear(); HOJA["borrados"].clear()
-HOJA["filas"].extend([[HOY, "Verduras", "A", "", 1, 1, "1", "No"],
-                      [AYER, "Verduras", "B", "", 1, 1, "2", "No"],
-                      [HOY, "Verduras", "C", "", 1, 1, "3", "No"]])
+HOJA["cabecera"] = list(COLS_CENMA)
+HOJA["filas"].extend([[HOY, "Verduras", "A", "", 1, 1, 0.8, "1", "No"],
+                      [AYER, "Verduras", "B", "", 1, 1, 0.8, "2", "No"],
+                      [HOY, "Verduras", "C", "", 1, 1, 0.8, "3", "No"]])
 try:
     _cenma_guardar(p, HOY)
     r.check(False, "debió negarse a borrar un rango que incluye otra fecha")
@@ -187,5 +226,39 @@ except RuntimeError as e:
     r.check("no están juntas" in str(e), f"corta con un error claro: {e}")
 r.check(HOJA["borrados"] == [], "y NO borró nada")
 r.check(len(HOJA["filas"]) == 3, "la hoja quedó como estaba")
+
+print("\n=== 9. Migración del layout viejo ===")
+# «Costo sin Impuestos» se insertó DESPUÉS de «Costo Bruto», no al final. En una
+# hoja ya escrita eso correría SKU y Mayoreo un lugar en cada fila y el
+# historial quedaría corrupto sin que se note.
+HOJA["filas"].clear(); HOJA["borrados"].clear(); HOJA["updates"].clear()
+HOJA["cabecera"] = list(_COLS_CENMA_V1)
+HOJA["filas"].extend([
+    [AYER, "Verduras", "Tomate", "Libra", 6.5, 5.2, "101", "No"],
+    [AYER, "Frutas",   "Banano", "",     3.25, 2.8, "102", "Sí"],
+])
+n = _cenma_migrar_hoja()
+r.check(n == 2, f"migró las 2 filas existentes: {n}")
+r.check(HOJA["cabecera"] == COLS_CENMA, f"cabecera nueva: {HOJA['cabecera']}")
+f0 = HOJA["filas"][0]
+r.check(len(f0) == 9, f"cada fila pasa a 9 columnas: {len(f0)}")
+r.check(f0[5] == 5.2, "el costo viejo queda como Costo Bruto")
+r.check(abs(f0[6] - costo_sin_impuestos(5.2)) < 1e-9,
+        f"la columna nueva se calcula del costo que ya estaba: {f0[6]}")
+r.check(f0[7] == "101" and f0[8] == "No",
+        "SKU y Mayoreo NO se corrieron: siguen en su lugar")
+r.check(HOJA["filas"][1][7] == "102" and HOJA["filas"][1][8] == "Sí",
+        "y en la segunda fila tampoco")
+
+print("\n=== 9b. Migrar es idempotente y no adivina ===")
+r.check(_cenma_migrar_hoja() == 0, "con la cabecera al día no hace nada")
+HOJA["cabecera"] = ["Otra", "Cosa"]
+try:
+    _cenma_migrar_hoja()
+    r.check(False, "debió cortar ante una cabecera desconocida")
+except RuntimeError as e:
+    r.check("no reconozco" in str(e), f"corta con un error claro: {str(e)[:60]}...")
+r.check(HOJA["cabecera"] == ["Otra", "Cosa"],
+        "y no reescribe una hoja que no entiende")
 
 r.salir()
