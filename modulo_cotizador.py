@@ -108,6 +108,23 @@ def _desglose(costo: float, precio: float,
     return d
 
 
+def _totales_pedido(d: dict, cantidad: float) -> dict | None:
+    """Venta y ganancia del PEDIDO COMPLETO, a partir de los unitarios.
+
+    Devuelve None si no hay cantidad: sin ella no hay un total que mostrar, y
+    fabricar uno con cantidad 1 sería inventarle un número al usuario.
+
+    No recalcula márgenes — multiplica los que ya trae el desglose, que salen
+    de las fórmulas de config.
+    """
+    cant = float(cantidad or 0)
+    if not d or cant <= 0:
+        return None
+    return {"cantidad": cant,
+            "venta":    round(d["precio"] * cant, 2),
+            "ganancia": round(d["margen_neto_q"] * cant, 2)}
+
+
 def _precio_cambiado(ajustado: float, sugerido: float) -> bool:
     """¿El usuario movió el precio, o es el sugerido tal cual?
 
@@ -121,15 +138,31 @@ def _precio_cambiado(ajustado: float, sugerido: float) -> bool:
 
 # ── COMPONENTES UI ────────────────────────────────────────────────────────────
 
-def _mostrar_resultado(d: dict, titulo: str = "Resultado"):
+def _mostrar_resultado(d: dict, titulo: str = "Resultado",
+                       cantidad: float = 0.0):
     color_card = "#e8f5e9" if d["rentable"] else "#ffebee"
     color_margen = "#2e7d32" if d["rentable"] else "#c62828"
     alerta = "" if d["rentable"] else "⚠️ Este precio está por debajo del punto de equilibrio."
 
+    # Con cantidad se agrega el total del pedido; sin ella la tarjeta queda
+    # como siempre — _tab_verificar no cotiza una cantidad y no debe cambiar.
+    tot  = _totales_pedido(d, cantidad)
+    cols = "1fr 1fr 1fr 1.2fr" if tot else "1fr 1fr 1fr"
+    celda_total = f"""
+            <div style='border-left:2px solid rgba(0,0,0,.12);padding-left:12px'>
+                <div style='font-size:.8rem;color:#555'>Ganancia total del pedido</div>
+                <div style='font-size:1.5rem;font-weight:bold;color:{color_margen}'>
+                    Q{tot['ganancia']:,.2f}
+                </div>
+                <div style='font-size:.72rem;color:#666'>
+                    {tot['cantidad']:,.2f} und · venta Q{tot['venta']:,.2f}
+                </div>
+            </div>""" if tot else ""
+
     st.markdown(f"""
     <div style='background:{color_card};border-radius:8px;padding:14px 18px;margin:8px 0'>
         <h4 style='margin:0 0 10px 0'>{titulo}</h4>
-        <div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px'>
+        <div style='display:grid;grid-template-columns:{cols};gap:10px'>
             <div>
                 <div style='font-size:.8rem;color:#555'>Precio de venta (con IVA)</div>
                 <div style='font-size:1.5rem;font-weight:bold'>Q{d['precio']:,.4f}</div>
@@ -145,7 +178,7 @@ def _mostrar_resultado(d: dict, titulo: str = "Resultado"):
                 <div style='font-size:1.5rem;font-weight:bold;color:{color_margen}'>
                     {d['margen_neto_pct']:.2f}%
                 </div>
-            </div>
+            </div>{celda_total}
         </div>
         {'<p style="color:#c62828;margin:8px 0 0 0;font-size:.9rem">'+alerta+'</p>' if alerta else ''}
     </div>
@@ -181,6 +214,13 @@ def _mostrar_resultado(d: dict, titulo: str = "Resultado"):
             st.metric("Margen neto (Q)",        f"Q{d['margen_neto_q']:,.4f}")
             st.metric("Margen neto (%)",        f"{d['margen_neto_pct']:.2f}%")
             st.metric("Punto de equilibrio",    f"Q{d['pto_equilibrio']:,.4f}")
+        if tot:
+            st.divider()
+            t1, t2, t3 = st.columns(3)
+            t1.metric("Cantidad cotizada",         f"{tot['cantidad']:,.2f}")
+            t2.metric("Venta total del pedido",    f"Q{tot['venta']:,.2f}")
+            t3.metric("Ganancia total del pedido", f"Q{tot['ganancia']:,.2f}")
+
         st.caption(
             f"Markup sobre costo: {d['sobre_costo']:.1f}% · "
             f"Por cada Q100 de venta, tu bolsillo recibe Q{d['margen_neto_pct']:.1f}"
@@ -259,7 +299,7 @@ def _tab_calcular():
         st.error("Verificá los valores ingresados. El margen no puede superar el 95%.")
         return
 
-    _mostrar_resultado(resultado, "💡 Precio sugerido")
+    _mostrar_resultado(resultado, "💡 Precio sugerido", cantidad)
 
     # Ajuste manual del precio
     st.divider()
@@ -287,13 +327,22 @@ def _tab_calcular():
         d_ajustado = _desglose(costo_real, precio_ajustado, _g)
         if d_ajustado:
             diff_margen = d_ajustado["margen_neto_q"] - resultado["margen_neto_q"]
-            st.markdown(
+            _impacto = (
                 f"**Impacto:** margen neto cambia de "
                 f"Q{resultado['margen_neto_q']:,.2f} → "
                 f"Q{d_ajustado['margen_neto_q']:,.2f} "
-                f"({'▲' if diff_margen >= 0 else '▼'} Q{abs(diff_margen):,.2f})"
-            )
-            _mostrar_resultado(d_ajustado, "📌 Con precio ajustado")
+                f"({'▲' if diff_margen >= 0 else '▼'} Q{abs(diff_margen):,.2f}) "
+                f"por unidad")
+            _t_sug = _totales_pedido(resultado, cantidad)
+            _t_aju = _totales_pedido(d_ajustado, cantidad)
+            if _t_sug and _t_aju:
+                _dif = _t_aju["ganancia"] - _t_sug["ganancia"]
+                _impacto += (
+                    f" · **en el pedido completo:** Q{_t_sug['ganancia']:,.2f} "
+                    f"→ Q{_t_aju['ganancia']:,.2f} "
+                    f"({'▲' if _dif >= 0 else '▼'} Q{abs(_dif):,.2f})")
+            st.markdown(_impacto)
+            _mostrar_resultado(d_ajustado, "📌 Con precio ajustado", cantidad)
 
 
 # ── TAB 2: VERIFICAR MARGEN ───────────────────────────────────────────────────

@@ -132,6 +132,37 @@ r.check(d_con["gastos"]["mano_obra"] == MO
 r.check("gastos" not in _desglose(COSTO, 8.0),
         "sin gastos no se agregan claves: el dict queda como antes")
 
+print("\n=== 8b. Total a ganar del pedido completo ===")
+from modulo_cotizador import _totales_pedido, _mostrar_resultado  # noqa: E402
+import inspect                                                    # noqa: E402
+
+t = _totales_pedido(d_con, CANT)
+r.check(abs(t["venta"] - round(d_con["precio"] * CANT, 2)) < 0.01,
+        f"venta total = precio x cantidad = Q{t['venta']:,.2f}")
+r.check(abs(t["ganancia"] - round(d_con["margen_neto_q"] * CANT, 2)) < 0.01,
+        f"ganancia total = margen unitario x cantidad = Q{t['ganancia']:,.2f}")
+r.check(t["cantidad"] == CANT, "arrastra la cantidad para poder mostrarla")
+
+# Los gastos se cargan como TOTALES del pedido, así que su impacto en la
+# ganancia total tiene que ser exactamente ISR x IVA x el total cargado --
+# sin rastro de la división por unidad ni de errores de redondeo acumulados.
+_sin = _totales_pedido(_desglose(COSTO, d_con["precio"]), CANT)
+_esp_total = ISR_FACTOR * IVA_FACTOR * g["total"]
+r.check(abs((_sin["ganancia"] - t["ganancia"]) - _esp_total) < 0.02,
+        f"al mismo precio, los gastos cuestan ISR x IVA x Q{g['total']:,.0f} "
+        f"= Q{_esp_total:,.2f} de ganancia total")
+
+print("\n=== 8c. Sin cantidad NO se inventa un total ===")
+r.check(_totales_pedido(d_con, 0) is None,
+        "cantidad 0 devuelve None, no un total con cantidad 1")
+r.check(_totales_pedido(d_con, -5) is None, "cantidad negativa tampoco")
+r.check(_totales_pedido(d_con, None) is None, "campo vacío tampoco")
+r.check(_totales_pedido(None, CANT) is None, "sin desglose no hay total")
+r.check(inspect.signature(_mostrar_resultado).parameters["cantidad"].default
+        == 0.0,
+        "la cantidad es opcional en la tarjeta: Verificar Margen no cotiza "
+        "cantidad y su tarjeta no debe cambiar")
+
 print("\n=== 9. Las otras pestañas no cambian ===")
 # _tab_verificar y _tab_escenarios llaman sin `gastos`; el parámetro es
 # opcional justamente para no tocarlas.
