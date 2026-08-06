@@ -11,6 +11,7 @@ ciclos. Puede importar stdlib y streamlit.
 from __future__ import annotations
 
 import streamlit as st
+from calendar import monthrange
 from datetime import date, datetime
 
 
@@ -64,6 +65,39 @@ def _parse_fecha(v) -> date | None:
         except (ValueError, TypeError):
             pass
     return None
+
+
+# ── Períodos: mes calendario y rango libre ────────────────────────────────────
+# Viven acá —y no en pdf_helper— para que la pantalla, el PDF y las pruebas
+# usen la MISMA definición de período. Un mes es un rango como cualquier otro:
+# el modo Mes de Facturación es solo el atajo que calcula sus dos bordes.
+
+MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre",
+            "Diciembre"]
+
+
+def rango_mes(mes: int, año: int) -> tuple[date, date]:
+    """(primer día, último día) de ese mes, ambos incluidos."""
+    return date(año, mes, 1), date(año, mes, monthrange(año, mes)[1])
+
+
+def es_mes_completo(desde: date, hasta: date) -> bool:
+    """El rango cubre exactamente un mes calendario, ni un día de más ni de
+    menos. Del 01/07 al 30/07 NO lo es: le falta el 31."""
+    return (desde, hasta) == rango_mes(desde.month, desde.year)
+
+
+def etiqueta_periodo(desde: date, hasta: date) -> str:
+    """Cómo se nombra un período en pantalla y en el PDF.
+
+    Dice 'Julio 2026' SOLO si el rango es julio entero; en cualquier otro caso
+    muestra las fechas reales. Un documento que se le manda al cliente no puede
+    encabezarse con un mes que no corresponde al recorte que tiene adentro.
+    """
+    if es_mes_completo(desde, hasta):
+        return f"{MESES_ES[desde.month - 1]} {desde.year}"
+    return f"del {desde:%d/%m/%Y} al {hasta:%d/%m/%Y}"
 
 
 # ── Mensajes de confirmación via session_state ────────────────────────────────

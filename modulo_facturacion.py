@@ -1,7 +1,8 @@
 """
-modulo_facturacion.py — Resumen mensual de facturación por cliente
-Acumula todos los envíos del mes seleccionado, desglose por semana
-y subtotal por producto, con PDF descargable por cliente.
+modulo_facturacion.py — Resumen de facturación por cliente
+Acumula todos los envíos del período seleccionado (un mes calendario o un
+rango libre de fechas), desglose por semana y subtotal por producto, con PDF
+descargable por cliente.
 """
 import streamlit as st
 import pandas as pd
@@ -9,7 +10,8 @@ from datetime import date
 from excel_helper import leer_pedidos
 from data_helper  import cargar_clientes
 from pdf_helper   import (generar_facturacion_mensual,
-                           nombre_archivo_factura, MESES_ES)
+                           nombre_archivo_factura)
+from utils        import MESES_ES, etiqueta_periodo, rango_mes
 from config       import (ZONAS_MAP, COLORES_ZONA, ISR_UMBRAL,
                            calcular_liquido, excluido_dashboard, base_sin_iva)
 
@@ -25,25 +27,28 @@ def _zona_cliente(c: dict) -> str:
     return "Sin zona"
 
 
-def _construir_datos(pedidos: list, mes: int, año: int) -> dict:
+def _construir_datos(pedidos: list, desde: date, hasta: date) -> dict:
     """
-    Agrupa los pedidos del mes por cliente → semana → líneas.
-    Retorna dict: {cliente: {semana: {fecha, lineas}, total_mes}}
+    Agrupa los pedidos del período por cliente → semana → líneas.
+    Retorna dict: {cliente: {por_semana: {semana: {fecha, lineas}}, total}}
+
+    Filtra por rango con los dos bordes INCLUIDOS. El modo Mes de la pantalla
+    entra por acá igual que el rango libre, con desde/hasta calculados por
+    utils.rango_mes: una sola lógica de filtrado y agrupación para los dos.
     """
     resultado = {}
 
     for p in pedidos:
-        if p["status"] == "Cancelado": continue
-        if not p["fecha"]:             continue
-        if p["fecha"].month != mes:    continue
-        if p["fecha"].year  != año:    continue
-        if not p["producto"]:          continue
+        if p["status"] == "Cancelado":          continue
+        if not p["fecha"]:                      continue
+        if not (desde <= p["fecha"] <= hasta):  continue
+        if not p["producto"]:                   continue
 
         cli  = p["cliente"]
         sem  = p["semana"] or p["fecha"].isocalendar()[1]
 
         if cli not in resultado:
-            resultado[cli] = {"por_semana": {}, "total_mes": 0.0}
+            resultado[cli] = {"por_semana": {}, "total": 0.0}
 
         if sem not in resultado[cli]["por_semana"]:
             resultado[cli]["por_semana"][sem] = {
@@ -65,7 +70,7 @@ def _construir_datos(pedidos: list, mes: int, año: int) -> dict:
             "precio":   p["precio"],
             "total":    total_linea,
         })
-        resultado[cli]["total_mes"] += total_linea
+        resultado[cli]["total"] += total_linea
 
     # Ordenar semanas y líneas de forma ascendente por fecha y producto
     for cli in resultado:
@@ -76,10 +81,16 @@ def _construir_datos(pedidos: list, mes: int, año: int) -> dict:
     return resultado
 
 
+def _clave_periodo(desde: date, hasta: date) -> str:
+    """Sufijo de key de widget. Dos períodos distintos no pueden compartir key
+    o Streamlit le sirve al segundo el estado (y el PDF) del primero."""
+    return f"{desde:%Y%m%d}_{hasta:%Y%m%d}"
+
+
 def _card_cliente(cli_nombre: str, datos_cli: dict,
-                   cliente_info: dict, mes: int, año: int):
+                   cliente_info: dict, desde: date, hasta: date):
     """Muestra el expander de un cliente con desglose semanal y PDF."""
-    total = datos_cli["total_mes"]
+    total = datos_cli["total"]
     sems  = len(datos_cli["por_semana"])
 
     with st.expander(
@@ -182,9 +193,10 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
 
         # PDF
         try:
+            clave = _clave_periodo(desde, hasta)
             pdf_bytes = generar_facturacion_mensual(
                 cliente=cliente_info,
-                mes=mes, año=año,
+                desde=desde, hasta=hasta,
                 por_semana=datos_cli["por_semana"],
             )
             _cf1, _cf2 = st.columns(2)
@@ -192,9 +204,9 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
                 st.download_button(
                     label="📄 Descargar PDF de Facturación",
                     data=pdf_bytes,
-                    file_name=nombre_archivo_factura(cli_nombre, mes, año),
+                    file_name=nombre_archivo_factura(cli_nombre, desde, hasta),
                     mime="application/pdf",
-                    key=f"fact_pdf_{cli_nombre}_{mes}_{año}",
+                    key=f"fact_pdf_{cli_nombre}_{clave}",
                     type="primary",
                     use_container_width=True,
                 )
@@ -203,7 +215,7 @@ def _card_cliente(cli_nombre: str, datos_cli: dict,
                 import streamlit.components.v1 as _cpv_fac
                 _cpv_fac.html(
                     _btn_imp_fac(pdf_bytes,
-                                 f"fac_{cli_nombre}_{mes}_{año}",
+                                 f"fac_{cli_nombre}_{clave}",
                                  "🖨️ Imprimir"),
                     height=44)
         except Exception as e:
@@ -520,19 +532,45 @@ def _tab_mes(todos: list, cli_list: list):
                   for m in range(12, 0, -1)
                   if (y, m) <= (hoy.year, hoy.month)]
 
-    s1, s2, s3 = st.columns(3)
-    with s1:
-        mes_sel_lbl = st.selectbox(
-            "Mes", [lbl for _, lbl in meses_disp],
-            index=0, key="fact_mes")
-        mes_sel = next(m for m, lbl in meses_disp if lbl == mes_sel_lbl)
-        año_sel = int(mes_sel_lbl.split()[-1])
+    modo = st.radio("Período", ["Mes", "Rango de fechas"], horizontal=True,
+                    key="fact_modo",
+                    help="Mes: un mes calendario completo, como siempre. "
+                         "Rango: cualquier par de fechas, con los dos bordes "
+                         "incluidos.")
+
+    if modo == "Mes":
+        s1, s2, s3 = st.columns(3)
+        with s1:
+            mes_sel_lbl = st.selectbox(
+                "Mes", [lbl for _, lbl in meses_disp],
+                index=0, key="fact_mes")
+            mes_sel = next(m for m, lbl in meses_disp if lbl == mes_sel_lbl)
+            año_sel = int(mes_sel_lbl.split()[-1])
+        desde, hasta = rango_mes(mes_sel, año_sel)
+    else:
+        s1a, s1b, s2, s3 = st.columns(4)
+        # Arranca en el mes en curso hasta hoy: un rango válido de entrada, y
+        # el usuario mueve solo el borde que le interesa.
+        ini_def, _ = rango_mes(hoy.month, hoy.year)
+        desde = s1a.date_input("Desde", value=ini_def, key="fact_desde")
+        hasta = s1b.date_input("Hasta", value=hoy,     key="fact_hasta")
+
+        if not desde or not hasta:
+            st.info("Elegí las dos fechas del rango.")
+            return
+        if desde > hasta:
+            st.error("El 'Desde' es posterior al 'Hasta'.")
+            return
+
+    periodo_txt = etiqueta_periodo(desde, hasta)
+    # 'en Julio 2026' / 'del 20/07/2026 al 10/08/2026': la etiqueta del mes
+    # necesita preposición, la del rango ya la trae puesta.
+    periodo_frase = f"en {periodo_txt}" if modo == "Mes" else periodo_txt
 
     with s2:
         clientes_disp = sorted({
             p["cliente"] for p in todos
-            if p["fecha"] and p["fecha"].month == mes_sel
-            and p["fecha"].year == año_sel
+            if p["fecha"] and desde <= p["fecha"] <= hasta
             and p["status"] != "Cancelado"
             })
         cli_filtro = st.selectbox(
@@ -542,28 +580,35 @@ def _tab_mes(todos: list, cli_list: list):
         st.markdown("&nbsp;")
         st.markdown(
             f"<div style='padding-top:28px;font-size:.85rem;color:#555'>"
-            f"Período: <b>{MESES_ES[mes_sel-1]} {año_sel}</b></div>",
+            f"Período: <b>{periodo_txt}</b></div>",
             unsafe_allow_html=True)
+
+    if modo != "Mes":
+        st.caption("Un rango libre puede cortar una semana por la mitad: el "
+                   "subtotal y el ISR de esa semana se calculan solo sobre las "
+                   "entregas que caen dentro del rango, no sobre la factura "
+                   "semanal completa.")
 
     st.divider()
 
     # ── Construir datos ───────────────────────────────────────────────────────
-    datos = _construir_datos(todos, mes_sel, año_sel)
+    datos = _construir_datos(todos, desde, hasta)
 
     if cli_filtro != "Todos":
         datos = {k: v for k, v in datos.items() if k == cli_filtro}
 
     if not datos:
-        st.info(f"No hay pedidos para {MESES_ES[mes_sel-1]} {año_sel}.")
+        st.info(f"No hay pedidos {periodo_frase}.")
         return
 
-    # ── Resumen global del mes ────────────────────────────────────────────────
-    total_global = sum(v["total_mes"] for v in datos.values())
+    # ── Resumen global del período ────────────────────────────────────────────
+    total_global = sum(v["total"] for v in datos.values())
     st.markdown(
         f"<div style='background:#e8f5e9;border-radius:8px;padding:10px;"
         f"text-align:center;margin:4px 0 12px 0'>"
         f"<b>{len(datos)} cliente(s)  ·  "
-        f"Total del mes: Q{total_global:,.2f}</b></div>",
+        f"Total {'del mes' if modo == 'Mes' else 'del período'}: "
+        f"Q{total_global:,.2f}</b></div>",
         unsafe_allow_html=True)
 
     # ── Organizar por zona ────────────────────────────────────────────────────
@@ -594,7 +639,7 @@ def _tab_mes(todos: list, cli_list: list):
         with tabs[tab_idx]:
             tab_idx += 1
             color    = COLORES_ZONA[zona]
-            total_z  = sum(v["total_mes"] for v in grupo.values())
+            total_z  = sum(v["total"] for v in grupo.values())
             st.markdown(
                 f"<div style='border-left:4px solid {color};padding:3px 10px;"
                 f"border-radius:4px;margin-bottom:8px'>"
@@ -602,15 +647,15 @@ def _tab_mes(todos: list, cli_list: list):
                 f"Total: Q{total_z:,.2f}</div>",
                 unsafe_allow_html=True)
             for cli_nombre, datos_cli in sorted(grupo.items(),
-                                                 key=lambda x: x[1]["total_mes"],
+                                                 key=lambda x: x[1]["total"],
                                                  reverse=True):
                 cliente_info = _get_cli_info(cli_nombre) or {"nombre": cli_nombre}
-                _card_cliente(cli_nombre, datos_cli, cliente_info, mes_sel, año_sel)
+                _card_cliente(cli_nombre, datos_cli, cliente_info, desde, hasta)
 
     if sin_zona:
         with tabs[tab_idx]:
             for cli_nombre, datos_cli in sorted(sin_zona.items(),
-                                                 key=lambda x: x[1]["total_mes"],
+                                                 key=lambda x: x[1]["total"],
                                                  reverse=True):
                 cliente_info = cli_map.get(cli_nombre, {"nombre": cli_nombre})
-                _card_cliente(cli_nombre, datos_cli, cliente_info, mes_sel, año_sel)
+                _card_cliente(cli_nombre, datos_cli, cliente_info, desde, hasta)

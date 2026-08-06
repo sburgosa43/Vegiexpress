@@ -23,6 +23,8 @@ from reportlab.platypus import (
 )
 from reportlab.platypus import Image as RLImage
 
+from utils import MESES_ES, es_mes_completo, etiqueta_periodo
+
 # ── BRAND COLORS ──────────────────────────────────────────────────────────────
 VERDE_OSC = colors.HexColor('#2D7A2D')
 
@@ -330,8 +332,8 @@ def generar_envio(cliente: dict, fecha: date, lineas: list, unico: str = "") -> 
 
 
 # ── PDF DE FACTURACIÓN MENSUAL ────────────────────────────────────────────────
-MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
-             "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
+# MESES_ES se importa de utils y se re-exporta acá: varios módulos lo piden
+# como `from pdf_helper import MESES_ES` desde antes de que existiera utils.
 
 
 def nombre_archivo_fact(cliente_nombre: str, mes: int, año: int) -> str:
@@ -341,24 +343,32 @@ def nombre_archivo_fact(cliente_nombre: str, mes: int, año: int) -> str:
     return f"{nombre}_Facturacion_{MESES_ES[mes-1]}{año}.pdf"
 
 
-def nombre_archivo_factura(cliente_nombre: str, mes: int, año: int) -> str:
-    """CazadorItaliano_Mayo2026.pdf"""
+def nombre_archivo_factura(cliente_nombre: str, desde: date, hasta: date) -> str:
+    """CazadorItaliano_Mayo2026.pdf — y, cuando el rango no es un mes entero,
+    CazadorItaliano_20260720_20260810.pdf, para que el nombre del archivo no
+    prometa un mes que el contenido no tiene."""
     n = unicodedata.normalize("NFKD", cliente_nombre or "cliente")
     n = n.encode("ascii", "ignore").decode("ascii")
     n = re.sub(r"[^a-zA-Z0-9]", "", n) or "cliente"
-    return f"{n}_{MESES_ES[mes-1]}{año}.pdf"
+    suf = (f"{MESES_ES[desde.month-1]}{desde.year}"
+           if es_mes_completo(desde, hasta)
+           else f"{desde:%Y%m%d}_{hasta:%Y%m%d}")
+    return f"{n}_{suf}.pdf"
 
 
-def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
+def generar_facturacion_mensual(cliente: dict, desde: date, hasta: date,
                                  por_semana: dict) -> bytes:
     """
-    Genera PDF de resumen de facturación mensual.
+    Genera PDF de resumen de facturación de un período.
 
-    cliente   : dict con nombre, empresa, direccion, nit, telefono
-    mes, año  : período
-    por_semana: {semana_num: {"fecha": date, "lineas": [...]}}
-                cada linea: {producto, cantidad, unidad, precio, total}
+    cliente     : dict con nombre, empresa, direccion, nit, telefono
+    desde, hasta: bordes del período, ambos incluidos. Si son exactamente un
+                  mes calendario el encabezado dice 'Julio 2026'; si no, dice
+                  el rango real ('del 20/07/2026 al 10/08/2026').
+    por_semana  : {semana_num: {"fecha": date, "lineas": [...]}}
+                  cada linea: {producto, cantidad, unidad, precio, total}
     """
+    periodo = etiqueta_periodo(desde, hasta)
     from reportlab.platypus import KeepTogether
 
     buffer = BytesIO()
@@ -369,7 +379,7 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
         buffer, pagesize=A4,
         leftMargin=15*mm, rightMargin=15*mm,
         topMargin=12*mm, bottomMargin=22*mm,
-        title=f"Facturacion - {cliente.get('nombre','')} - {MESES_ES[mes-1]} {año}",
+        title=f"Facturacion - {cliente.get('nombre','')} - {periodo}",
     )
 
     story = []
@@ -390,7 +400,7 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
     header_data = [[
         logo,
         [_p("RESUMEN DE FACTURACIÓN", titulo_style),
-         _p(f"{MESES_ES[mes-1].upper()} {año}", sub_style)],
+         _p(periodo.upper(), sub_style)],
     ]]
     ht = Table(header_data, colWidths=[58*mm, CW - 58*mm])
     ht.setStyle(TableStyle([
@@ -410,7 +420,7 @@ def generar_facturacion_mensual(cliente: dict, mes: int, año: int,
 
     info_rows = [
         [_p("CLIENTE",                           S2["sec_lbl"]),
-         _p(f"PERÍODO: {MESES_ES[mes-1]} {año}",  S2["sec_lbl"])],
+         _p(f"PERÍODO: {periodo}",                S2["sec_lbl"])],
         [_p(cli_nom,                             S2["cli_nom"]),
          _p(f"{len(por_semana)} semana(s) de entrega",
             ParagraphStyle("ps", fontSize=11, fontName="Helvetica-Bold",
