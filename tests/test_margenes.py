@@ -74,6 +74,8 @@ from config import ZONAS_MAP, margen_neto_q                     # noqa: E402
 # reproduce mapa_area_grupo con la MISMA regla (codigo_lugar contra ZONAS_MAP).
 _cod_area = {c: n for n, cods in ZONAS_MAP.items() for c in cods}
 data_helper = types.ModuleType("data_helper")
+FACTURA = {"hotelito": True, "sundog": False, "desconocido": None}
+data_helper.mapa_factura = lambda: dict(FACTURA)
 data_helper.mapa_area_grupo = lambda: {
     c["nombre"].lower(): {"area": _cod_area.get(c["codigo_lugar"], "Sin área"),
                           "grupo": c["grupo"] or "Sin grupo"}
@@ -105,11 +107,18 @@ r.check(lech["Ingreso (Q)"] == 170.0,
         f"ingreso 10x5 + 12x10 = {lech['Ingreso (Q)']}")
 r.check(lech["Margen Bruto (Q)"] == 80.0,
         f"bruto = ingreso - costo = {lech['Margen Bruto (Q)']}")
-_neto_esp = margen_neto_q(6.0, 10.0) * 5 + margen_neto_q(6.0, 12.0) * 10
+# Hotelito factura (descuenta) y Sundog no (precio - costo). El neto se
+# acumula línea por línea y cada una usa la regla de SU cliente.
+from config import margen_neto_q_cliente as _mnc               # noqa: E402
+_neto_esp = _mnc(6.0, 10.0, True) * 5 + _mnc(6.0, 12.0, False) * 10
 r.check(abs(lech["Margen Neto (Q)"] - round(_neto_esp, 2)) < 0.01,
-        f"neto acumulado línea por línea: {lech['Margen Neto (Q)']}")
+        f"neto por línea, con la regla de cada cliente: "
+        f"{lech['Margen Neto (Q)']}")
 r.check(lech["Margen Neto (Q)"] < lech["Margen Bruto (Q)"],
-        "el neto siempre queda por debajo del bruto (IVA + ISR)")
+        "el neto del producto queda debajo del bruto porque parte se facturó")
+r.check(lech["Margen Neto (Q)"] > margen_neto_q(6.0, 10.0) * 5
+                                 + margen_neto_q(6.0, 12.0) * 10,
+        "y es MAYOR que descontándole a todos: es la corrección de Factura=No")
 r.check(abs(lech["Bruto %"] - round(80.0 / 170.0 * 100, 1)) < 0.05,
         f"bruto % sobre ingreso: {lech['Bruto %']}%")
 
@@ -187,6 +196,52 @@ r.check(agregar_margenes(JUN1, JUN30, ("No Existe",), (), "Cliente").empty,
         "un filtro sin coincidencias devuelve vacío en cualquier dimensión")
 r.check(list(cols_de("Cliente")) == ["Cliente"] + list(df.columns)[1:],
         "cols_de arma el encabezado de cada dimensión")
+
+print("\n=== 5d. Factura=No: NO se descuentan impuestos ===")
+from modulo_margenes import clientes_sin_factura_cargada      # noqa: E402
+
+d_cli2 = agregar_margenes(JUN1, JUN30, (), (), "Cliente")
+_hot = d_cli2[d_cli2["Cliente"] == "Hotelito"].iloc[0]
+_sun = d_cli2[d_cli2["Cliente"] == "Sundog"].iloc[0]
+
+# EL invariante: al que no lleva factura no se le resta IVA ni ISR, así que su
+# margen neto es exactamente el bruto. Si alguien deja un 0.95 colgado, falla.
+r.check(_sun["Margen Neto (Q)"] == _sun["Margen Bruto (Q)"],
+        f"Sundog (Factura=No): neto {_sun['Margen Neto (Q)']} == "
+        f"bruto {_sun['Margen Bruto (Q)']}")
+r.check(_sun["Neto %"] == _sun["Bruto %"], "y los % también coinciden")
+
+_esp_hot = round(margen_neto_q(6.0, 10.0) * 5 + margen_neto_q(20.0, 40.0) * 2, 2)
+r.check(abs(_hot["Margen Neto (Q)"] - _esp_hot) < 0.01,
+        f"Hotelito (Factura=Sí): descuenta como siempre, "
+        f"{_hot['Margen Neto (Q)']}")
+r.check(_hot["Margen Neto (Q)"] < _hot["Margen Bruto (Q)"],
+        "o sea que ahí el neto SÍ queda por debajo del bruto")
+
+# Contraprueba: sin la regla, Sundog daría el valor descontado. Sin esto, el
+# check de arriba pasaría también con una implementación que ignore el campo.
+_sun_con_desc = round(margen_neto_q(6.0, 12.0) * 10, 2)
+r.check(abs(_sun["Margen Neto (Q)"] - _sun_con_desc) > 1.0,
+        f"si se le descontara, Sundog daría {_sun_con_desc} y no "
+        f"{_sun['Margen Neto (Q)']}")
+
+print("\n=== 5e. Default conservador: sin dato descuenta ===")
+r.check(_mnc(6.0, 10.0, None) == _mnc(6.0, 10.0, True) == margen_neto_q(6.0, 10.0),
+        "sin dato se comporta como CON factura: no cambia lo que ya existía")
+r.check(_mnc(6.0, 10.0, False) == 10.0 - 6.0,
+        f"y sin factura es precio - costo: {_mnc(6.0, 10.0, False)}")
+r.check(_mnc(6.0, 10.0, False) > _mnc(6.0, 10.0, None),
+        "sin factura el margen es MAYOR: es la corrección esperada")
+
+print("\n=== 5f. La regla aplica en las TRES dimensiones ===")
+# Es un hecho del cliente, no de la vista: si solo corrigiera Por Cliente, los
+# totales dejarían de cuadrar entre pestañas.
+for _col in ("Margen Neto (Q)", "Margen Bruto (Q)"):
+    _p = float(agregar_margenes(JUN1, JUN30, (), (), "Producto")[_col].sum())
+    _c = float(d_cli2[_col].sum())
+    _a = float(agregar_margenes(JUN1, JUN30, (), (), "Área")[_col].sum())
+    r.check(abs(_p - _c) < 0.01 and abs(_p - _a) < 0.01,
+            f"{_col} cuadra en las tres: {_p:,.2f}")
 
 print("\n=== 6. El reporte NO escribe ===")
 r.check(ESCRITO == [], "ningún update_cells: es solo lectura")

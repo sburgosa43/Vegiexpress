@@ -20,8 +20,9 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 
-from config       import excluido_proveedores as _excluido, margen_neto_q
-from data_helper  import mapa_area_grupo
+from config       import (excluido_proveedores as _excluido,
+                          margen_neto_q, margen_neto_q_cliente)
+from data_helper  import mapa_area_grupo, mapa_factura
 from excel_helper import leer_pedidos_op as leer_pedidos
 
 _fragment = getattr(st, "fragment", None) or getattr(st, "experimental_fragment",
@@ -76,6 +77,7 @@ def _lineas(desde: date, hasta: date):
     dos reportes mostrarían totales distintos para la misma área.
     """
     mapa = mapa_area_grupo()
+    fact = mapa_factura()
     for p in leer_pedidos():            # 12 meses, cacheado
         f = p.get("fecha")
         if not f or not (desde <= f <= hasta):
@@ -90,11 +92,24 @@ def _lineas(desde: date, hasta: date):
             "area":      mapa.get(cli.lower(), {}).get("area", "Sin área"),
             "proveedor": str(p.get("proveedor", "") or "").strip() or "Sin proveedor",
             "cliente":   cli,
+            # True / False / None. None = sin dato en la columna R.
+            "factura":   fact.get(cli.lower()),
             "producto":  prod,
             "cantidad":  float(p.get("cantidad") or 0),
             "costo":     float(p.get("costo") or 0),
             "precio":    float(p.get("precio") or 0),
         }
+
+
+@st.cache_data(ttl=300, max_entries=4, show_spinner=False)
+def clientes_sin_factura_cargada(desde: date, hasta: date) -> list:
+    """Clientes del rango sin el campo Factura (columna R) cargado.
+
+    Se les descuenta IVA e ISR, que es el comportamiento de siempre, pero la
+    pantalla lo dice: un default no debería aplicarse en silencio.
+    """
+    return sorted({l["cliente"] for l in _lineas(desde, hasta)
+                   if l["factura"] is None})
 
 
 @st.cache_data(ttl=300, max_entries=4, show_spinner=False)
@@ -137,7 +152,12 @@ def agregar_margenes(desde: date, hasta: date,
         a["in"] += l["precio"] * cant
         # El neto se acumula línea por línea: la fórmula no es lineal en los
         # totales, así que aplicarla al costo y precio sumados daría otro número.
-        a["ne"] += margen_neto_q(l["costo"], l["precio"]) * cant
+        # Y depende del CLIENTE: al que no lleva factura no se le descuenta IVA
+        # ni ISR, porque a esa venta no se le emite factura. Por eso se aplica
+        # acá, en el acumulador, y no en una pestaña: es un hecho del cliente,
+        # así que corrige las tres dimensiones a la vez.
+        a["ne"] += margen_neto_q_cliente(l["costo"], l["precio"],
+                                         l["factura"]) * cant
 
     filas = []
     for nombre, v in acc.items():
@@ -247,6 +267,16 @@ def _reporte():
     _partes = [f"{lbl}: {', '.join(v)}"
                for lbl, v in (("Área", sel_area), ("Proveedor", sel_prov)) if v]
     filtros_txt = " · ".join(_partes) or "sin filtros (todas las áreas)"
+
+    _sin_fact = clientes_sin_factura_cargada(desde, hasta)
+    if _sin_fact:
+        st.warning(
+            f"⚠️ **{len(_sin_fact)} cliente(s) sin el campo «Factura» "
+            f"cargado.** Se les está descontando IVA e ISR, que es el "
+            f"comportamiento de siempre. Si alguno no lleva factura, "
+            f"completá la columna R en Clientes: "
+            f"{', '.join(_sin_fact[:8])}"
+            f"{'…' if len(_sin_fact) > 8 else ''}")
 
     t_prod, t_cli, t_area = st.tabs(["📦 Por Producto", "👥 Por Cliente",
                                      "🗺️ Por Área"])

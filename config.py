@@ -196,6 +196,24 @@ def margen_neto_q(costo: float, precio: float) -> float:
     """Margen neto en Quetzales: ISR_FACTOR·(precio - costo·IVA_FACTOR)."""
     return ISR_FACTOR * (precio - costo * IVA_FACTOR)
 
+def margen_neto_q_cliente(costo: float, precio: float,
+                          factura: bool = None) -> float:
+    """Margen neto por unidad, según si al cliente se le emite factura.
+
+    factura is False → no se emite factura: no hay IVA que remitir ni ISR que
+                       retener, así que el margen es precio - costo, que es
+                       exactamente el margen BRUTO.
+    True o None      → se descuenta como siempre (margen_neto_q).
+
+    None es "sin dato" y toma a propósito el comportamiento de siempre: no
+    cambiar números que ya existen sin que alguien lo haya decidido. La
+    pantalla avisa cuántos clientes están en ese estado.
+    """
+    if factura is False:
+        return float(precio) - float(costo)
+    return margen_neto_q(costo, precio)
+
+
 def punto_equilibrio(costo: float) -> float:
     """Precio mínimo sin ganar ni perder: costo·IVA_FACTOR."""
     return costo * IVA_FACTOR

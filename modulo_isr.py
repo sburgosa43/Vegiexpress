@@ -35,69 +35,30 @@ ISR_TRAMO_LIMITE = 30000.0
 ISR_TASA_BAJA    = 0.05
 ISR_TASA_ALTA    = 0.07
 
-# Columnas de la hoja Clientes (0-based, tal como las devuelve get_all_rows,
-# que YA viene sin encabezado).
-_COL_NOMBRE  = 0    # A
-_COL_RETIENE = 14   # O
-_COL_APLICA  = 16   # Q
-
-_VAL_SI = ("sí", "si", "s", "yes", "y", "true", "verdadero", "1", "x")
-_VAL_NO = ("no", "n", "false", "falso", "0")
-
 MESES_ES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio",
             "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
 
-def _tri(valor) -> bool:
-    """'Sí'/'No'/vacío → True/False/None.
-
-    Un valor que no se reconoce devuelve None (pendiente), NO False. En un
-    cálculo fiscal un dato que no se entiende tiene que verse, no asumirse:
-    si alguien escribe "Pendiente" o "?" en la celda, eso no es un "No".
-    """
-    t = str(valor if valor is not None else "").strip().lower()
-    if not t:
-        return None
-    if t in _VAL_SI:
-        return True
-    if t in _VAL_NO:
-        return False
-    return None
-
-
-def _celda(row: list, i: int):
-    """Celda i de una fila, o '' si la fila viene corta.
-
-    Sheets recorta las celdas vacías del final, así que un cliente sin nada en
-    la Q puede llegar con una fila de 15 elementos.
-    """
-    return row[i] if len(row) > i else ""
-
-
 @st.cache_data(ttl=600, show_spinner=False)
 def leer_clientes_isr() -> dict:
-    """{nombre_lower: {'nombre', 'aplica', 'retiene'}} desde la hoja Clientes.
+    """{nombre_lower: {'nombre', 'aplica', 'retiene'}} desde cargar_clientes.
 
-    Lee la hoja directo en vez de usar data_helper.cargar_clientes porque esa
-    hace `while len(row) < 16` y corta en la columna P: no ve la Q, que es
-    donde vive aplica_isr. get_all_rows ya está cacheado, así que esto no suma
-    una llamada a la red.
+    aplica/retiene ∈ {True, False, None}. None = celda vacía o valor que no se
+    entiende → PENDIENTE, y el reporte lo muestra aparte en vez de asumirlo.
 
-    DEUDA CONOCIDA: cuando este módulo encuentre su lugar en la app, aplica_isr
-    debería subir a cargar_clientes y esta función desaparecer. Vive acá para
-    no tocar módulos existentes todavía.
+    Antes esto parseaba la hoja Clientes por su cuenta, porque cargar_clientes
+    hacía `while len(row) < 16` y cortaba en la columna P sin ver la Q. Ya
+    llega hasta la R, así que vuelve a haber UN solo lugar leyendo esa hoja.
     """
-    from gsheets import get_all_rows
+    from data_helper import cargar_clientes
     out = {}
-    for row in get_all_rows("clientes"):          # ya viene sin encabezado
-        nombre = str(_celda(row, _COL_NOMBRE) or "").strip()
+    for c in cargar_clientes():
+        nombre = str(c.get("nombre", "") or "").strip()
         if not nombre:
             continue
-        out[nombre.lower()] = {
-            "nombre":  nombre,
-            "aplica":  _tri(_celda(row, _COL_APLICA)),
-            "retiene": _tri(_celda(row, _COL_RETIENE)),
-        }
+        out[nombre.lower()] = {"nombre":  nombre,
+                               "aplica":  c.get("aplica_isr"),
+                               "retiene": c.get("retiene_isr")}
     return out
 
 

@@ -10,13 +10,29 @@ _K_PROD = "productos"
 _K_ANT  = "antigua"
 
 
+def _tri_si_no(valor):
+    """'Sí'/'No'/vacío → True/False/None.
+
+    Un valor que NO se entiende devuelve None, no False: en datos fiscales y de
+    facturación algo ilegible tiene que verse, no asumirse.
+    """
+    t = str(valor if valor is not None else "").strip().lower()
+    if not t:
+        return None
+    if t in ("sí", "si", "s", "yes", "y", "true", "verdadero", "1", "x"):
+        return True
+    if t in ("no", "n", "false", "falso", "0"):
+        return False
+    return None
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def cargar_clientes() -> list[dict]:
     """Lista completa de clientes desde Sheets."""
     rows = get_all_rows(_K_CLI)
     clientes = []
     for i, row in enumerate(rows, start=2):
-        while len(row) < 16: row.append("")
+        while len(row) < 18: row.append("")
         if not row[0]: continue
         # Tratamiento comercial (columnas N/O/P) — Fase A de centralización.
         # Si están vacías (aún no migrado), quedan como None y los módulos usan
@@ -43,8 +59,12 @@ def cargar_clientes() -> list[dict]:
             "email":        str(row[12] or "").strip().lower(),
             # Tratamiento comercial centralizado (None si aún no migrado)
             "lag_pago":     (int(float(_lag_raw)) if _lag_raw not in ("", "None") else None),
-            "retiene_isr":  (_isr_raw.lower() in ("sí","si","yes","true","1") if _isr_raw not in ("", "None") else None),
+            "retiene_isr":  _tri_si_no(_isr_raw),                  # O (14)
             "descuento_pct":(float(_desc_raw) if _desc_raw not in ("", "None") else None),
+            # Q y R: antes cargar_clientes cortaba en P y no las veia, asi que
+            # modulo_isr tenia que leer la hoja por su cuenta.
+            "aplica_isr":   _tri_si_no(row[16]),                   # Q (16)
+            "factura":      _tri_si_no(row[17]),                   # R (17)
         })
     return clientes
 
@@ -156,6 +176,18 @@ def mapa_area_grupo() -> dict:
             "grupo": str(c.get("grupo", "") or "").strip() or "Sin grupo",
         }
     return out
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def mapa_factura() -> dict:
+    """nombre_cliente_lower → True / False / None (columna R).
+
+    Cacheado porque el Control de Márgenes lo consulta una vez por línea de
+    pedido; recorrer cargar_clientes en cada una seria O(clientes x lineas).
+    """
+    return {str(c.get("nombre", "") or "").strip().lower(): c.get("factura")
+            for c in cargar_clientes()
+            if str(c.get("nombre", "") or "").strip()}
 
 
 def cli_precio(cliente: dict, producto_nombre: str) -> tuple[float, str]:

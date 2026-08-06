@@ -59,26 +59,17 @@ PEDIDOS = [
     _ped(30, "Alfa", date(2026, 8, 3), _tot(30000)),
 ]
 
-# Filas de la hoja Clientes tal como las devuelve get_all_rows: SIN encabezado.
-# A(0)=nombre ... O(14)=retiene_isr ... Q(16)=aplica_isr
-def _fila_cli(nombre, retiene="", aplica="", largo=17):
-    row = [""] * largo
-    row[0] = nombre
-    if largo > 14: row[14] = retiene
-    if largo > 16: row[16] = aplica
-    return row
-
-
-FILAS_CLIENTES = [
-    _fila_cli("Alfa",    retiene="Sí", aplica="Sí"),
-    _fila_cli("Beta",    retiene="No", aplica="Sí"),
-    _fila_cli("Gama",    retiene="Sí", aplica="No"),
-    _fila_cli("Delta",   retiene="Sí", aplica=""),          # aplica sin dato
-    _fila_cli("Epsilon", retiene="",   aplica="Sí"),        # retiene sin dato
-    _fila_cli("Wilson Mayoreo", retiene="No", aplica="Sí"),
-    # Fila CORTA: Sheets recorta las celdas vacias del final. No debe explotar.
-    _fila_cli("Zeta", retiene="Sí", largo=15),
-    _fila_cli("", retiene="Sí", aplica="Sí"),               # sin nombre: se ignora
+# leer_clientes_isr ahora lee de cargar_clientes (que ya llega hasta la R),
+# asi que el doble es la lista de clientes y no filas crudas de la hoja.
+CLIENTES = [
+    {"nombre": "Alfa",           "aplica_isr": True,  "retiene_isr": True},
+    {"nombre": "Beta",           "aplica_isr": True,  "retiene_isr": False},
+    {"nombre": "Gama",           "aplica_isr": False, "retiene_isr": True},
+    {"nombre": "Delta",          "aplica_isr": None,  "retiene_isr": True},
+    {"nombre": "Epsilon",        "aplica_isr": True,  "retiene_isr": None},
+    {"nombre": "Wilson Mayoreo", "aplica_isr": True,  "retiene_isr": False},
+    {"nombre": "Zeta",           "aplica_isr": None,  "retiene_isr": True},
+    {"nombre": "",               "aplica_isr": True,  "retiene_isr": True},
 ]
 
 from utils import _sf                                          # noqa: E402
@@ -93,9 +84,12 @@ sys.modules["excel_helper"] = excel_stub
 gsheets = types.ModuleType("gsheets")
 gsheets.update_cells = lambda hoja, ups: ESCRITO.extend(ups)
 gsheets.append_rows  = lambda *a, **k: None
-gsheets.get_all_rows = lambda hoja: ([list(r) for r in FILAS_CLIENTES]
-                                     if hoja == "clientes" else [])
+gsheets.get_all_rows = lambda *a, **k: []
 sys.modules["gsheets"] = gsheets
+
+data_helper = types.ModuleType("data_helper")
+data_helper.cargar_clientes = lambda: [dict(c) for c in CLIENTES]
+sys.modules["data_helper"] = data_helper
 
 import modulo_isr as M                                         # noqa: E402
 from config import base_sin_iva                                # noqa: E402
@@ -112,16 +106,30 @@ r.check(CLI["delta"]["aplica"] is None,
         "celda vacía en Q -> None (pendiente), no False")
 r.check(CLI["epsilon"]["retiene"] is None, "celda vacía en O -> None")
 r.check(CLI["zeta"]["aplica"] is None,
-        "una fila CORTA (sin columna Q) no explota: queda None")
+        "un cliente sin el dato en Q queda en None")
 r.check("" not in CLI, "una fila sin nombre se ignora")
 
-print("\n=== 2. _tri: un valor que no se entiende NO es 'No' ===")
+print("\n=== 2. El sí/no tolerante: un valor raro NO es 'No' ===")
+# _tri se fue de modulo_isr: ahora lo hace cargar_clientes con _tri_si_no, para
+# que sea el MISMO criterio en toda la app. Se carga la función real por AST
+# porque data_helper está doblado en esta prueba.
+import ast as _ast                                            # noqa: E402
+import os as _os                                              # noqa: E402
+
+_dh_src = open(_os.path.join(raiz_repo(), "data_helper.py"), encoding="utf-8").read()
+_ns = {}
+exec(compile(_ast.Module(
+    body=[n for n in _ast.parse(_dh_src).body
+          if isinstance(n, _ast.FunctionDef) and n.name == "_tri_si_no"],
+    type_ignores=[]), "data_helper", "exec"), _ns)
+_tri_si_no = _ns["_tri_si_no"]
+
 for v in ("Sí", "si", "SI", "s", "TRUE", "1", "x"):
-    r.check(M._tri(v) is True, f"{v!r} -> True")
+    r.check(_tri_si_no(v) is True, f"{v!r} -> True")
 for v in ("No", "no", "N", "FALSE", "0"):
-    r.check(M._tri(v) is False, f"{v!r} -> False")
+    r.check(_tri_si_no(v) is False, f"{v!r} -> False")
 for v in ("", "   ", None, "Pendiente", "?", "tal vez"):
-    r.check(M._tri(v) is None, f"{v!r} -> None (se muestra, no se asume)")
+    r.check(_tri_si_no(v) is None, f"{v!r} -> None (se muestra, no se asume)")
 
 print("\n=== 3. JUNIO: el que retiene pero NO aplica queda afuera ===")
 jun = M.calcular_isr(PEDIDOS, CLI, 6, 2026)
