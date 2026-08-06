@@ -98,7 +98,13 @@ def _form_campos(kp: str, pf: dict, es_antigua: bool = False) -> dict | None:
             cotizar = st.selectbox("Para cotizar", COTIZAR_OPC,
                 index=COTIZAR_OPC.index(pf["para_cotizar"])
                       if pf.get("para_cotizar") in COTIZAR_OPC else 0,
-                key=f"{kp}_cotizar")
+                key=f"{kp}_cotizar",
+                help="«No» lo saca del Cotizador y de los reportes que "
+                     "filtran por catálogo. Vacío o «Si» lo dejan visible.")
+            if str(cotizar).strip().lower() == "no":
+                st.caption("⚠️ Con **Para cotizar = No** este producto no va a "
+                           "aparecer en el Cotizador. Sí vas a poder usarlo en "
+                           "pedidos.")
             parent = st.text_input("Parent",
                                     value=pf.get("parent", pf.get("nombre","")),
                                     key=f"{kp}_parent")

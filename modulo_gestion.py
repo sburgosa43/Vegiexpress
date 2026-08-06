@@ -153,8 +153,14 @@ def _modificar(todos):
     if not grupos:
         st.warning("No hay pedidos con esos filtros."); return
 
-    prods_lista = [""] + [p["nombre"] for p in cargar_productos(False)]
-    prods_cat   = {p["nombre"]: p for p in cargar_productos(False)}
+    # solo_catalogo=False, como el resto de la app. Con el default (True) esta
+    # pantalla era la ÚNICA que filtraba por precio > 0 y por «Cotizar != No»,
+    # así que un producto nuevo aparecía al crear un pedido pero no al
+    # modificarlo, sin ningún aviso. Al editar un pedido hay que poder elegir
+    # cualquier producto del catálogo.
+    _cat_prods  = cargar_productos(False, solo_catalogo=False)
+    prods_lista = [""] + [p["nombre"] for p in _cat_prods]
+    prods_cat   = {p["nombre"]: p for p in _cat_prods}
     st.divider()
 
     opciones = {u: _label(u, ls) for u, ls in grupos.items()}
