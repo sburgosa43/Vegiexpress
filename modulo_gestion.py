@@ -161,6 +161,18 @@ def _modificar(todos):
     _cat_prods  = cargar_productos(False, solo_catalogo=False)
     prods_lista = [""] + [p["nombre"] for p in _cat_prods]
     prods_cat   = {p["nombre"]: p for p in _cat_prods}
+
+    # Los productos sin precio se muestran igual —ocultarlos fue justamente el
+    # bug por el que un producto nuevo desaparecía de acá— pero se avisan: al
+    # elegir uno, el precio va a venir en 0 y hay que ponerlo a mano.
+    _sin_precio = sorted(p["nombre"] for p in _cat_prods
+                         if float(p.get("precio") or 0) <= 0)
+    if _sin_precio:
+        st.warning(
+            f"⚠️ **{len(_sin_precio)} producto(s) del catálogo sin precio.** "
+            f"Aparecen en la lista, pero si elegís uno vas a tener que "
+            f"escribirle el precio: {', '.join(_sin_precio[:10])}"
+            f"{'…' if len(_sin_precio) > 10 else ''}")
     st.divider()
 
     opciones = {u: _label(u, ls) for u, ls in grupos.items()}
