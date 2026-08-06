@@ -34,6 +34,7 @@ HOJAS = {
     "compras_hist":       "ComprasHistorico",
     "precios_cenma":      "Precios Cenma",
     "precios_laterminal": "Precios La Terminal",
+    "precios_latorre":    "Precios La Torre",
 }
 
 SCOPES = [

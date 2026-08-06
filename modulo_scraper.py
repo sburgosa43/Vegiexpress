@@ -158,6 +158,29 @@ def _scrape(progress_bar, status_txt) -> list:
     return todos
 
 
+# Columnas de la hoja «Precios La Torre». Es un supermercado: publica precio de
+# venta y no costo, así que lleva las mismas dos columnas de precio que La
+# Terminal, más lo suyo propio — la oferta y el precio normal.
+COLS_LATORRE = ["Fecha", "Producto", "Presentación",
+                "Precio", "Precio sin Impuestos",
+                "Precio Normal", "En Oferta", "Descuento %", "URL"]
+
+
+def _latorre_filas(productos: list, fecha: str) -> list:
+    """_Producto → filas de la hoja, en el orden de COLS_LATORRE."""
+    return [{
+        "Fecha":        fecha,
+        "Producto":     p.nombre,
+        "Presentación": p.cantidad,
+        "Precio":       round(float(p.precio or 0), 4),
+        "Precio sin Impuestos": sin_impuestos(p.precio),
+        "Precio Normal": round(float(p.precio_normal or 0), 4),
+        "En Oferta":    "Sí" if p.en_oferta else "No",
+        "Descuento %":  p.descuento_pct,
+        "URL":          p.url,
+    } for p in productos]
+
+
 def _a_csv_bytes(productos: list) -> bytes:
     import io, csv
     buf    = io.StringIO()
@@ -258,12 +281,29 @@ def _tab_latorre():
     st.dataframe(filas, use_container_width=True, height=500)
 
     st.divider()
-    st.download_button(
+    _fecha_lt = datetime.now().strftime("%Y-%m-%d")
+    d1, d2 = st.columns(2)
+    d1.download_button(
         label="⬇ Descargar CSV",
         data=_a_csv_bytes(resultado),
         file_name=f"latorre_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-        mime="text/csv",
+        mime="text/csv", use_container_width=True,
     )
+    with d2:
+        if st.button(f"💾 Guardar {len(resultado)} en «Precios La Torre»",
+                     use_container_width=True, key="ltorre_save"):
+            try:
+                with st.spinner("Escribiendo en el Sheet..."):
+                    res = _guardar_precios("precios_latorre", COLS_LATORRE,
+                                           _latorre_filas(resultado, _fecha_lt),
+                                           _fecha_lt)
+                _msg = f"✅ {res['escritas']} fila(s) guardadas."
+                if res["reemplazadas"]:
+                    _msg += (f" Se reemplazaron {res['reemplazadas']} de una "
+                             f"captura anterior del mismo día.")
+                st.success(_msg)
+            except Exception as e:
+                st.error(f"No se pudo guardar: {type(e).__name__}: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

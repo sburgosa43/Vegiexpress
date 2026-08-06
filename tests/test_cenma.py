@@ -280,4 +280,52 @@ except RuntimeError as e:
 r.check(HOJA["cabecera"] == ["Otra", "Cosa"],
         "y no reescribe una hoja que no entiende")
 
+
+
+print("\n=== 10. La Torre: mismas dos columnas de precio, sin costo ===")
+# Es un supermercado: publica precio de venta, no costo. La hoja comparte la
+# estructura de precio con los otros dos para poder comparar entre mercados.
+from modulo_scraper import COLS_LATORRE, _latorre_filas   # noqa: E402
+import types as _t                                        # noqa: E402
+
+_p = _t.SimpleNamespace(nombre="Tomate Ciruelo", cantidad="Red 3lb",
+                        precio=21.30, precio_normal=28.40, en_oferta=True,
+                        url="https://x/p", descuento_pct=25.0)
+f = _latorre_filas([_p], HOY)[0]
+r.check(list(f) == COLS_LATORRE, f"columnas: {list(f)}")
+r.check(f["Fecha"] == HOY, "la fecha viaja en la fila, como en los otros dos")
+r.check(f["Precio"] == 21.30 and f["Precio Normal"] == 28.40,
+        "precio de oferta y precio normal, separados")
+r.check(abs(f["Precio sin Impuestos"] - sin_impuestos(21.30)) < 1e-9,
+        f"neto de IVA e ISR: {f['Precio sin Impuestos']}")
+r.check(f["En Oferta"] == "Sí" and f["Descuento %"] == 25.0,
+        "la oferta se guarda: es lo propio de un supermercado")
+r.check(not any("Costo" in c or "Margen" in c for c in COLS_LATORRE),
+        "sin columnas de costo ni margen: La Torre no publica costo")
+r.check(all(isinstance(f[c], (str, int, float)) for c in COLS_LATORRE),
+        "todo serializable a una celda del Sheet")
+
+_sin_of = _t.SimpleNamespace(nombre="Papa", cantidad="Lb", precio=5.0,
+                             precio_normal=5.0, en_oferta=False,
+                             url="", descuento_pct=0.0)
+g = _latorre_filas([_sin_of], HOY)[0]
+r.check(g["En Oferta"] == "No" and g["Descuento %"] == 0.0,
+        "sin oferta no inventa un descuento")
+
+print("\n=== 11. Los tres mercados tienen su hoja, sin pisarse ===")
+# HOJAS se lee del ARCHIVO por AST: gsheets está doblado en esta prueba y el
+# doble no lo tiene. Lo que importa verificar es el registro real.
+import ast as _ast                                         # noqa: E402
+import os as _os                                           # noqa: E402
+
+_src = open(_os.path.join(raiz_repo(), "gsheets.py"), encoding="utf-8").read()
+HOJAS = _ast.literal_eval(next(
+    n.value for n in _ast.parse(_src).body
+    if isinstance(n, _ast.Assign) and getattr(n.targets[0], "id", "") == "HOJAS"))
+_claves = ("precios_cenma", "precios_laterminal", "precios_latorre")
+r.check(all(k in HOJAS for k in _claves),
+        f"las tres hojas registradas: {[HOJAS.get(k) for k in _claves]}")
+r.check(len({HOJAS[k] for k in _claves}) == 3,
+        "con nombres distintos: ninguna pisa a otra")
+
 r.salir()
